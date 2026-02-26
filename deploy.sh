@@ -1410,7 +1410,11 @@ do_optimize() {
         has_nvidia=true
         gpu_count=$(nvidia-smi --query-gpu=count --format=csv,noheader 2>/dev/null | head -1 || echo "0")
         gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "N/A")
-        gpu_vram_mb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "0")
+        gpu_vram_mb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9' || echo "0")
+        # 非数字兜底
+        if ! [[ "$gpu_vram_mb" =~ ^[0-9]+$ ]] || [ -z "$gpu_vram_mb" ]; then
+            gpu_vram_mb=0
+        fi
         gpu_vram_gb=$((gpu_vram_mb / 1024))
 
         echo -e "  ${BOLD}GPU:${NC}"
