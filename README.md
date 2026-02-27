@@ -69,7 +69,7 @@ git clone <repo-url> && cd lynx-ollama
 | `pull <model>` | 拉取/更新模型 |
 | `models` | 列出所有已下载模型 |
 | `run <model>` | 交互式运行模型 |
-| `search [keyword]` | 搜索 Ollama 官网模型（自动匹配本机硬件，本地模型翻译描述） |
+| `search [keyword]` | 搜索 Ollama 官网模型（自动匹配本机硬件，支持按更新时间排序） |
 
 ### GPU 与性能
 
@@ -133,6 +133,10 @@ git clone <repo-url> && cd lynx-ollama
 # 按类型筛选（vision|tools|thinking|embedding|cloud）
 ./deploy.sh search -c vision
 
+# 按最近更新排序（最新模型优先）
+./deploy.sh search --newest
+./deploy.sh search -s newest
+
 # 显示所有模型不过滤硬件
 ./deploy.sh search coder --all
 
@@ -142,12 +146,16 @@ git clone <repo-url> && cd lynx-ollama
 # 从第 3 页开始浏览 / 组合翻页
 ./deploy.sh search -p 3
 ./deploy.sh search -n 100 -p 2
+
+# 组合：最近更新 + 50条结果
+./deploy.sh search -s newest -n 50
 ```
 
 **功能特点：**
 
 - 自动检测本机 GPU / 统一内存 / CPU-only 环境，过滤出可运行的模型
 - 绿色标记适合本机的参数规格，灰色标记超出容量的规格
+- 支持按热门（默认）或最近更新排序，快速发现新模型
 - 若本地 Ollama 服务在运行，自动选用小模型翻译英文描述为中文
 - 显示每个模型的完整描述、下载量、更新时间（中文）和安装命令
 - 超过 20 条结果自动拉取多页，底部提示下一页命令

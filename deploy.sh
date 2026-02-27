@@ -1732,6 +1732,7 @@ do_search() {
     local show_all=false
     local max_results=20
     local page=1
+    local sort_order=""
 
     # 解析参数
     while [ $# -gt 0 ]; do
@@ -1739,6 +1740,18 @@ do_search() {
             -c|--category) category="$2"; shift 2 ;;
             -n|--num)      max_results="$2"; shift 2 ;;
             -p|--page)     page="$2"; shift 2 ;;
+            -s|--sort)
+                case "$2" in
+                    newest|new|updated) sort_order="newest" ;;
+                    popular|pop|hot)    sort_order="popular" ;;
+                    *)
+                        log_error "未知排序方式: $2 (可选: newest|popular)"
+                        return 1
+                        ;;
+                esac
+                shift 2
+                ;;
+            --newest)      sort_order="newest"; shift ;;
             --all)         show_all=true; shift ;;
             -h|--help)
                 echo -e "  ${BOLD}用法:${NC} ./deploy.sh search [关键词] [选项]"
@@ -1747,6 +1760,8 @@ do_search() {
                 echo "    -c, --category <type>   按类型筛选 (vision|tools|thinking|embedding|cloud)"
                 echo "    -n, --num <count>       显示数量 (默认20, 超过20自动翻页)"
                 echo "    -p, --page <num>        起始页码 (默认1, 每页20条)"
+                echo "    -s, --sort <order>      排序方式: newest=最近更新 | popular=热门(默认)"
+                echo "    --newest                按最近更新排序 (等同 -s newest)"
                 echo "    --all                   显示所有模型 (不按本机硬件过滤)"
                 echo ""
                 echo -e "  ${BOLD}示例:${NC}"
@@ -1757,6 +1772,8 @@ do_search() {
                 echo "    ./deploy.sh search -n 50            # 显示50个结果 (自动拉取3页)"
                 echo "    ./deploy.sh search -p 3             # 从第3页开始浏览"
                 echo "    ./deploy.sh search -n 100 -p 2      # 从第2页开始显示100条"
+                echo "    ./deploy.sh search --newest         # 按最近更新排序"
+                echo "    ./deploy.sh search -s newest -n 50  # 最近更新的50个模型"
                 return 0
                 ;;
             -*)
@@ -1842,6 +1859,9 @@ do_search() {
     fi
     if [ -n "$category" ]; then
         base_params="${base_params}c=${category}&"
+    fi
+    if [ -n "$sort_order" ]; then
+        base_params="${base_params}o=${sort_order}&"
     fi
 
     local html=""
@@ -2063,6 +2083,7 @@ effective_vram = ${effective_vram_gb}
 show_all = '${show_all}'
 start_page = ${page}
 pages_fetched = ${pages_fetched}
+sort_order = '${sort_order}'
 
 def parse_size_gb(size_str):
     \"\"\"将参数量标记转为大致模型文件大小(GB)\"\"\"
@@ -2157,10 +2178,11 @@ max_show = ${max_results}
 shown = 0
 
 if fit_models:
+    sort_label = ' · 按最近更新' if sort_order == 'newest' else ''
     if show_all != 'true' and effective_vram > 0:
-        print(f'  \033[1m✅ 适合本机的模型 ({len(fit_models)} 个，VRAM ≈{effective_vram}G):\033[0m')
+        print(f'  \033[1m✅ 适合本机的模型 ({len(fit_models)} 个，VRAM ≈{effective_vram}G{sort_label}):\033[0m')
     else:
-        print(f'  \033[1m📦 模型列表 ({len(fit_models)} 个):\033[0m')
+        print(f'  \033[1m📦 模型列表 ({len(fit_models)} 个{sort_label}):\033[0m')
     print()
 
     for m in fit_models[:max_show]:
@@ -2265,6 +2287,8 @@ show_help() {
     echo "  run <model>         交互式运行模型"
     echo "  search [keyword]    搜索Ollama官网模型 (自动匹配本机硬件)"
     echo "                        -c <type>  按类型筛选 (vision|tools|thinking|embedding)"
+    echo "                        -s <order> 排序: newest=最近更新 | popular=热门(默认)"
+    echo "                        --newest   按最近更新排序"
     echo "                        --all      显示所有模型不过滤"
     echo ""
     echo -e "${BOLD}GPU 与性能:${NC}"
