@@ -1858,141 +1858,100 @@ do_search() {
         return 1
     fi
 
-    #--- 3. 解析 HTML 并展示 ---
+    #--- 3. 检测本地 Ollama 翻译能力 ---
+    local ollama_translate_model=""
+    local ollama_api="http://localhost:11434"
+
+    # 尝试找到一个可用的小模型做翻译
+    if curl -sf --connect-timeout 2 "${ollama_api}/api/tags" &>/dev/null; then
+        local available_models
+        available_models=$(curl -sf "${ollama_api}/api/tags" 2>/dev/null | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    names = [m['name'] for m in data.get('models', [])]
+    # 优先选小模型做翻译
+    prefer = ['qwen2.5:7b', 'qwen2.5:14b', 'qwen3:8b', 'qwen3:4b', 'qwen3:1.7b', 'qwen3:0.6b', 'glm4:9b', 'llama3.1:8b', 'gemma2:9b', 'mistral:7b']
+    for p in prefer:
+        for n in names:
+            if n.startswith(p.split(':')[0]) and ((':' not in p) or p in n):
+                print(n); sys.exit(0)
+    # 任何含 qwen/glm/llama/gemma/mistral 的都行
+    for n in names:
+        for kw in ['qwen', 'glm', 'llama', 'gemma', 'mistral']:
+            if kw in n.lower():
+                print(n); sys.exit(0)
+    # 实在没有就用第一个
+    if names:
+        print(names[0])
+except: pass
+" 2>/dev/null)
+        if [ -n "$available_models" ]; then
+            ollama_translate_model="$available_models"
+            log_info "将使用本地模型 ${ollama_translate_model} 翻译描述"
+        fi
+    fi
+
+    #--- 4. 解析 HTML 并展示 ---
     echo "$html" | python3 -c "
 import sys
 import re
 import html as html_mod
+import json
+import urllib.request
+import textwrap
 
 content = sys.stdin.read()
+ollama_model = '${ollama_translate_model}'
+ollama_api = '${ollama_api}'
 
 # ============================================================
-# 英文 → 中文 翻译词典（模型描述常见短语）
+# 翻译函数
 # ============================================================
-TRANSLATIONS = {
-    # 模型系列与类型
-    'large language model': '大语言模型',
-    'language model': '语言模型',
-    'vision language model': '视觉语言模型',
-    'multimodal model': '多模态模型',
-    'mixture of experts': '混合专家',
-    'embedding model': '嵌入模型',
-    'code model': '代码模型',
-    'coding model': '代码模型',
-    'translation model': '翻译模型',
-    'instruction-tuned': '指令调优',
-    'instruction tuned': '指令调优',
-    'fine-tuned': '微调',
-    'fine tuned': '微调',
-    'pre-trained': '预训练',
+_translate_cache = {}
 
-    # 能力描述
-    'on-device deployment': '设备端部署',
-    'on-device': '设备端',
-    'efficient inference': '高效推理',
-    'long context': '长上下文',
-    'function calling': '函数调用',
-    'tool use': '工具使用',
-    'tool calling': '工具调用',
-    'code generation': '代码生成',
-    'code completion': '代码补全',
-    'text generation': '文本生成',
-    'text embedding': '文本嵌入',
-    'text-to-text': '文本到文本',
-    'image understanding': '图像理解',
-    'image recognition': '图像识别',
-    'document understanding': '文档理解',
-    'creative writing': '创意写作',
-    'role-playing': '角色扮演',
-    'multi-turn dialogue': '多轮对话',
-    'multilingual': '多语言',
-    'multi-lingual': '多语言',
-    'reasoning': '推理',
-    'thinking': '思维推理',
-    'agentic': '智能体',
-    'agent': '智能体',
-    'agents': '智能体',
-    'agentic workflows': '智能体工作流',
-    'software engineering': '软件工程',
-    'local development': '本地开发',
-    'on-device deployment': '设备端部署',
-    'edge deployment': '边缘部署',
-
-    # 常见形容词/描述
-    'state-of-the-art': '最先进的',
-    'open-source': '开源',
-    'open source': '开源',
-    'lightweight': '轻量级',
-    'small language model': '小型语言模型',
-    'general purpose': '通用',
-    'general-purpose': '通用',
-    'high-performance': '高性能',
-    'high performance': '高性能',
-    'exceptional': '卓越的',
-    'powerful': '强大的',
-    'advanced': '先进的',
-    'versatile': '多用途的',
-    'compact': '紧凑的',
-    'optimized for': '针对...优化',
-    'designed for': '设计用于',
-    'built for': '构建用于',
-    'focused on': '专注于',
-    'excels at': '擅长',
-    'supports': '支持',
-    'featuring': '具备',
-
-    # 场景/领域
-    'productivity': '生产力',
-    'coding': '编码',
-    'mathematics': '数学',
-    'science': '科学',
-    'STEM': 'STEM(理工科)',
-    'enterprise': '企业级',
-    'research': '研究',
-    'commercial use': '商业使用',
-
-    # 模型系列名词
-    'family of models': '系列模型',
-    'series of models': '系列模型',
-    'model family': '模型系列',
-    'hybrid model': '混合模型',
-    'hybrid models': '混合模型',
-    'dense model': '稠密模型',
-    'dense models': '稠密模型',
-    'sparse model': '稀疏模型',
-
-    # 常见动词短语
-    'delivering': '提供',
-    'offering': '提供',
-    'providing': '提供',
-    'enabling': '赋能',
-    'achieving': '达到',
-    'outperforming': '超越',
-    'surpassing': '超过',
-
-    # 补充
-    'with': '，具有',
-    'and': '和',
-    'for': '用于',
-    'across': '跨',
-    'including': '包括',
-    'such as': '例如',
-    'based on': '基于',
-}
+def ollama_translate(text):
+    \"\"\"用本地 Ollama 模型翻译英文为中文\"\"\"
+    if not ollama_model or not text:
+        return text
+    if text in _translate_cache:
+        return _translate_cache[text]
+    try:
+        prompt = f'将以下英文翻译为简洁流畅的中文，只输出翻译结果，不要解释：\n{text}'
+        payload = json.dumps({
+            'model': ollama_model,
+            'prompt': prompt,
+            'stream': False,
+            'options': {'temperature': 0.1, 'num_predict': 256}
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            f'{ollama_api}/api/generate',
+            data=payload,
+            headers={'Content-Type': 'application/json'}
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            translated = result.get('response', '').strip()
+            # 清理可能的前缀
+            for prefix in ['翻译：', '翻译:', '译文：', '译文:']:
+                if translated.startswith(prefix):
+                    translated = translated[len(prefix):].strip()
+            if translated:
+                _translate_cache[text] = translated
+                return translated
+    except:
+        pass
+    return text
 
 def translate_desc(text):
-    \"\"\"基于词典的英翻中，对常见短语进行替换\"\"\"
+    \"\"\"翻译模型描述\"\"\"
     if not text:
         return '(无描述)'
-    result = text
-
-    # 按短语长度降序替换（避免短词干扰长词组）
-    sorted_phrases = sorted(TRANSLATIONS.items(), key=lambda x: -len(x[0]))
-    for eng, chn in sorted_phrases:
-        pattern = re.compile(re.escape(eng), re.IGNORECASE)
-        result = pattern.sub(chn, result)
-
-    return result
+    # 如果有本地模型，用整句翻译
+    if ollama_model:
+        return ollama_translate(text)
+    # 否则保留原文
+    return text
 
 # ============================================================
 # 解析 HTML
@@ -2203,12 +2162,11 @@ if fit_models:
             print(f'  \033[2m({updated})\033[0m', end='')
         print()
 
-        # 第2行: 描述 (翻译后)
+        # 第2行: 描述 (翻译后，完整显示)
         if desc:
-            # 截断过长描述
-            if len(desc) > 100:
-                desc = desc[:97] + '...'
-            print(f'      {desc}')
+            # 自动换行，每行宽度 70 字符，缩进 6 空格
+            wrapped = textwrap.fill(desc, width=70, initial_indent='      ', subsequent_indent='      ')
+            print(wrapped)
 
         # 第3行: 参数规格 + 标签
         info_parts = []
