@@ -1745,8 +1745,8 @@ do_search() {
                 echo ""
                 echo -e "  ${BOLD}选项:${NC}"
                 echo "    -c, --category <type>   按类型筛选 (vision|tools|thinking|embedding|cloud)"
-                echo "    -n, --num <count>       显示数量 (默认20)"
-                echo "    -p, --page <num>        页码 (默认1)"
+                echo "    -n, --num <count>       显示数量 (默认20, 超过20自动翻页)"
+                echo "    -p, --page <num>        起始页码 (默认1, 每页20条)"
                 echo "    --all                   显示所有模型 (不按本机硬件过滤)"
                 echo ""
                 echo -e "  ${BOLD}示例:${NC}"
@@ -1754,7 +1754,9 @@ do_search() {
                 echo "    ./deploy.sh search qwen             # 搜索 qwen 相关模型"
                 echo "    ./deploy.sh search -c vision        # 搜索视觉模型"
                 echo "    ./deploy.sh search coder --all      # 搜索代码模型 (不过滤)"
-                echo "    ./deploy.sh search -n 50            # 显示更多结果"
+                echo "    ./deploy.sh search -n 50            # 显示50个结果 (自动拉取3页)"
+                echo "    ./deploy.sh search -p 3             # 从第3页开始浏览"
+                echo "    ./deploy.sh search -n 100 -p 2      # 从第2页开始显示100条"
                 return 0
                 ;;
             -*)
@@ -1832,31 +1834,58 @@ do_search() {
         echo ""
     fi
 
-    #--- 2. 构建 URL 并抓取页面 ---
-    local url="https://ollama.com/search"
-    local params="?"
+    #--- 2. 构建 URL 并抓取页面（支持多页） ---
+    local base_url="https://ollama.com/search"
+    local base_params="?"
     if [ -n "$query" ]; then
-        params="${params}q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${query}'))" 2>/dev/null || echo "$query")&"
+        base_params="${base_params}q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${query}'))" 2>/dev/null || echo "$query")&"
     fi
     if [ -n "$category" ]; then
-        params="${params}c=${category}&"
+        base_params="${base_params}c=${category}&"
     fi
-    params="${params}p=${page}"
-    url="${url}${params}"
 
-    log_info "正在从 ${url} 获取数据..."
+    local html=""
+    local current_page=$page
+    local pages_needed=$(( (max_results + 19) / 20 ))  # 每页20条，向上取整
+    local pages_fetched=0
 
-    local html
-    html=$(curl -sf --connect-timeout 10 --max-time 30 \
-        -H "User-Agent: Mozilla/5.0" \
-        -H "Accept: text/html" \
-        "$url" 2>/dev/null)
+    while [ $pages_fetched -lt $pages_needed ]; do
+        local url="${base_url}${base_params}page=${current_page}"
+        if [ $pages_fetched -eq 0 ]; then
+            log_info "正在从 ${url} 获取数据..."
+        else
+            log_info "正在获取第 ${current_page} 页..."
+        fi
 
-    if [ -z "$html" ]; then
-        log_error "无法访问 Ollama 官网，请检查网络连接"
-        echo "  提示: 可尝试手动访问 https://ollama.com/search"
-        return 1
-    fi
+        local page_html
+        page_html=$(curl -sf --connect-timeout 10 --max-time 30 \
+            -H "User-Agent: Mozilla/5.0" \
+            -H "Accept: text/html" \
+            "$url" 2>/dev/null)
+
+        if [ -z "$page_html" ]; then
+            if [ $pages_fetched -eq 0 ]; then
+                log_error "无法访问 Ollama 官网，请检查网络连接"
+                echo "  提示: 可尝试手动访问 https://ollama.com/search"
+                return 1
+            fi
+            break  # 后续页获取失败就停止
+        fi
+
+        # 检查本页是否有模型数据
+        local model_count
+        model_count=$(echo "$page_html" | grep -c 'x-test-model' 2>/dev/null || echo "0")
+        if [ "$model_count" -eq 0 ]; then
+            if [ $pages_fetched -eq 0 ]; then
+                log_warn "未找到任何模型"
+            fi
+            break  # 没有更多数据了
+        fi
+
+        html="${html}${page_html}"
+        pages_fetched=$((pages_fetched + 1))
+        current_page=$((current_page + 1))
+    done
 
     #--- 3. 检测本地 Ollama 翻译能力 ---
     local ollama_translate_model=""
@@ -2032,6 +2061,8 @@ if not models:
 # ============================================================
 effective_vram = ${effective_vram_gb}
 show_all = '${show_all}'
+start_page = ${page}
+pages_fetched = ${pages_fetched}
 
 def parse_size_gb(size_str):
     \"\"\"将参数量标记转为大致模型文件大小(GB)\"\"\"
@@ -2196,10 +2227,12 @@ if big_models and show_all != 'true':
     print()
 
 # 底部提示
+next_page = start_page + pages_fetched
 print(f'  \033[2m────────────────────────────────────────────────────────\033[0m')
-print(f'  \033[2m数据来源: https://ollama.com/search\033[0m')
+print(f'  \033[2m数据来源: https://ollama.com/search  (已获取第 {start_page}~{start_page + pages_fetched - 1} 页)\033[0m')
 if show_all != 'true' and effective_vram > 0:
     print(f'  \033[2m绿色参数 = 适合本机 | 使用 --all 查看全部模型\033[0m')
+print(f'  \033[2m下一页: ./deploy.sh search -p {next_page} | 更多: -n 50 自动拉取多页\033[0m')
 print(f'  \033[2m拉取模型: ./deploy.sh pull <模型名>\033[0m')
 print()
 " 2>/dev/null

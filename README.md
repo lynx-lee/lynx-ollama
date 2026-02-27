@@ -136,9 +136,12 @@ git clone <repo-url> && cd lynx-ollama
 # 显示所有模型不过滤硬件
 ./deploy.sh search coder --all
 
-# 显示更多结果 / 翻页
+# 显示更多结果（超过 20 条自动拉取多页）
 ./deploy.sh search -n 50
-./deploy.sh search -p 2
+
+# 从第 3 页开始浏览 / 组合翻页
+./deploy.sh search -p 3
+./deploy.sh search -n 100 -p 2
 ```
 
 **功能特点：**
@@ -146,7 +149,8 @@ git clone <repo-url> && cd lynx-ollama
 - 自动检测本机 GPU / 统一内存 / CPU-only 环境，过滤出可运行的模型
 - 绿色标记适合本机的参数规格，灰色标记超出容量的规格
 - 若本地 Ollama 服务在运行，自动选用小模型翻译英文描述为中文
-- 显示每个模型的安装命令，自动推荐最大可用参数版本
+- 显示每个模型的完整描述、下载量、更新时间（中文）和安装命令
+- 超过 20 条结果自动拉取多页，底部提示下一页命令
 
 ## 推荐模型（120GB VRAM）
 
