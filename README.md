@@ -211,6 +211,10 @@ lynx-ollama/
 └── README.md              # 项目文档
 ```
 
+## 作者
+
+**lynxlee**
+
 ## License
 
 MIT
