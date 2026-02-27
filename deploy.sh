@@ -1954,93 +1954,66 @@ def translate_desc(text):
     return text
 
 # ============================================================
-# 解析 HTML
+# 解析 HTML — 基于 x-test-* 属性精确提取
 # ============================================================
 models = []
 
-# 方法1: 搜索 JSON-LD 或 script 中的数据
-# 方法2: 解析 HTML 结构 (基于 <li> 或 <a> 的模型卡片)
-# Ollama 的搜索页面将模型放在 <li> 标签中，每个包含名称、描述等
+# 按 <li x-test-model> 分割模型卡片
+cards = re.split(r'<li\s+x-test-model[^>]*>', content)
+cards = cards[1:]  # 第一段是页面头部，跳过
 
-# 尝试匹配模型卡片: 搜索 href=\"/library/xxx\" 的链接
-# 页面结构：每个模型是一个含 /library/name 链接的块
-
-# 匹配所有 /library/模型名 的链接块
-# 模型名后面跟着描述文本和元信息（pulls/tags/updated）
-
-# 使用更通用的解析方式：按行扫描提取关键信息
-lines = content.split('\n')
-
-current_model = None
-for line in lines:
-    line = line.strip()
-
-    # 检测模型链接  href=\"/library/xxx\"
-    lib_match = re.search(r'href=\"/library/([^\"/?]+)\"', line)
-    if lib_match:
-        if current_model and current_model.get('name'):
-            models.append(current_model)
-        current_model = {
-            'name': lib_match.group(1),
-            'desc': '',
-            'sizes': [],
-            'tags': [],
-            'pulls': '',
-            'updated': '',
-        }
+for card in cards:
+    name_m = re.search(r'<span\s+x-test-search-response-title[^>]*>([^<]+)</span>', card)
+    if not name_m:
         continue
 
-    if current_model is None:
-        continue
+    model = {
+        'name': name_m.group(1).strip(),
+        'desc': '',
+        'sizes': [],
+        'tags': [],
+        'pulls': '',
+        'updated': '',
+    }
 
-    # 提取描述文本（通常是 <p> 或 <span> 中的纯文本）
-    # 跳过含大量标签的行
-    text = re.sub(r'<[^>]+>', ' ', line).strip()
-    text = html_mod.unescape(text).strip()
+    # 提取能力标签 (vision/tools/thinking/embedding/code/cloud)
+    for cap_m in re.finditer(r'<span\s+x-test-capability[^>]*>([^<]+)</span>', card):
+        tag = cap_m.group(1).strip().lower()
+        if tag and tag not in model['tags']:
+            model['tags'].append(tag)
 
-    if not text:
-        continue
+    # 提取参数大小 (7b/14b/70b/0.6b/350m 等)
+    for size_m in re.finditer(r'<span\s+x-test-size[^>]*>([^<]+)</span>', card):
+        s = size_m.group(1).strip().lower()
+        if s and s not in model['sizes']:
+            model['sizes'].append(s)
 
-    # 检测 pulls 数据
-    pulls_match = re.search(r'([\d,.]+[KMB]?)\s*Pulls', text, re.IGNORECASE)
-    if pulls_match:
-        current_model['pulls'] = pulls_match.group(1)
-        continue
+    # 提取下载量
+    pull_m = re.search(r'<span\s+x-test-pull-count[^>]*>([^<]+)</span>', card)
+    if pull_m:
+        model['pulls'] = pull_m.group(1).strip()
 
-    # 检测更新时间
-    updated_match = re.search(r'Updated?\s+(.+?\s+ago)', text, re.IGNORECASE)
-    if updated_match:
-        current_model['updated'] = updated_match.group(1)
-        continue
+    # 提取更新时间
+    upd_m = re.search(r'<span\s+x-test-updated[^>]*>([^<]+)</span>', card)
+    if upd_m:
+        model['updated'] = upd_m.group(1).strip()
 
-    # 检测参数大小标签 (如 7b, 14b, 70b, 0.6b, 350m 等)
-    size_matches = re.findall(r'\b(\d+(?:\.\d+)?[bBmM])\b', text)
-    if size_matches and len(text) < 80:
-        for s in size_matches:
-            s_lower = s.lower()
-            if s_lower not in [x.lower() for x in current_model['sizes']]:
-                current_model['sizes'].append(s_lower)
-        continue
+    # 提取描述文本 (在 <p> 标签中的较长文本)
+    desc_m = re.search(r'<p[^>]*>([^<]{20,})</p>', card)
+    if desc_m:
+        model['desc'] = html_mod.unescape(desc_m.group(1).strip())
+    else:
+        # 回退：找 href="/library/name" 后的较长纯文本
+        text_blocks = re.findall(r'>([^<]{25,})<', card)
+        for tb in text_blocks:
+            tb = html_mod.unescape(tb.strip())
+            if tb and not re.match(r'^[\d,.]+[KMB]?\s', tb):
+                model['desc'] = tb
+                break
 
-    # 检测能力标签
-    tag_keywords = ['vision', 'tools', 'thinking', 'embedding', 'cloud', 'code']
-    text_lower = text.lower()
-    for kw in tag_keywords:
-        if kw == text_lower or (len(text) < 20 and kw in text_lower):
-            if kw not in current_model['tags']:
-                current_model['tags'].append(kw)
+    models.append(model)
 
-    # 描述文本（较长的纯文本行，且非标签/数据行）
-    if len(text) > 20 and not current_model['desc'] and not re.match(r'^[\d,.]+[KMB]?\s', text):
-        # 排除纯标签行
-        if not all(w.lower() in tag_keywords for w in text.split()):
-            current_model['desc'] = text
-
-# 别忘了最后一个
-if current_model and current_model.get('name'):
-    models.append(current_model)
-
-# 去重（同名模型可能出现多次）
+# 去重
 seen = set()
 unique_models = []
 for m in models:
@@ -2133,6 +2106,22 @@ def format_pulls(p):
         return ''
     return f'⬇ {p}'
 
+def format_updated(u):
+    if not u:
+        return ''
+    # 翻译英文时间为中文
+    t = u.strip()
+    t = re.sub(r'(\d+)\s+seconds?\s+ago', r'\1秒前', t)
+    t = re.sub(r'(\d+)\s+minutes?\s+ago', r'\1分钟前', t)
+    t = re.sub(r'(\d+)\s+hours?\s+ago', r'\1小时前', t)
+    t = re.sub(r'(\d+)\s+days?\s+ago', r'\1天前', t)
+    t = re.sub(r'(\d+)\s+weeks?\s+ago', r'\1周前', t)
+    t = re.sub(r'(\d+)\s+months?\s+ago', r'\1个月前', t)
+    t = re.sub(r'(\d+)\s+years?\s+ago', r'\1年前', t)
+    t = t.replace('yesterday', '昨天')
+    t = t.replace('just now', '刚刚')
+    return f'🕐 {t}'
+
 max_show = ${max_results}
 shown = 0
 
@@ -2153,13 +2142,14 @@ if fit_models:
         pulls = m.get('pulls', '')
         updated = m.get('updated', '')
 
-        # 第1行: 序号 + 名称 + 下载量
+        # 第1行: 序号 + 名称 + 下载量 + 更新时间
         pulls_str = format_pulls(pulls)
+        updated_str = format_updated(updated)
         print(f'  \033[1;36m{shown:>2}. {name}\033[0m', end='')
         if pulls_str:
             print(f'  \033[2m{pulls_str}\033[0m', end='')
-        if updated:
-            print(f'  \033[2m({updated})\033[0m', end='')
+        if updated_str:
+            print(f'  \033[2m{updated_str}\033[0m', end='')
         print()
 
         # 第2行: 描述 (翻译后，完整显示)
