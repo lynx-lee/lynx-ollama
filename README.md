@@ -69,7 +69,7 @@ git clone <repo-url> && cd lynx-ollama
 | `pull <model>` | 拉取/更新模型 |
 | `models` | 列出所有已下载模型 |
 | `run <model>` | 交互式运行模型 |
-| `search [keyword]` | 搜索 Ollama 官网模型（自动匹配本机硬件） |
+| `search [keyword]` | 搜索 Ollama 官网模型（自动匹配本机硬件，本地模型翻译描述） |
 
 ### GPU 与性能
 
@@ -118,6 +118,35 @@ git clone <repo-url> && cd lynx-ollama
 | `OLLAMA_KEEP_ALIVE` | 模型驻留时间 | 统一内存≥64G→30m |
 
 支持自动识别统一内存架构（GH200 / Grace / GB10 / GB200 / Jetson）。
+
+## 模型搜索
+
+`search` 命令从 [Ollama 官网](https://ollama.com/search) 检索模型，自动按本机硬件过滤，并翻译模型描述为中文：
+
+```bash
+# 浏览热门模型（自动匹配本机 VRAM）
+./deploy.sh search
+
+# 按关键词搜索
+./deploy.sh search qwen
+
+# 按类型筛选（vision|tools|thinking|embedding|cloud）
+./deploy.sh search -c vision
+
+# 显示所有模型不过滤硬件
+./deploy.sh search coder --all
+
+# 显示更多结果 / 翻页
+./deploy.sh search -n 50
+./deploy.sh search -p 2
+```
+
+**功能特点：**
+
+- 自动检测本机 GPU / 统一内存 / CPU-only 环境，过滤出可运行的模型
+- 绿色标记适合本机的参数规格，灰色标记超出容量的规格
+- 若本地 Ollama 服务在运行，自动选用小模型翻译英文描述为中文
+- 显示每个模型的安装命令，自动推荐最大可用参数版本
 
 ## 推荐模型（120GB VRAM）
 
