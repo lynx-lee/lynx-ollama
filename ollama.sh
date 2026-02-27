@@ -2422,7 +2422,7 @@ if fit_models:
             best = max(fit_sz, key=lambda s: parse_size_gb(s))
             if best != sizes[0] if sizes else True:
                 install_tag = f':{best}'
-        print(f'      \033[2m$ ollama pull {name}{install_tag}\033[0m')
+        print(f'      \033[2m$ ./ollama.sh pull {name}{install_tag}\033[0m')
         print()
 
     if len(fit_models) > max_show:
