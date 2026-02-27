@@ -2048,7 +2048,7 @@ do_search() {
     local ollama_translate_model=""
     local ollama_api="http://localhost:11434"
 
-    # 尝试找到一个可用的小模型做翻译（优先选参数量最小的通用模型）
+    # 尝试找到一个可用的模型做翻译（优先 qwen3:8b，其次按大小选最小通用模型）
     if curl -sf --connect-timeout 2 "${ollama_api}/api/tags" &>/dev/null; then
         local available_models
         available_models=$(curl -sf "${ollama_api}/api/tags" 2>/dev/null | python3 -c "
@@ -2058,6 +2058,11 @@ try:
     models = data.get('models', [])
     if not models:
         sys.exit(0)
+    names = [m['name'] for m in models]
+    # 首选：qwen3:8b（翻译质量与速度的最佳平衡）
+    for n in names:
+        if n == 'qwen3:8b' or n.startswith('qwen3:8b-'):
+            print(n); sys.exit(0)
     # 排除纯 embedding 模型（不适合翻译）
     embed_kw = ['embed', 'nomic-embed', 'bge-', 'mxbai-embed', 'all-minilm']
     # 通用文本模型关键词（适合翻译）
@@ -2083,7 +2088,43 @@ except: pass
 " 2>/dev/null)
         if [ -n "$available_models" ]; then
             ollama_translate_model="$available_models"
-            log_info "将使用本地模型 ${ollama_translate_model} 翻译描述"
+            # 如果选中的不是 qwen3:8b，建议下载
+            local is_qwen3_8b=false
+            case "$ollama_translate_model" in
+                qwen3:8b|qwen3:8b-*) is_qwen3_8b=true ;;
+            esac
+            if [ "$is_qwen3_8b" = false ]; then
+                log_warn "推荐翻译模型 qwen3:8b 未安装，当前使用 ${ollama_translate_model} 替代"
+                echo -ne "  是否立即下载 qwen3:8b 以获得更好的翻译效果? [y/N]: "
+                read -r dl_qwen3 < /dev/tty 2>/dev/null || dl_qwen3=""
+                if [[ "$dl_qwen3" =~ ^[yY]$ ]]; then
+                    log_info "正在下载 qwen3:8b ..."
+                    if docker exec ollama ollama pull qwen3:8b; then
+                        ollama_translate_model="qwen3:8b"
+                        log_success "qwen3:8b 下载完成，已切换为翻译模型"
+                    else
+                        log_warn "下载失败，继续使用 ${ollama_translate_model}"
+                    fi
+                else
+                    log_info "跳过下载，使用 ${ollama_translate_model} 翻译"
+                fi
+            else
+                log_info "将使用本地模型 ${ollama_translate_model} 翻译描述"
+            fi
+        else
+            # 本地无任何模型，直接提示下载 qwen3:8b
+            log_warn "本地无可用翻译模型"
+            echo -ne "  是否立即下载推荐翻译模型 qwen3:8b? [y/N]: "
+            read -r dl_qwen3 < /dev/tty 2>/dev/null || dl_qwen3=""
+            if [[ "$dl_qwen3" =~ ^[yY]$ ]]; then
+                log_info "正在下载 qwen3:8b ..."
+                if docker exec ollama ollama pull qwen3:8b; then
+                    ollama_translate_model="qwen3:8b"
+                    log_success "qwen3:8b 下载完成"
+                else
+                    log_warn "下载失败，搜索结果将不翻译"
+                fi
+            fi
         fi
     fi
 
