@@ -20,6 +20,7 @@
 #   backup      备份模型与配置
 #   restore     恢复模型与配置
 #   pull        拉取/更新模型
+#   rm          删除已下载模型
 #   models      列出已下载模型
 #   run         交互式运行模型
 #   bench       运行性能基准测试
@@ -904,6 +905,140 @@ do_pull() {
     # 显示模型信息
     echo ""
     docker exec ollama ollama show "$model" --modelfile 2>/dev/null | head -5 || true
+}
+
+# 删除模型
+do_rm() {
+    local model="${1:-}"
+    local force=false
+
+    # 解析参数
+    if [ "$model" = "-f" ] || [ "$model" = "--force" ]; then
+        force=true
+        model="${2:-}"
+    elif [ "${2:-}" = "-f" ] || [ "${2:-}" = "--force" ]; then
+        force=true
+    fi
+
+    if [ -z "$model" ]; then
+        echo -e "  ${BOLD}用法:${NC} ./deploy.sh rm <model_name> [-f]"
+        echo ""
+        echo -e "  ${BOLD}选项:${NC}"
+        echo "    -f, --force   跳过确认直接删除"
+        echo ""
+
+        # 列出已有模型
+        if is_api_ready; then
+            echo -e "  ${BOLD}已下载模型:${NC}"
+            echo ""
+            curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+models = data.get('models', [])
+if not models:
+    print('    (无)')
+else:
+    for m in models:
+        size_gb = m.get('size', 0) / (1024**3)
+        print(f\"    {m['name']:<45s} {size_gb:>6.1f} GiB\")
+    total_gb = sum(m.get('size', 0) for m in models) / (1024**3)
+    print(f\"\n    共 {len(models)} 个模型，总计 {total_gb:.1f} GiB\")
+" 2>/dev/null || echo "    (无法获取模型列表)"
+            echo ""
+        fi
+
+        echo "  示例:"
+        echo "    ./deploy.sh rm qwen2.5:72b"
+        echo "    ./deploy.sh rm nomic-embed-text -f"
+        return 0
+    fi
+
+    # 确保服务运行
+    if ! is_api_ready; then
+        log_error "Ollama 服务未运行，请先启动: ./deploy.sh start"
+        exit 1
+    fi
+
+    # 检查模型是否存在
+    local model_exists
+    model_exists=$(curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+names = [m['name'] for m in data.get('models', [])]
+target = '${model}'
+# 精确匹配或前缀匹配（如 qwen2.5 匹配 qwen2.5:latest）
+found = [n for n in names if n == target or n.startswith(target + ':') or target == n.split(':')[0]]
+for f in found:
+    print(f)
+" 2>/dev/null)
+
+    if [ -z "$model_exists" ]; then
+        log_error "模型 '${model}' 不存在"
+        echo ""
+        echo "  已有模型:"
+        docker exec ollama ollama list 2>/dev/null | tail -n +2 | awk '{print "    " $1}' || true
+        return 1
+    fi
+
+    # 检查模型是否正在运行
+    local is_running
+    is_running=$(curl -sf "${OLLAMA_API}/api/ps" 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+running = [m['name'] for m in data.get('models', [])]
+target = '${model}'
+for r in running:
+    if r == target or r.startswith(target + ':') or target == r.split(':')[0]:
+        print(r)
+" 2>/dev/null)
+
+    if [ -n "$is_running" ]; then
+        log_warn "模型 ${is_running} 正在运行中，删除后将卸载"
+    fi
+
+    # 获取模型大小
+    local model_size
+    model_size=$(curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for m in data.get('models', []):
+    if m['name'] == '${model}' or m['name'].startswith('${model}:') or '${model}' == m['name'].split(':')[0]:
+        print(f\"{m.get('size', 0) / (1024**3):.1f} GiB\")
+        break
+" 2>/dev/null)
+
+    # 确认删除
+    if [ "$force" != true ]; then
+        echo ""
+        echo -e "  ${YELLOW}将删除模型: ${model_exists}${NC}"
+        [ -n "$model_size" ] && echo -e "  大小: ${model_size}"
+        echo ""
+        read -rp "  确认删除? [y/N]: " confirm
+        if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+            log_info "取消删除"
+            return 0
+        fi
+    fi
+
+    # 执行删除
+    log_info "删除模型: ${model}"
+    echo ""
+
+    docker exec ollama ollama rm "$model"
+
+    echo ""
+    log_success "模型 ${model} 已删除"
+
+    # 显示剩余模型数和空间
+    local remaining
+    remaining=$(curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+models = data.get('models', [])
+total_gb = sum(m.get('size', 0) for m in models) / (1024**3)
+print(f'剩余 {len(models)} 个模型，共 {total_gb:.1f} GiB')
+" 2>/dev/null)
+    [ -n "$remaining" ] && log_info "$remaining"
 }
 
 # 列出模型
@@ -2285,6 +2420,7 @@ show_help() {
     echo ""
     echo -e "${BOLD}模型管理:${NC}"
     echo "  pull <model>        拉取/更新模型"
+    echo "  rm <model>          删除已下载模型 (-f 跳过确认)"
     echo "  models              列出所有已下载模型"
     echo "  run <model>         交互式运行模型"
     echo "  search [keyword]    搜索Ollama官网模型 (自动匹配本机硬件)"
@@ -2387,6 +2523,9 @@ main() {
             ;;
         pull)
             do_pull "$@"
+            ;;
+        rm|remove|delete)
+            do_rm "$@"
             ;;
         models|model)
             do_models
