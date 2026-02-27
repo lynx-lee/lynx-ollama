@@ -25,6 +25,7 @@
 #   exec        进入容器Shell
 #   health      执行健康检查
 #   optimize    检测硬件并优化docker-compose配置
+#   search      搜索Ollama官网模型(自动匹配本机硬件)
 #   help        显示帮助信息
 #
 #===============================================================================
@@ -1724,6 +1725,546 @@ COMPOSE_EOF
     fi
 }
 
+# 搜索 Ollama 官网模型
+do_search() {
+    local query=""
+    local category=""
+    local show_all=false
+    local max_results=20
+    local page=1
+
+    # 解析参数
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -c|--category) category="$2"; shift 2 ;;
+            -n|--num)      max_results="$2"; shift 2 ;;
+            -p|--page)     page="$2"; shift 2 ;;
+            --all)         show_all=true; shift ;;
+            -h|--help)
+                echo -e "  ${BOLD}用法:${NC} ./deploy.sh search [关键词] [选项]"
+                echo ""
+                echo -e "  ${BOLD}选项:${NC}"
+                echo "    -c, --category <type>   按类型筛选 (vision|tools|thinking|embedding|cloud)"
+                echo "    -n, --num <count>       显示数量 (默认20)"
+                echo "    -p, --page <num>        页码 (默认1)"
+                echo "    --all                   显示所有模型 (不按本机硬件过滤)"
+                echo ""
+                echo -e "  ${BOLD}示例:${NC}"
+                echo "    ./deploy.sh search                  # 浏览热门模型 (自动匹配本机)"
+                echo "    ./deploy.sh search qwen             # 搜索 qwen 相关模型"
+                echo "    ./deploy.sh search -c vision        # 搜索视觉模型"
+                echo "    ./deploy.sh search coder --all      # 搜索代码模型 (不过滤)"
+                echo "    ./deploy.sh search -n 50            # 显示更多结果"
+                return 0
+                ;;
+            -*)
+                log_error "未知选项: $1"
+                return 1
+                ;;
+            *)
+                query="$1"; shift
+                ;;
+        esac
+    done
+
+    log_info "检索 Ollama 官网模型库..."
+    echo ""
+
+    #--- 1. 检测本机硬件容量 ---
+    local effective_vram_gb=0
+    local hw_summary=""
+
+    if [ "$show_all" != true ]; then
+        # 检测内存
+        local total_mem_mb=0
+        if [ -f /proc/meminfo ]; then
+            total_mem_mb=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
+        elif command -v sysctl &>/dev/null; then
+            local mem_bytes
+            mem_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo "0")
+            total_mem_mb=$((mem_bytes / 1024 / 1024))
+        fi
+        local total_mem_gb=$((total_mem_mb / 1024))
+
+        # 检测 GPU
+        local gpu_vram_gb=0
+        local gpu_name="N/A"
+        local is_unified_memory=false
+
+        if command -v nvidia-smi &>/dev/null; then
+            gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "N/A")
+            local gpu_vram_mb
+            gpu_vram_mb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9' || echo "0")
+            if ! [[ "$gpu_vram_mb" =~ ^[0-9]+$ ]] || [ -z "$gpu_vram_mb" ]; then
+                gpu_vram_mb=0
+            fi
+            gpu_vram_gb=$((gpu_vram_mb / 1024))
+
+            # 统一内存检测
+            local mem_diff=$((total_mem_gb - gpu_vram_gb))
+            [ "$mem_diff" -lt 0 ] && mem_diff=$((-mem_diff))
+            if [ "$total_mem_gb" -gt 0 ] && [ "$gpu_vram_gb" -gt 0 ]; then
+                local threshold=$((total_mem_gb * 20 / 100))
+                if [ "$mem_diff" -le "$threshold" ] || echo "$gpu_name" | grep -qiE "GH200|Grace|GB10|GB200|Jetson"; then
+                    is_unified_memory=true
+                fi
+            fi
+            if echo "$gpu_name" | grep -qiE "GH200|Grace|GB10|GB200"; then
+                is_unified_memory=true
+            fi
+
+            if [ "$is_unified_memory" = true ]; then
+                local sys_reserve=4
+                [ "$total_mem_gb" -ge 128 ] && sys_reserve=8
+                effective_vram_gb=$((total_mem_gb - sys_reserve))
+                hw_summary="${gpu_name} | ${total_mem_gb}G 统一内存 | 可用 ~${effective_vram_gb}G"
+            else
+                effective_vram_gb=$gpu_vram_gb
+                hw_summary="${gpu_name} | ${gpu_vram_gb}G VRAM | 系统 ${total_mem_gb}G"
+            fi
+        else
+            # 无 GPU，仅 CPU 推理
+            effective_vram_gb=$((total_mem_gb * 70 / 100))
+            hw_summary="CPU-only | 系统 ${total_mem_gb}G | 可用 ~${effective_vram_gb}G"
+        fi
+
+        echo -e "  ${BOLD}本机硬件:${NC} ${hw_summary}"
+        echo ""
+    fi
+
+    #--- 2. 构建 URL 并抓取页面 ---
+    local url="https://ollama.com/search"
+    local params="?"
+    if [ -n "$query" ]; then
+        params="${params}q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${query}'))" 2>/dev/null || echo "$query")&"
+    fi
+    if [ -n "$category" ]; then
+        params="${params}c=${category}&"
+    fi
+    params="${params}p=${page}"
+    url="${url}${params}"
+
+    log_info "正在从 ${url} 获取数据..."
+
+    local html
+    html=$(curl -sf --connect-timeout 10 --max-time 30 \
+        -H "User-Agent: Mozilla/5.0" \
+        -H "Accept: text/html" \
+        "$url" 2>/dev/null)
+
+    if [ -z "$html" ]; then
+        log_error "无法访问 Ollama 官网，请检查网络连接"
+        echo "  提示: 可尝试手动访问 https://ollama.com/search"
+        return 1
+    fi
+
+    #--- 3. 解析 HTML 并展示 ---
+    echo "$html" | python3 -c "
+import sys
+import re
+import html as html_mod
+
+content = sys.stdin.read()
+
+# ============================================================
+# 英文 → 中文 翻译词典（模型描述常见短语）
+# ============================================================
+TRANSLATIONS = {
+    # 模型系列与类型
+    'large language model': '大语言模型',
+    'language model': '语言模型',
+    'vision language model': '视觉语言模型',
+    'multimodal model': '多模态模型',
+    'mixture of experts': '混合专家',
+    'embedding model': '嵌入模型',
+    'code model': '代码模型',
+    'coding model': '代码模型',
+    'translation model': '翻译模型',
+    'instruction-tuned': '指令调优',
+    'instruction tuned': '指令调优',
+    'fine-tuned': '微调',
+    'fine tuned': '微调',
+    'pre-trained': '预训练',
+
+    # 能力描述
+    'on-device deployment': '设备端部署',
+    'on-device': '设备端',
+    'efficient inference': '高效推理',
+    'long context': '长上下文',
+    'function calling': '函数调用',
+    'tool use': '工具使用',
+    'tool calling': '工具调用',
+    'code generation': '代码生成',
+    'code completion': '代码补全',
+    'text generation': '文本生成',
+    'text embedding': '文本嵌入',
+    'text-to-text': '文本到文本',
+    'image understanding': '图像理解',
+    'image recognition': '图像识别',
+    'document understanding': '文档理解',
+    'creative writing': '创意写作',
+    'role-playing': '角色扮演',
+    'multi-turn dialogue': '多轮对话',
+    'multilingual': '多语言',
+    'multi-lingual': '多语言',
+    'reasoning': '推理',
+    'thinking': '思维推理',
+    'agentic': '智能体',
+    'agent': '智能体',
+    'agents': '智能体',
+    'agentic workflows': '智能体工作流',
+    'software engineering': '软件工程',
+    'local development': '本地开发',
+    'on-device deployment': '设备端部署',
+    'edge deployment': '边缘部署',
+
+    # 常见形容词/描述
+    'state-of-the-art': '最先进的',
+    'open-source': '开源',
+    'open source': '开源',
+    'lightweight': '轻量级',
+    'small language model': '小型语言模型',
+    'general purpose': '通用',
+    'general-purpose': '通用',
+    'high-performance': '高性能',
+    'high performance': '高性能',
+    'exceptional': '卓越的',
+    'powerful': '强大的',
+    'advanced': '先进的',
+    'versatile': '多用途的',
+    'compact': '紧凑的',
+    'optimized for': '针对...优化',
+    'designed for': '设计用于',
+    'built for': '构建用于',
+    'focused on': '专注于',
+    'excels at': '擅长',
+    'supports': '支持',
+    'featuring': '具备',
+
+    # 场景/领域
+    'productivity': '生产力',
+    'coding': '编码',
+    'mathematics': '数学',
+    'science': '科学',
+    'STEM': 'STEM(理工科)',
+    'enterprise': '企业级',
+    'research': '研究',
+    'commercial use': '商业使用',
+
+    # 模型系列名词
+    'family of models': '系列模型',
+    'series of models': '系列模型',
+    'model family': '模型系列',
+    'hybrid model': '混合模型',
+    'hybrid models': '混合模型',
+    'dense model': '稠密模型',
+    'dense models': '稠密模型',
+    'sparse model': '稀疏模型',
+
+    # 常见动词短语
+    'delivering': '提供',
+    'offering': '提供',
+    'providing': '提供',
+    'enabling': '赋能',
+    'achieving': '达到',
+    'outperforming': '超越',
+    'surpassing': '超过',
+
+    # 补充
+    'with': '，具有',
+    'and': '和',
+    'for': '用于',
+    'across': '跨',
+    'including': '包括',
+    'such as': '例如',
+    'based on': '基于',
+}
+
+def translate_desc(text):
+    \"\"\"基于词典的英翻中，对常见短语进行替换\"\"\"
+    if not text:
+        return '(无描述)'
+    result = text
+
+    # 按短语长度降序替换（避免短词干扰长词组）
+    sorted_phrases = sorted(TRANSLATIONS.items(), key=lambda x: -len(x[0]))
+    for eng, chn in sorted_phrases:
+        pattern = re.compile(re.escape(eng), re.IGNORECASE)
+        result = pattern.sub(chn, result)
+
+    return result
+
+# ============================================================
+# 解析 HTML
+# ============================================================
+models = []
+
+# 方法1: 搜索 JSON-LD 或 script 中的数据
+# 方法2: 解析 HTML 结构 (基于 <li> 或 <a> 的模型卡片)
+# Ollama 的搜索页面将模型放在 <li> 标签中，每个包含名称、描述等
+
+# 尝试匹配模型卡片: 搜索 href=\"/library/xxx\" 的链接
+# 页面结构：每个模型是一个含 /library/name 链接的块
+
+# 匹配所有 /library/模型名 的链接块
+# 模型名后面跟着描述文本和元信息（pulls/tags/updated）
+
+# 使用更通用的解析方式：按行扫描提取关键信息
+lines = content.split('\n')
+
+current_model = None
+for line in lines:
+    line = line.strip()
+
+    # 检测模型链接  href=\"/library/xxx\"
+    lib_match = re.search(r'href=\"/library/([^\"/?]+)\"', line)
+    if lib_match:
+        if current_model and current_model.get('name'):
+            models.append(current_model)
+        current_model = {
+            'name': lib_match.group(1),
+            'desc': '',
+            'sizes': [],
+            'tags': [],
+            'pulls': '',
+            'updated': '',
+        }
+        continue
+
+    if current_model is None:
+        continue
+
+    # 提取描述文本（通常是 <p> 或 <span> 中的纯文本）
+    # 跳过含大量标签的行
+    text = re.sub(r'<[^>]+>', ' ', line).strip()
+    text = html_mod.unescape(text).strip()
+
+    if not text:
+        continue
+
+    # 检测 pulls 数据
+    pulls_match = re.search(r'([\d,.]+[KMB]?)\s*Pulls', text, re.IGNORECASE)
+    if pulls_match:
+        current_model['pulls'] = pulls_match.group(1)
+        continue
+
+    # 检测更新时间
+    updated_match = re.search(r'Updated?\s+(.+?\s+ago)', text, re.IGNORECASE)
+    if updated_match:
+        current_model['updated'] = updated_match.group(1)
+        continue
+
+    # 检测参数大小标签 (如 7b, 14b, 70b, 0.6b, 350m 等)
+    size_matches = re.findall(r'\b(\d+(?:\.\d+)?[bBmM])\b', text)
+    if size_matches and len(text) < 80:
+        for s in size_matches:
+            s_lower = s.lower()
+            if s_lower not in [x.lower() for x in current_model['sizes']]:
+                current_model['sizes'].append(s_lower)
+        continue
+
+    # 检测能力标签
+    tag_keywords = ['vision', 'tools', 'thinking', 'embedding', 'cloud', 'code']
+    text_lower = text.lower()
+    for kw in tag_keywords:
+        if kw == text_lower or (len(text) < 20 and kw in text_lower):
+            if kw not in current_model['tags']:
+                current_model['tags'].append(kw)
+
+    # 描述文本（较长的纯文本行，且非标签/数据行）
+    if len(text) > 20 and not current_model['desc'] and not re.match(r'^[\d,.]+[KMB]?\s', text):
+        # 排除纯标签行
+        if not all(w.lower() in tag_keywords for w in text.split()):
+            current_model['desc'] = text
+
+# 别忘了最后一个
+if current_model and current_model.get('name'):
+    models.append(current_model)
+
+# 去重（同名模型可能出现多次）
+seen = set()
+unique_models = []
+for m in models:
+    if m['name'] not in seen:
+        seen.add(m['name'])
+        unique_models.append(m)
+models = unique_models
+
+if not models:
+    print('  未找到任何模型。请尝试其他搜索关键词或直接访问:')
+    print('  https://ollama.com/search')
+    sys.exit(0)
+
+# ============================================================
+# 硬件过滤
+# ============================================================
+effective_vram = ${effective_vram_gb}
+show_all = '${show_all}'
+
+def parse_size_gb(size_str):
+    \"\"\"将参数量标记转为大致模型文件大小(GB)\"\"\"
+    size_str = size_str.lower().strip()
+    m = re.match(r'([\d.]+)([bm])', size_str)
+    if not m:
+        return 0
+    num = float(m.group(1))
+    unit = m.group(2)
+    if unit == 'm':
+        # 百万参数，按 FP16 约 0.002GB/M 参数
+        return num * 0.002
+    else:
+        # 十亿参数，按 Q4 量化约 0.6GB/B 参数
+        return num * 0.6
+
+def get_fit_sizes(sizes, vram_gb):
+    \"\"\"过滤出适合指定 VRAM 的参数大小\"\"\"
+    if not sizes:
+        return sizes, True  # 无参数信息时保留
+    fit = []
+    for s in sizes:
+        est_gb = parse_size_gb(s)
+        if est_gb <= vram_gb * 0.85:  # 留 15% 余量
+            fit.append(s)
+    return fit, len(fit) > 0
+
+# 分类：适合 / 不适合
+fit_models = []
+big_models = []
+
+for m in models:
+    if show_all == 'true' or effective_vram == 0:
+        fit_models.append(m)
+    else:
+        fit_sizes, has_fit = get_fit_sizes(m['sizes'], effective_vram)
+        if has_fit:
+            m['fit_sizes'] = fit_sizes
+            fit_models.append(m)
+        else:
+            big_models.append(m)
+
+# ============================================================
+# 格式化输出
+# ============================================================
+
+# 标签中文映射
+TAG_CN = {
+    'vision': '👁 视觉',
+    'tools': '🔧 工具',
+    'thinking': '🧠 推理',
+    'embedding': '📐 嵌入',
+    'cloud': '☁ 云端',
+    'code': '💻 代码',
+}
+
+def format_sizes(sizes, fit_sizes=None):
+    if not sizes:
+        return '(查看详情)'
+    if fit_sizes is not None:
+        parts = []
+        for s in sizes:
+            if s in fit_sizes:
+                parts.append('\033[0;32m' + s + '\033[0m')  # 绿色=适合
+            else:
+                parts.append('\033[2m' + s + '\033[0m')      # 暗色=太大
+        return ' | '.join(parts)
+    return ' | '.join(sizes)
+
+def format_pulls(p):
+    if not p:
+        return ''
+    return f'⬇ {p}'
+
+max_show = ${max_results}
+shown = 0
+
+if fit_models:
+    if show_all != 'true' and effective_vram > 0:
+        print(f'  \033[1m✅ 适合本机的模型 ({len(fit_models)} 个，VRAM ≈{effective_vram}G):\033[0m')
+    else:
+        print(f'  \033[1m📦 模型列表 ({len(fit_models)} 个):\033[0m')
+    print()
+
+    for m in fit_models[:max_show]:
+        shown += 1
+        name = m['name']
+        desc = translate_desc(m.get('desc', ''))
+        sizes = m.get('sizes', [])
+        fit_sz = m.get('fit_sizes', sizes)
+        tags = m.get('tags', [])
+        pulls = m.get('pulls', '')
+        updated = m.get('updated', '')
+
+        # 第1行: 序号 + 名称 + 下载量
+        pulls_str = format_pulls(pulls)
+        print(f'  \033[1;36m{shown:>2}. {name}\033[0m', end='')
+        if pulls_str:
+            print(f'  \033[2m{pulls_str}\033[0m', end='')
+        if updated:
+            print(f'  \033[2m({updated})\033[0m', end='')
+        print()
+
+        # 第2行: 描述 (翻译后)
+        if desc:
+            # 截断过长描述
+            if len(desc) > 100:
+                desc = desc[:97] + '...'
+            print(f'      {desc}')
+
+        # 第3行: 参数规格 + 标签
+        info_parts = []
+        size_str = format_sizes(sizes, fit_sz if show_all != 'true' else None)
+        if size_str:
+            info_parts.append(f'参数: {size_str}')
+        if tags:
+            tag_str = ' '.join(TAG_CN.get(t, t) for t in tags)
+            info_parts.append(tag_str)
+        if info_parts:
+            print(f'      {\"  │  \".join(info_parts)}')
+
+        # 第4行: 安装命令
+        # 选择最大的适合大小，或默认
+        install_tag = ''
+        if fit_sz:
+            # 找最大适合尺寸
+            best = max(fit_sz, key=lambda s: parse_size_gb(s))
+            if best != sizes[0] if sizes else True:
+                install_tag = f':{best}'
+        print(f'      \033[2m$ ollama pull {name}{install_tag}\033[0m')
+        print()
+
+    if len(fit_models) > max_show:
+        print(f'  \033[2m... 还有 {len(fit_models) - max_show} 个模型，使用 -n {len(fit_models)} 查看全部\033[0m')
+        print()
+
+if big_models and show_all != 'true':
+    print(f'  \033[2m──────────────────────────────────────────────────────────────\033[0m')
+    print(f'  \033[1;33m⚠ 超出本机容量的模型 ({len(big_models)} 个):\033[0m')
+    for m in big_models[:5]:
+        sizes_str = ' | '.join(m.get('sizes', []))
+        est = max((parse_size_gb(s) for s in m.get('sizes', ['0b'])), default=0)
+        print(f'      \033[2m{m[\"name\"]:30s} 参数: {sizes_str:20s} 最小需 ~{est:.0f}G VRAM\033[0m')
+    if len(big_models) > 5:
+        print(f'      \033[2m... 还有 {len(big_models) - 5} 个\033[0m')
+    print()
+
+# 底部提示
+print(f'  \033[2m────────────────────────────────────────────────────────\033[0m')
+print(f'  \033[2m数据来源: https://ollama.com/search\033[0m')
+if show_all != 'true' and effective_vram > 0:
+    print(f'  \033[2m绿色参数 = 适合本机 | 使用 --all 查看全部模型\033[0m')
+print(f'  \033[2m拉取模型: ./deploy.sh pull <模型名>\033[0m')
+print()
+" 2>/dev/null
+
+    local py_exit=$?
+    if [ $py_exit -ne 0 ]; then
+        log_error "解析失败，可能是网络问题或页面结构变更"
+        echo ""
+        echo "  请直接访问: https://ollama.com/search"
+        return 1
+    fi
+}
+
 # 显示帮助
 show_help() {
     print_banner
@@ -1741,6 +2282,9 @@ show_help() {
     echo "  pull <model>        拉取/更新模型"
     echo "  models              列出所有已下载模型"
     echo "  run <model>         交互式运行模型"
+    echo "  search [keyword]    搜索Ollama官网模型 (自动匹配本机硬件)"
+    echo "                        -c <type>  按类型筛选 (vision|tools|thinking|embedding)"
+    echo "                        --all      显示所有模型不过滤"
     echo ""
     echo -e "${BOLD}GPU 与性能:${NC}"
     echo "  gpu                 查看GPU详细信息"
@@ -1776,6 +2320,8 @@ show_help() {
     echo "  ./deploy.sh clean --soft"
     echo "  ./deploy.sh optimize              # 检测硬件自动优化配置"
     echo "  ./deploy.sh optimize --dry-run    # 仅查看优化方案"
+    echo "  ./deploy.sh search                # 搜索适合本机的模型"
+    echo "  ./deploy.sh search qwen -c tools  # 搜索带工具能力的qwen模型"
     echo ""
     echo -e "${BOLD}硬件:${NC} NVIDIA DGX Spark (GB10) | 120 GiB 统一内存 | CUDA 12.x"
     echo ""
@@ -1859,6 +2405,10 @@ main() {
         optimize|opt|tune)
             print_banner
             do_optimize "$@"
+            ;;
+        search|find|browse)
+            print_banner
+            do_search "$@"
             ;;
         help|--help|-h)
             show_help

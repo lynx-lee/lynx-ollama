@@ -69,6 +69,7 @@ git clone <repo-url> && cd lynx-ollama
 | `pull <model>` | 拉取/更新模型 |
 | `models` | 列出所有已下载模型 |
 | `run <model>` | 交互式运行模型 |
+| `search [keyword]` | 搜索 Ollama 官网模型（自动匹配本机硬件） |
 
 ### GPU 与性能
 
