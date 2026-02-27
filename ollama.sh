@@ -2153,7 +2153,8 @@ def ollama_translate(text):
     if text in _translate_cache:
         return _translate_cache[text]
     try:
-        prompt = f'将以下英文翻译为简洁流畅的中文，只输出翻译结果，不要解释：\n{text}'
+        # /nothink 禁用 qwen3 等模型的思考模式，避免浪费 token
+        prompt = f'/nothink\n将以下英文翻译为简洁流畅的中文，只输出翻译结果，不要解释：\n{text}'
         payload = json.dumps({
             'model': ollama_model,
             'prompt': prompt,
@@ -2168,6 +2169,8 @@ def ollama_translate(text):
         with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read().decode('utf-8'))
             translated = result.get('response', '').strip()
+            # 清理 think 标签（qwen3 等模型可能残留）
+            translated = re.sub(r'<think>.*?</think>', '', translated, flags=re.DOTALL).strip()
             # 清理可能的前缀
             for prefix in ['翻译：', '翻译:', '译文：', '译文:']:
                 if translated.startswith(prefix):
