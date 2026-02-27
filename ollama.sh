@@ -2147,29 +2147,31 @@ ollama_api = '${ollama_api}'
 _translate_cache = {}
 
 def ollama_translate(text):
-    \"\"\"用本地 Ollama 模型翻译英文为中文\"\"\"
+    \"\"\"用本地 Ollama 模型翻译英文为中文（使用 chat API，禁用 thinking）\"\"\"
     if not ollama_model or not text:
         return text
     if text in _translate_cache:
         return _translate_cache[text]
     try:
-        # /nothink 禁用 qwen3 等模型的思考模式，避免浪费 token
-        prompt = f'/nothink\n将以下英文翻译为简洁流畅的中文，只输出翻译结果，不要解释：\n{text}'
         payload = json.dumps({
             'model': ollama_model,
-            'prompt': prompt,
+            'messages': [
+                {'role': 'system', 'content': '你是翻译助手。将用户给出的英文翻译为简洁流畅的中文，只输出翻译结果，不要解释、不要前缀。'},
+                {'role': 'user', 'content': text}
+            ],
             'stream': False,
+            'think': False,
             'options': {'temperature': 0.1, 'num_predict': 256}
         }).encode('utf-8')
         req = urllib.request.Request(
-            f'{ollama_api}/api/generate',
+            f'{ollama_api}/api/chat',
             data=payload,
             headers={'Content-Type': 'application/json'}
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read().decode('utf-8'))
-            translated = result.get('response', '').strip()
-            # 清理 think 标签（qwen3 等模型可能残留）
+            translated = result.get('message', {}).get('content', '').strip()
+            # 清理可能残留的 think 标签
             translated = re.sub(r'<think>.*?</think>', '', translated, flags=re.DOTALL).strip()
             # 清理可能的前缀
             for prefix in ['翻译：', '翻译:', '译文：', '译文:']:
