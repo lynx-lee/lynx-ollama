@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一键部署工具。
+针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
 ## 硬件目标
 
@@ -27,19 +27,19 @@
 git clone <repo-url> && cd lynx-ollama
 
 # 2. 初始化环境（创建目录、拉取镜像）
-./deploy.sh init
+./ollama.sh init
 
 # 3. 根据硬件自动优化配置（可选）
-./deploy.sh optimize
+./ollama.sh optimize
 
 # 4. 启动服务
-./deploy.sh start
+./ollama.sh start
 
 # 5. 拉取模型
-./deploy.sh pull qwen2.5:72b-instruct-q4_K_M
+./ollama.sh pull qwen2.5:72b-instruct-q4_K_M
 
 # 6. 开始对话
-./deploy.sh run qwen2.5:72b-instruct-q4_K_M
+./ollama.sh run qwen2.5:72b-instruct-q4_K_M
 ```
 
 ## 前置依赖
@@ -97,13 +97,13 @@ git clone <repo-url> && cd lynx-ollama
 
 ```bash
 # 查看优化方案（不修改文件）
-./deploy.sh optimize --dry-run
+./ollama.sh optimize --dry-run
 
 # 自动应用优化
-./deploy.sh optimize
+./ollama.sh optimize
 
 # 跳过确认直接应用并重启
-./deploy.sh optimize --yes
+./ollama.sh optimize --yes
 ```
 
 **自动调整的参数：**
@@ -126,30 +126,30 @@ git clone <repo-url> && cd lynx-ollama
 
 ```bash
 # 浏览热门模型（自动匹配本机 VRAM）
-./deploy.sh search
+./ollama.sh search
 
 # 按关键词搜索
-./deploy.sh search qwen
+./ollama.sh search qwen
 
 # 按类型筛选（vision|tools|thinking|embedding|cloud）
-./deploy.sh search -c vision
+./ollama.sh search -c vision
 
 # 按最近更新排序（最新模型优先）
-./deploy.sh search --newest
-./deploy.sh search -s newest
+./ollama.sh search --newest
+./ollama.sh search -s newest
 
 # 显示所有模型不过滤硬件
-./deploy.sh search coder --all
+./ollama.sh search coder --all
 
 # 显示更多结果（超过 20 条自动拉取多页）
-./deploy.sh search -n 50
+./ollama.sh search -n 50
 
 # 从第 3 页开始浏览 / 组合翻页
-./deploy.sh search -p 3
-./deploy.sh search -n 100 -p 2
+./ollama.sh search -p 3
+./ollama.sh search -n 100 -p 2
 
 # 组合：最近更新 + 50条结果
-./deploy.sh search -s newest -n 50
+./ollama.sh search -s newest -n 50
 ```
 
 **功能特点：**
@@ -198,16 +198,16 @@ git clone <repo-url> && cd lynx-ollama
 ## 清理策略
 
 ```bash
-./deploy.sh clean --soft     # 仅停止容器（保留镜像和数据）
-./deploy.sh clean --hard     # 停止容器 + 删除镜像
-./deploy.sh clean --purge    # 删除一切（含所有模型数据）
+./ollama.sh clean --soft     # 仅停止容器（保留镜像和数据）
+./ollama.sh clean --hard     # 停止容器 + 删除镜像
+./ollama.sh clean --purge    # 删除一切（含所有模型数据）
 ```
 
 ## 项目结构
 
 ```
 lynx-ollama/
-├── deploy.sh              # 部署管理脚本
+├── ollama.sh              # 管理脚本（服务/模型/GPU/维护）
 ├── docker-compose.yaml    # Docker Compose 配置
 └── README.md              # 项目文档
 ```

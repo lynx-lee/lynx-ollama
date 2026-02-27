@@ -6,7 +6,7 @@
 # 作者: lynxlee
 #
 # 用法:
-#   ./deploy.sh [命令] [选项]
+#   ./ollama.sh [命令] [选项]
 #
 # 命令:
 #   start       启动 Ollama 服务
@@ -96,7 +96,7 @@ print_banner() {
 ║     ╚██████╔╝███████╗███████╗██║  ██║██║ ╚═╝ ██║██║  ██║        ║
 ║      ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝        ║
 ║                                                                  ║
-║          Ollama AI 服务部署工具  ·  DGX Spark Edition            ║
+║          Ollama AI 服务管理工具  ·  DGX Spark Edition            ║
 ╚══════════════════════════════════════════════════════════════════╝
 BANNER
     echo -e "${NC}"
@@ -338,7 +338,7 @@ COMPOSE_EOF
         cat > "${PROJECT_DIR}/.env" << 'ENV_EOF'
 #===============================================================================
 # Ollama 服务环境配置
-# 修改后需运行: ./deploy.sh restart
+# 修改后需运行: ./ollama.sh restart
 #===============================================================================
 
 # 基础配置
@@ -372,8 +372,8 @@ ENV_EOF
     echo ""
     echo -e "  后续步骤:"
     echo -e "    1. 编辑配置:  ${CYAN}vim ${PROJECT_DIR}/.env${NC}"
-    echo -e "    2. 启动服务:  ${CYAN}./deploy.sh start${NC}"
-    echo -e "    3. 拉取模型:  ${CYAN}./deploy.sh pull qwen2.5:72b-instruct-q4_K_M${NC}"
+    echo -e "    2. 启动服务:  ${CYAN}./ollama.sh start${NC}"
+    echo -e "    3. 拉取模型:  ${CYAN}./ollama.sh pull qwen2.5:72b-instruct-q4_K_M${NC}"
     echo ""
 }
 
@@ -415,10 +415,10 @@ do_start() {
             echo -e "    对话接口:     ${CYAN}${OLLAMA_API}/api/chat${NC}"
             echo ""
             echo -e "  ${BOLD}常用操作:${NC}"
-            echo -e "    查看日志:     ${CYAN}./deploy.sh logs${NC}"
-            echo -e "    拉取模型:     ${CYAN}./deploy.sh pull <model_name>${NC}"
-            echo -e "    运行模型:     ${CYAN}./deploy.sh run <model_name>${NC}"
-            echo -e "    健康检查:     ${CYAN}./deploy.sh health${NC}"
+            echo -e "    查看日志:     ${CYAN}./ollama.sh logs${NC}"
+            echo -e "    拉取模型:     ${CYAN}./ollama.sh pull <model_name>${NC}"
+            echo -e "    运行模型:     ${CYAN}./ollama.sh run <model_name>${NC}"
+            echo -e "    健康检查:     ${CYAN}./ollama.sh health${NC}"
             echo ""
 
             # 显示已加载的模型
@@ -427,10 +427,10 @@ do_start() {
             if [ "$model_count" -gt 0 ]; then
                 log_info "已有 ${model_count} 个模型可用"
             else
-                log_warn "尚未下载任何模型，请运行: ./deploy.sh pull <model_name>"
+                log_warn "尚未下载任何模型，请运行: ./ollama.sh pull <model_name>"
             fi
         else
-            log_error "服务启动可能存在问题，请查看日志: ./deploy.sh logs"
+            log_error "服务启动可能存在问题，请查看日志: ./ollama.sh logs"
             exit 1
         fi
     fi
@@ -679,9 +679,9 @@ do_clean() {
             log_info "请指定清理模式: --soft | --hard | --purge"
             echo ""
             echo "示例:"
-            echo "  ./deploy.sh clean --soft     # 仅停止容器"
-            echo "  ./deploy.sh clean --hard     # 停止 + 删除镜像"
-            echo "  ./deploy.sh clean --purge    # 删除一切(含模型)"
+            echo "  ./ollama.sh clean --soft     # 仅停止容器"
+            echo "  ./ollama.sh clean --hard     # 停止 + 删除镜像"
+            echo "  ./ollama.sh clean --purge    # 删除一切(含模型)"
             ;;
     esac
 }
@@ -734,7 +734,7 @@ for m in models:
     log_step "备份配置文件..."
     cp -f "${DOCKER_COMPOSE_FILE}" "${backup_path}/" 2>/dev/null || true
     cp -f "${PROJECT_DIR}/.env" "${backup_path}/" 2>/dev/null || true
-    cp -f "${PROJECT_DIR}/deploy.sh" "${backup_path}/" 2>/dev/null || true
+    cp -f "${PROJECT_DIR}/ollama.sh" "${backup_path}/" 2>/dev/null || true
 
     # 4. 备份模型数据（可选，体积巨大）
     echo ""
@@ -785,7 +785,7 @@ do_restore() {
             echo "  (无备份文件)"
         fi
         echo ""
-        echo "用法: ./deploy.sh restore <backup_file>"
+        echo "用法: ./ollama.sh restore <backup_file>"
         exit 0
     fi
 
@@ -856,7 +856,7 @@ do_restore() {
     rm -rf "$temp_dir"
 
     log_success "恢复完成！"
-    log_info "如需重启服务: ./deploy.sh restart"
+    log_info "如需重启服务: ./ollama.sh restart"
 }
 
 # 拉取模型
@@ -864,7 +864,7 @@ do_pull() {
     local model="${1:-}"
 
     if [ -z "$model" ]; then
-        echo -e "  ${BOLD}用法:${NC} ./deploy.sh pull <model_name>"
+        echo -e "  ${BOLD}用法:${NC} ./ollama.sh pull <model_name>"
         echo ""
         echo -e "  ${BOLD}推荐模型 (适合120GB VRAM):${NC}"
         echo ""
@@ -882,14 +882,14 @@ do_pull() {
         echo "  └─────────────────────────────────────┴────────┴───────────────┘"
         echo ""
         echo "  示例:"
-        echo "    ./deploy.sh pull qwen2.5:72b-instruct-q4_K_M"
-        echo "    ./deploy.sh pull deepseek-r1:70b"
+        echo "    ./ollama.sh pull qwen2.5:72b-instruct-q4_K_M"
+        echo "    ./ollama.sh pull deepseek-r1:70b"
         return 0
     fi
 
     # 确保服务运行
     if ! is_api_ready; then
-        log_error "Ollama 服务未运行，请先启动: ./deploy.sh start"
+        log_error "Ollama 服务未运行，请先启动: ./ollama.sh start"
         exit 1
     fi
 
@@ -921,7 +921,7 @@ do_rm() {
     fi
 
     if [ -z "$model" ]; then
-        echo -e "  ${BOLD}用法:${NC} ./deploy.sh rm <model_name> [-f]"
+        echo -e "  ${BOLD}用法:${NC} ./ollama.sh rm <model_name> [-f]"
         echo ""
         echo -e "  ${BOLD}选项:${NC}"
         echo "    -f, --force   跳过确认直接删除"
@@ -948,14 +948,14 @@ else:
         fi
 
         echo "  示例:"
-        echo "    ./deploy.sh rm qwen2.5:72b"
-        echo "    ./deploy.sh rm nomic-embed-text -f"
+        echo "    ./ollama.sh rm qwen2.5:72b"
+        echo "    ./ollama.sh rm nomic-embed-text -f"
         return 0
     fi
 
     # 确保服务运行
     if ! is_api_ready; then
-        log_error "Ollama 服务未运行，请先启动: ./deploy.sh start"
+        log_error "Ollama 服务未运行，请先启动: ./ollama.sh start"
         exit 1
     fi
 
@@ -1083,7 +1083,7 @@ do_run() {
     if [ -z "$model" ]; then
         log_error "请指定模型名称"
         echo ""
-        echo "用法: ./deploy.sh run <model_name>"
+        echo "用法: ./ollama.sh run <model_name>"
         echo ""
         if is_api_ready; then
             log_info "可用模型:"
@@ -1093,7 +1093,7 @@ do_run() {
     fi
 
     if ! is_api_ready; then
-        log_error "Ollama 服务未运行，请先启动: ./deploy.sh start"
+        log_error "Ollama 服务未运行，请先启动: ./ollama.sh start"
         exit 1
     fi
 
@@ -1109,7 +1109,7 @@ do_bench() {
 
     if [ -z "$model" ]; then
         log_error "请指定测试模型"
-        echo "用法: ./deploy.sh bench <model_name>"
+        echo "用法: ./ollama.sh bench <model_name>"
         exit 1
     fi
 
@@ -1483,9 +1483,9 @@ print(f'{ec / (ed / 1e9):.1f}')
         echo -e "  ${RED}${BOLD}健康检查未通过  ${passed_checks}/${total_checks}${NC}"
         echo ""
         echo -e "  排查建议:"
-        echo -e "    查看日志:   ${CYAN}./deploy.sh logs${NC}"
-        echo -e "    重启服务:   ${CYAN}./deploy.sh restart${NC}"
-        echo -e "    GPU信息:    ${CYAN}./deploy.sh gpu${NC}"
+        echo -e "    查看日志:   ${CYAN}./ollama.sh logs${NC}"
+        echo -e "    重启服务:   ${CYAN}./ollama.sh restart${NC}"
+        echo -e "    GPU信息:    ${CYAN}./ollama.sh gpu${NC}"
     fi
     echo ""
 
@@ -1764,7 +1764,7 @@ do_optimize() {
     cat > "${DOCKER_COMPOSE_FILE}" << COMPOSE_EOF
 # ============================================================================
 # Ollama Docker Compose 配置
-# 由 deploy.sh optimize 自动生成于 $(date '+%Y-%m-%d %H:%M:%S')
+# 由 ollama.sh optimize 自动生成于 $(date '+%Y-%m-%d %H:%M:%S')
 # 硬件: ${cpu_model:-Unknown} | ${cpu_cores} cores | ${total_mem_gb}G RAM | ${gpu_name}
 # ============================================================================
 
@@ -1843,7 +1843,7 @@ COMPOSE_EOF
     echo ""
     echo -e "  ${BOLD}后续操作:${NC}"
     echo -e "    查看配置:  ${CYAN}cat ${DOCKER_COMPOSE_FILE}${NC}"
-    echo -e "    应用生效:  ${CYAN}./deploy.sh restart${NC}"
+    echo -e "    应用生效:  ${CYAN}./ollama.sh restart${NC}"
     echo -e "    回滚配置:  ${CYAN}cp ${backup_file} ${DOCKER_COMPOSE_FILE}${NC}"
     echo ""
 
@@ -1891,7 +1891,7 @@ do_search() {
             --newest)      sort_order="newest"; shift ;;
             --all)         show_all=true; shift ;;
             -h|--help)
-                echo -e "  ${BOLD}用法:${NC} ./deploy.sh search [关键词] [选项]"
+                echo -e "  ${BOLD}用法:${NC} ./ollama.sh search [关键词] [选项]"
                 echo ""
                 echo -e "  ${BOLD}选项:${NC}"
                 echo "    -c, --category <type>   按类型筛选 (vision|tools|thinking|embedding|cloud)"
@@ -1902,15 +1902,15 @@ do_search() {
                 echo "    --all                   显示所有模型 (不按本机硬件过滤)"
                 echo ""
                 echo -e "  ${BOLD}示例:${NC}"
-                echo "    ./deploy.sh search                  # 浏览热门模型 (自动匹配本机)"
-                echo "    ./deploy.sh search qwen             # 搜索 qwen 相关模型"
-                echo "    ./deploy.sh search -c vision        # 搜索视觉模型"
-                echo "    ./deploy.sh search coder --all      # 搜索代码模型 (不过滤)"
-                echo "    ./deploy.sh search -n 50            # 显示50个结果 (自动拉取3页)"
-                echo "    ./deploy.sh search -p 3             # 从第3页开始浏览"
-                echo "    ./deploy.sh search -n 100 -p 2      # 从第2页开始显示100条"
-                echo "    ./deploy.sh search --newest         # 按最近更新排序"
-                echo "    ./deploy.sh search -s newest -n 50  # 最近更新的50个模型"
+                echo "    ./ollama.sh search                  # 浏览热门模型 (自动匹配本机)"
+                echo "    ./ollama.sh search qwen             # 搜索 qwen 相关模型"
+                echo "    ./ollama.sh search -c vision        # 搜索视觉模型"
+                echo "    ./ollama.sh search coder --all      # 搜索代码模型 (不过滤)"
+                echo "    ./ollama.sh search -n 50            # 显示50个结果 (自动拉取3页)"
+                echo "    ./ollama.sh search -p 3             # 从第3页开始浏览"
+                echo "    ./ollama.sh search -n 100 -p 2      # 从第2页开始显示100条"
+                echo "    ./ollama.sh search --newest         # 按最近更新排序"
+                echo "    ./ollama.sh search -s newest -n 50  # 最近更新的50个模型"
                 return 0
                 ;;
             -*)
@@ -2400,8 +2400,8 @@ print(f'  \033[2m─────────────────────
 print(f'  \033[2m数据来源: https://ollama.com/search  (已获取第 {start_page}~{start_page + pages_fetched - 1} 页)\033[0m')
 if show_all != 'true' and effective_vram > 0:
     print(f'  \033[2m绿色参数 = 适合本机 | 使用 --all 查看全部模型\033[0m')
-print(f'  \033[2m下一页: ./deploy.sh search -p {next_page} | 更多: -n 50 自动拉取多页\033[0m')
-print(f'  \033[2m拉取模型: ./deploy.sh pull <模型名>\033[0m')
+print(f'  \033[2m下一页: ./ollama.sh search -p {next_page} | 更多: -n 50 自动拉取多页\033[0m')
+print(f'  \033[2m拉取模型: ./ollama.sh pull <模型名>\033[0m')
 print()
 " 2>/dev/null
 
@@ -2417,7 +2417,7 @@ print()
 # 显示帮助
 show_help() {
     print_banner
-    echo "用法: ./deploy.sh [命令] [选项]"
+    echo "用法: ./ollama.sh [命令] [选项]"
     echo ""
     echo -e "${BOLD}服务管理:${NC}"
     echo "  start               启动 Ollama 服务"
@@ -2456,24 +2456,24 @@ show_help() {
     echo ""
     echo -e "${BOLD}示例:${NC}"
     echo -e "  ${DIM}# 首次部署${NC}"
-    echo "  ./deploy.sh init"
-    echo "  ./deploy.sh start"
-    echo "  ./deploy.sh pull qwen2.5:72b-instruct-q4_K_M"
+    echo "  ./ollama.sh init"
+    echo "  ./ollama.sh start"
+    echo "  ./ollama.sh pull qwen2.5:72b-instruct-q4_K_M"
     echo ""
     echo -e "  ${DIM}# 日常使用${NC}"
-    echo "  ./deploy.sh run qwen2.5:72b-instruct-q4_K_M"
-    echo "  ./deploy.sh bench qwen2.5:72b-instruct-q4_K_M"
-    echo "  ./deploy.sh status"
+    echo "  ./ollama.sh run qwen2.5:72b-instruct-q4_K_M"
+    echo "  ./ollama.sh bench qwen2.5:72b-instruct-q4_K_M"
+    echo "  ./ollama.sh status"
     echo ""
     echo -e "  ${DIM}# 维护操作${NC}"
-    echo "  ./deploy.sh logs 500"
-    echo "  ./deploy.sh backup weekly_backup"
-    echo "  ./deploy.sh update"
-    echo "  ./deploy.sh clean --soft"
-    echo "  ./deploy.sh optimize              # 检测硬件自动优化配置"
-    echo "  ./deploy.sh optimize --dry-run    # 仅查看优化方案"
-    echo "  ./deploy.sh search                # 搜索适合本机的模型"
-    echo "  ./deploy.sh search qwen -c tools  # 搜索带工具能力的qwen模型"
+    echo "  ./ollama.sh logs 500"
+    echo "  ./ollama.sh backup weekly_backup"
+    echo "  ./ollama.sh update"
+    echo "  ./ollama.sh clean --soft"
+    echo "  ./ollama.sh optimize              # 检测硬件自动优化配置"
+    echo "  ./ollama.sh optimize --dry-run    # 仅查看优化方案"
+    echo "  ./ollama.sh search                # 搜索适合本机的模型"
+    echo "  ./ollama.sh search qwen -c tools  # 搜索带工具能力的qwen模型"
     echo ""
     echo -e "${BOLD}硬件:${NC} NVIDIA DGX Spark (GB10) | 120 GiB 统一内存 | CUDA 12.x"
     echo ""
@@ -2571,7 +2571,7 @@ main() {
         *)
             log_error "未知命令: ${command}"
             echo ""
-            echo "运行 './deploy.sh help' 查看所有可用命令"
+            echo "运行 './ollama.sh help' 查看所有可用命令"
             exit 1
             ;;
     esac
