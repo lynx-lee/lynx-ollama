@@ -2048,28 +2048,37 @@ do_search() {
     local ollama_translate_model=""
     local ollama_api="http://localhost:11434"
 
-    # 尝试找到一个可用的小模型做翻译
+    # 尝试找到一个可用的小模型做翻译（优先选参数量最小的通用模型）
     if curl -sf --connect-timeout 2 "${ollama_api}/api/tags" &>/dev/null; then
         local available_models
         available_models=$(curl -sf "${ollama_api}/api/tags" 2>/dev/null | python3 -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
-    names = [m['name'] for m in data.get('models', [])]
-    # 优先选小模型做翻译
-    prefer = ['qwen2.5:7b', 'qwen2.5:14b', 'qwen3:8b', 'qwen3:4b', 'qwen3:1.7b', 'qwen3:0.6b', 'glm4:9b', 'llama3.1:8b', 'gemma2:9b', 'mistral:7b']
-    for p in prefer:
-        for n in names:
-            if n.startswith(p.split(':')[0]) and ((':' not in p) or p in n):
-                print(n); sys.exit(0)
-    # 任何含 qwen/glm/llama/gemma/mistral 的都行
-    for n in names:
-        for kw in ['qwen', 'glm', 'llama', 'gemma', 'mistral']:
-            if kw in n.lower():
-                print(n); sys.exit(0)
-    # 实在没有就用第一个
-    if names:
-        print(names[0])
+    models = data.get('models', [])
+    if not models:
+        sys.exit(0)
+    # 排除纯 embedding 模型（不适合翻译）
+    embed_kw = ['embed', 'nomic-embed', 'bge-', 'mxbai-embed', 'all-minilm']
+    # 通用文本模型关键词（适合翻译）
+    text_kw = ['qwen', 'glm', 'llama', 'gemma', 'mistral', 'phi', 'deepseek', 'yi-']
+    # 按模型文件大小升序排列（小模型优先）
+    models.sort(key=lambda m: m.get('size', float('inf')))
+    # 第一轮：从最小的开始，找通用文本模型
+    for m in models:
+        name = m['name'].lower()
+        if any(e in name for e in embed_kw):
+            continue
+        if any(t in name for t in text_kw):
+            print(m['name']); sys.exit(0)
+    # 第二轮：非 embedding 的最小模型
+    for m in models:
+        name = m['name'].lower()
+        if any(e in name for e in embed_kw):
+            continue
+        print(m['name']); sys.exit(0)
+    # 兜底：直接用最小的
+    print(models[0]['name'])
 except: pass
 " 2>/dev/null)
         if [ -n "$available_models" ]; then
