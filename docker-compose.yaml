@@ -5,7 +5,7 @@ services:
     networks:
       - ai-network
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     environment:
       - TZ=Asia/Shanghai
       - OLLAMA_HOST=0.0.0.0

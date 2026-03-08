@@ -118,6 +118,38 @@ format_bytes() {
     fi
 }
 
+# 验证模型名称（防止命令注入）
+validate_model_name() {
+    local model="$1"
+    if [[ ! "$model" =~ ^[a-zA-Z0-9._:/-]+$ ]]; then
+        log_error "无效的模型名称: ${model}"
+        log_info "模型名称只能包含字母、数字、点、下划线、冒号、斜杠和连字符"
+        return 1
+    fi
+    return 0
+}
+
+# 验证搜索关键词（防止命令注入）
+validate_search_query() {
+    local query="$1"
+    if [[ "$query" =~ [\"\'\$\`] ]]; then
+        log_error "搜索关键词包含非法字符"
+        log_info "关键词不能包含引号、美元符号或反引号"
+        return 1
+    fi
+    if [ ${#query} -gt 100 ]; then
+        log_error "搜索关键词过长（最多100字符）"
+        return 1
+    fi
+    return 0
+}
+
+# 安全的 URL 编码
+url_encode() {
+    local string="$1"
+    python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$string" 2>/dev/null
+}
+
 # 检查 Ollama API 是否可达
 is_api_ready() {
     curl -sf "${OLLAMA_API}/" --connect-timeout 3 > /dev/null 2>&1
@@ -211,6 +243,18 @@ check_requirements() {
         echo -e "  curl:            ${GREEN}✓${NC} $(curl --version | head -1 | awk '{print $2}')"
     else
         echo -e "  curl:            ${YELLOW}⚠ 未安装${NC} (健康检查将受限)"
+    fi
+
+    # 检查 Python 3
+    if command -v python3 &> /dev/null; then
+        local python_ver
+        python_ver=$(python3 --version 2>&1 | awk '{print $2}')
+        echo -e "  Python 3:        ${GREEN}✓${NC} v${python_ver}"
+    else
+        echo -e "  Python 3:        ${RED}✗ 未安装${NC}"
+        echo "    安装指南: https://www.python.org/downloads/"
+        echo "    注意: 搜索和模型管理功能需要 Python 3"
+        checks_passed=false
     fi
 
     # 检查磁盘空间
@@ -887,6 +931,11 @@ do_pull() {
         return 0
     fi
 
+    # 验证模型名称
+    if ! validate_model_name "$model"; then
+        return 1
+    fi
+
     # 确保服务运行
     if ! is_api_ready; then
         log_error "Ollama 服务未运行，请先启动: ./ollama.sh start"
@@ -951,6 +1000,11 @@ else:
         echo "    ./ollama.sh rm qwen2.5:72b"
         echo "    ./ollama.sh rm nomic-embed-text -f"
         return 0
+    fi
+
+    # 验证模型名称
+    if ! validate_model_name "$model"; then
+        return 1
     fi
 
     # 确保服务运行
@@ -1092,6 +1146,11 @@ do_run() {
         exit 1
     fi
 
+    # 验证模型名称
+    if ! validate_model_name "$model"; then
+        exit 1
+    fi
+
     if ! is_api_ready; then
         log_error "Ollama 服务未运行，请先启动: ./ollama.sh start"
         exit 1
@@ -1110,6 +1169,11 @@ do_bench() {
     if [ -z "$model" ]; then
         log_error "请指定测试模型"
         echo "用法: ./ollama.sh bench <model_name>"
+        exit 1
+    fi
+
+    # 验证模型名称
+    if ! validate_model_name "$model"; then
         exit 1
     fi
 
@@ -1923,6 +1987,13 @@ do_search() {
         esac
     done
 
+    # 验证搜索关键词
+    if [ -n "$query" ]; then
+        if ! validate_search_query "$query"; then
+            return 1
+        fi
+    fi
+
     log_info "检索 Ollama 官网模型库..."
     echo ""
 
@@ -1992,7 +2063,9 @@ do_search() {
     local base_url="https://ollama.com/search"
     local base_params="?"
     if [ -n "$query" ]; then
-        base_params="${base_params}q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${query}'))" 2>/dev/null || echo "$query")&"
+        local encoded_query
+        encoded_query=$(url_encode "$query")
+        base_params="${base_params}q=${encoded_query}&"
     fi
     if [ -n "$category" ]; then
         base_params="${base_params}c=${category}&"
@@ -2145,14 +2218,24 @@ ollama_api = '${ollama_api}'
 # 翻译函数
 # ============================================================
 _translate_cache = {}
+_translation_count = 0
+MAX_TRANSLATIONS = 15
+TRANSLATION_TIMEOUT = 10
 
 def ollama_translate(text):
     \"\"\"用本地 Ollama 模型翻译英文为中文（使用 chat API，禁用 thinking）\"\"\"
+    global _translation_count
+    
     if not ollama_model or not text:
         return text
     if text in _translate_cache:
         return _translate_cache[text]
+    
+    if _translation_count >= MAX_TRANSLATIONS:
+        return text
+    
     try:
+        _translation_count += 1
         payload = json.dumps({
             'model': ollama_model,
             'messages': [
@@ -2168,7 +2251,7 @@ def ollama_translate(text):
             data=payload,
             headers={'Content-Type': 'application/json'}
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=TRANSLATION_TIMEOUT) as resp:
             result = json.loads(resp.read().decode('utf-8'))
             translated = result.get('message', {}).get('content', '').strip()
             # 清理可能残留的 think 标签
@@ -2180,8 +2263,12 @@ def ollama_translate(text):
             if translated:
                 _translate_cache[text] = translated
                 return translated
-    except:
-        pass
+    except urllib.error.URLError as e:
+        print(f'  \033[2m⚠ 翻译超时或网络错误\033[0m', file=sys.stderr)
+    except json.JSONDecodeError as e:
+        print(f'  \033[2m⚠ 翻译响应格式错误\033[0m', file=sys.stderr)
+    except Exception as e:
+        print(f'  \033[2m⚠ 翻译失败: {e}\033[0m', file=sys.stderr)
     return text
 
 def translate_desc(text):
