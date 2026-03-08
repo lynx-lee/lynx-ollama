@@ -13,6 +13,7 @@
 
 # Project specific
 .env
+docker-compose.yaml
 backups/
 logs/
 *.bak

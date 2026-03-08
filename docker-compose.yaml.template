@@ -1,0 +1,75 @@
+services:
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    container_name: ollama
+    networks:
+      - ai-network
+    ports:
+      - "${OLLAMA_BIND_ADDRESS:-127.0.0.1}:${OLLAMA_PORT:-11434}:11434"
+    environment:
+      - TZ=Asia/Shanghai
+      - OLLAMA_HOST=0.0.0.0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - OLLAMA_FLASH_ATTENTION=1
+
+      #====== 针对120GB VRAM的关键调优 ======#
+
+      # 1. 并行处理能力大幅提升（120GB完全扛得住）
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-8}
+
+      # 2. 同时驻留更多模型（避免频繁加载/卸载）
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-4}
+
+      # 3. 模型保持时间延长（统一内存下切换成本低，但驻留更划算）
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-30m}
+
+      # 4. 显式设置大上下文（日志显示自动推算为262K，可手动确认）
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-131072}
+
+      # 5. KV缓存使用半精度（节省显存，几乎不影响质量）
+      - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-q8_0}
+
+      # 6. 调试级别（稳定后改为WARN减少日志量）
+      - OLLAMA_DEBUG=${OLLAMA_DEBUG:-INFO}
+
+    volumes:
+      - ${OLLAMA_DATA_DIR:-/opt/ai/ollama/ollama_data}:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+          cpus: '${OLLAMA_CPU_RESERVATION:-4.0}'
+          memory: ${OLLAMA_MEM_RESERVATION:-16G}
+        limits:
+          # GB10 Grace CPU通常是10核ARM，根据实际调整
+          cpus: '${OLLAMA_CPU_LIMIT:-10.0}'
+          # 统一内存架构下，容器内存限制需要足够大
+          # 因为GPU VRAM和系统内存是同一块物理内存
+          memory: ${OLLAMA_MEM_LIMIT:-120G}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: ${OLLAMA_START_PERIOD:-120s}
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    restart: unless-stopped
+
+networks:
+  ai-network:
+    driver: bridge

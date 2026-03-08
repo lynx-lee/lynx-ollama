@@ -309,10 +309,17 @@ do_init() {
     chmod -R 755 "${BACKUP_DIR}"
     chmod -R 755 "${LOG_DIR}"
 
-    # 3. 生成 docker-compose.yaml（如果不存在）
+    # 3. 从模板生成 docker-compose.yaml（如果不存在）
     if [ ! -f "${DOCKER_COMPOSE_FILE}" ]; then
         log_step "生成 docker-compose.yaml..."
-        cat > "${DOCKER_COMPOSE_FILE}" << 'COMPOSE_EOF'
+        
+        # 检查模板文件是否存在
+        if [ -f "${PROJECT_DIR}/docker-compose.yaml.template" ]; then
+            cp "${PROJECT_DIR}/docker-compose.yaml.template" "${DOCKER_COMPOSE_FILE}"
+            log_success "docker-compose.yaml 已从模板生成"
+        else
+            log_warn "模板文件不存在，使用默认配置"
+            cat > "${DOCKER_COMPOSE_FILE}" << 'COMPOSE_EOF'
 services:
   ollama:
     image: ollama/ollama:latest
@@ -320,7 +327,7 @@ services:
     networks:
       - ai-network
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     environment:
       - TZ=Asia/Shanghai
       - OLLAMA_HOST=0.0.0.0
@@ -342,7 +349,7 @@ services:
               count: all
               capabilities: [gpu]
           cpus: '4.0'
-          memory: 8G
+          memory: 16G
         limits:
           cpus: '10.0'
           memory: 120G
@@ -371,7 +378,8 @@ networks:
   ai-network:
     driver: bridge
 COMPOSE_EOF
-        log_success "docker-compose.yaml 已生成"
+            log_success "docker-compose.yaml 已生成（默认配置）"
+        fi
     else
         log_info "docker-compose.yaml 已存在，跳过生成"
     fi
@@ -386,8 +394,12 @@ COMPOSE_EOF
 #===============================================================================
 
 # 基础配置
-OLLAMA_HOST=0.0.0.0
+OLLAMA_BIND_ADDRESS=127.0.0.1
 OLLAMA_PORT=11434
+OLLAMA_VERSION=latest
+
+# 数据目录 (容器外路径)
+OLLAMA_DATA_DIR=/opt/ai/ollama/ollama_data
 
 # GPU 与性能
 OLLAMA_FLASH_ATTENTION=1
@@ -397,11 +409,15 @@ OLLAMA_KEEP_ALIVE=30m
 OLLAMA_CONTEXT_LENGTH=131072
 OLLAMA_KV_CACHE_TYPE=q8_0
 
+# 资源限制
+OLLAMA_CPU_RESERVATION=4.0
+OLLAMA_CPU_LIMIT=10.0
+OLLAMA_MEM_RESERVATION=16G
+OLLAMA_MEM_LIMIT=120G
+OLLAMA_START_PERIOD=120s
+
 # 日志级别: DEBUG | INFO | WARN | ERROR
 OLLAMA_DEBUG=INFO
-
-# 数据目录 (容器外路径)
-OLLAMA_DATA_DIR=/opt/ai/ollama/ollama_data
 ENV_EOF
         log_success ".env 配置文件已生成"
     fi
@@ -418,6 +434,8 @@ ENV_EOF
     echo -e "    1. 编辑配置:  ${CYAN}vim ${PROJECT_DIR}/.env${NC}"
     echo -e "    2. 启动服务:  ${CYAN}./ollama.sh start${NC}"
     echo -e "    3. 拉取模型:  ${CYAN}./ollama.sh pull qwen2.5:72b-instruct-q4_K_M${NC}"
+    echo ""
+    echo -e "  ${BOLD}提示:${NC} docker-compose.yaml 从模板生成，避免 Git 冲突"
     echo ""
 }
 
