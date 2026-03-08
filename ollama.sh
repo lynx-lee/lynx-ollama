@@ -2473,11 +2473,16 @@ if fit_models:
         tags = m.get('tags', [])
         pulls = m.get('pulls', '')
         updated = m.get('updated', '')
-
-        # 第1行: 序号 + 名称 + 下载量 + 更新时间
+        
+        # 检测是否为云端模型
+        is_cloud = 'cloud' in [t.lower() for t in tags]
+        
+        # 第1行: 序号 + 名称 + 云端标记 + 下载量 + 更新时间
         pulls_str = format_pulls(pulls)
         updated_str = format_updated(updated)
         print(f'  \033[1;36m{shown:>2}. {name}\033[0m', end='')
+        if is_cloud:
+            print(f'  \033[1;35m☁️ 云端\033[0m', end='')
         if pulls_str:
             print(f'  \033[2m{pulls_str}\033[0m', end='')
         if updated_str:
@@ -2486,30 +2491,34 @@ if fit_models:
 
         # 第2行: 描述 (翻译后，完整显示)
         if desc:
-            # 自动换行，每行宽度 70 字符，缩进 6 空格
             wrapped = textwrap.fill(desc, width=70, initial_indent='      ', subsequent_indent='      ')
             print(wrapped)
 
         # 第3行: 参数规格 + 标签
         info_parts = []
-        size_str = format_sizes(sizes, fit_sz if show_all != 'true' else None)
-        if size_str:
-            info_parts.append(f'参数: {size_str}')
+        if is_cloud:
+            info_parts.append('\033[1;35m☁️ 需要云端部署\033[0m')
+        else:
+            size_str = format_sizes(sizes, fit_sz if show_all != 'true' else None)
+            if size_str:
+                info_parts.append(f'参数: {size_str}')
         if tags:
-            tag_str = ' '.join(TAG_CN.get(t, t) for t in tags)
-            info_parts.append(tag_str)
+            tag_str = ' '.join(TAG_CN.get(t, t) for t in tags if t.lower() != 'cloud')
+            if tag_str:
+                info_parts.append(tag_str)
         if info_parts:
             print(f'      {\"  │  \".join(info_parts)}')
 
         # 第4行: 安装命令
-        # 选择最大的适合大小，或默认
-        install_tag = ''
-        if fit_sz:
-            # 找最大适合尺寸
-            best = max(fit_sz, key=lambda s: parse_size_gb(s))
-            if best != sizes[0] if sizes else True:
-                install_tag = f':{best}'
-        print(f'      \033[2m$ ./ollama.sh pull {name}{install_tag}\033[0m')
+        if is_cloud:
+            print(f'      \033[2m$ ./ollama.sh pull {name}:cloud  # 云端模型，需要联网\033[0m')
+        else:
+            install_tag = ''
+            if fit_sz and sizes:
+                best = max(fit_sz, key=lambda s: parse_size_gb(s))
+                if best != sizes[0]:
+                    install_tag = f':{best}'
+            print(f'      \033[2m$ ./ollama.sh pull {name}{install_tag}\033[0m')
         print()
 
     if len(fit_models) > max_show:
@@ -2532,7 +2541,7 @@ next_page = start_page + pages_fetched
 print(f'  \033[2m────────────────────────────────────────────────────────\033[0m')
 print(f'  \033[2m数据来源: https://ollama.com/search  (已获取第 {start_page}~{start_page + pages_fetched - 1} 页)\033[0m')
 if show_all != 'true' and effective_vram > 0:
-    print(f'  \033[2m绿色参数 = 适合本机 | 使用 --all 查看全部模型\033[0m')
+    print(f'  \033[2m绿色参数 = 适合本机 | 紫色☁️ = 云端模型 | 使用 --all 查看全部\033[0m')
 print(f'  \033[2m下一页: ./ollama.sh search -p {next_page} | 更多: -n 50 自动拉取多页\033[0m')
 print(f'  \033[2m拉取模型: ./ollama.sh pull <模型名>\033[0m')
 print()
