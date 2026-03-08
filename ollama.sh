@@ -33,7 +33,8 @@
 #
 #===============================================================================
 
-set -e
+# 注意: 不使用 set -e，因为脚本中大量使用管道、子 shell 和 || 兜底，
+# set -e 会导致不可预测的退出行为。关键操作处显式检查 $? 或使用 || exit。
 
 # 颜色定义
 RED='\033[0;31m'
@@ -188,7 +189,7 @@ check_requirements() {
     # 检查 Docker
     if command -v docker &> /dev/null; then
         local docker_ver
-        docker_ver=$(docker --version | grep -oP '\d+\.\d+\.\d+' | head -1)
+        docker_ver=$(docker --version | sed -n 's/.*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -1)
         echo -e "  Docker:          ${GREEN}✓${NC} v${docker_ver}"
     else
         echo -e "  Docker:          ${RED}✗ 未安装${NC}"
@@ -199,11 +200,11 @@ check_requirements() {
     # 检查 Docker Compose
     if docker compose version &> /dev/null; then
         local compose_ver
-        compose_ver=$(docker compose version --short 2>/dev/null || docker compose version | grep -oP '\d+\.\d+\.\d+')
+        compose_ver=$(docker compose version --short 2>/dev/null || docker compose version | sed -n 's/.*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
         echo -e "  Docker Compose:  ${GREEN}✓${NC} v${compose_ver}"
     elif command -v docker-compose &> /dev/null; then
         local compose_ver
-        compose_ver=$(docker-compose --version | grep -oP '\d+\.\d+\.\d+')
+        compose_ver=$(docker-compose --version | sed -n 's/.*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
         echo -e "  Docker Compose:  ${GREEN}✓${NC} v${compose_ver} (legacy)"
     else
         echo -e "  Docker Compose:  ${RED}✗ 未安装${NC}"
@@ -245,11 +246,19 @@ check_requirements() {
         echo -e "  curl:            ${YELLOW}⚠ 未安装${NC} (健康检查将受限)"
     fi
 
-    # 检查 Python 3
+    # 检查 Python 3 (需要 >= 3.6，脚本使用了 f-string)
     if command -v python3 &> /dev/null; then
         local python_ver
         python_ver=$(python3 --version 2>&1 | awk '{print $2}')
-        echo -e "  Python 3:        ${GREEN}✓${NC} v${python_ver}"
+        local python_major python_minor
+        python_major=$(echo "$python_ver" | cut -d. -f1)
+        python_minor=$(echo "$python_ver" | cut -d. -f2)
+        if [ "$python_major" -ge 3 ] && [ "$python_minor" -ge 6 ]; then
+            echo -e "  Python 3:        ${GREEN}✓${NC} v${python_ver}"
+        else
+            echo -e "  Python 3:        ${RED}✗ v${python_ver} (需要 >= 3.6)${NC}"
+            checks_passed=false
+        fi
     else
         echo -e "  Python 3:        ${RED}✗ 未安装${NC}"
         echo "    安装指南: https://www.python.org/downloads/"
@@ -259,7 +268,7 @@ check_requirements() {
 
     # 检查磁盘空间
     local data_mount
-    data_mount=$(df -BG "${DATA_DIR%/*}" 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'G')
+    data_mount=$(df -k "${DATA_DIR%/*}" 2>/dev/null | tail -1 | awk '{printf "%.0f", $4/1048576}')
     if [ -n "$data_mount" ] && [ "$data_mount" -gt 50 ]; then
         echo -e "  磁盘空间:        ${GREEN}✓${NC} ${data_mount}G 可用 (${DATA_DIR%/*})"
     elif [ -n "$data_mount" ]; then
@@ -760,11 +769,13 @@ do_backup() {
     # 1. 备份模型清单
     log_step "导出模型清单..."
     if is_api_ready; then
-        curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | python3 -c "
-import sys, json
+        curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | \
+            BACKUP_PATH="${backup_path}" python3 -c "
+import sys, json, os
+backup_path = os.environ['BACKUP_PATH']
 data = json.load(sys.stdin)
 models = data.get('models', [])
-with open('${backup_path}/model_list.txt', 'w') as f:
+with open(os.path.join(backup_path, 'model_list.txt'), 'w') as f:
     for m in models:
         f.write(m['name'] + '\n')
 print(f'  已记录 {len(models)} 个模型')
@@ -775,20 +786,29 @@ print(f'  已记录 {len(models)} 个模型')
     log_step "备份 Modelfile 配置..."
     if is_api_ready; then
         mkdir -p "${backup_path}/modelfiles"
-        curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | python3 -c "
-import sys, json, subprocess
+        curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | \
+            BACKUP_PATH="${backup_path}" OLLAMA_API_URL="${OLLAMA_API}" python3 -c "
+import sys, json, os, urllib.request
+backup_path = os.environ['BACKUP_PATH']
+ollama_api = os.environ['OLLAMA_API_URL']
 data = json.load(sys.stdin)
 models = data.get('models', [])
 for m in models:
     name = m['name']
     safe_name = name.replace(':', '_').replace('/', '_')
-    result = subprocess.run(
-        ['curl', '-sf', '${OLLAMA_API}/api/show', '-d', json.dumps({'name': name})],
-        capture_output=True, text=True
-    )
-    if result.returncode == 0:
-        with open(f'${backup_path}/modelfiles/{safe_name}.json', 'w') as f:
-            f.write(result.stdout)
+    try:
+        req = urllib.request.Request(
+            f'{ollama_api}/api/show',
+            data=json.dumps({'name': name}).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = resp.read().decode('utf-8')
+        out_path = os.path.join(backup_path, 'modelfiles', f'{safe_name}.json')
+        with open(out_path, 'w') as f:
+            f.write(result)
+    except Exception:
+        pass
 " 2>/dev/null || log_warn "Modelfile 备份跳过"
     fi
 
@@ -1033,11 +1053,12 @@ else:
 
     # 检查模型是否存在
     local model_exists
-    model_exists=$(curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | python3 -c "
-import sys, json
+    model_exists=$(curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | \
+        TARGET_MODEL="${model}" python3 -c "
+import sys, json, os
 data = json.load(sys.stdin)
 names = [m['name'] for m in data.get('models', [])]
-target = '${model}'
+target = os.environ['TARGET_MODEL']
 # 精确匹配或前缀匹配（如 qwen2.5 匹配 qwen2.5:latest）
 found = [n for n in names if n == target or n.startswith(target + ':') or target == n.split(':')[0]]
 for f in found:
@@ -1054,11 +1075,12 @@ for f in found:
 
     # 检查模型是否正在运行
     local is_running
-    is_running=$(curl -sf "${OLLAMA_API}/api/ps" 2>/dev/null | python3 -c "
-import sys, json
+    is_running=$(curl -sf "${OLLAMA_API}/api/ps" 2>/dev/null | \
+        TARGET_MODEL="${model}" python3 -c "
+import sys, json, os
 data = json.load(sys.stdin)
 running = [m['name'] for m in data.get('models', [])]
-target = '${model}'
+target = os.environ['TARGET_MODEL']
 for r in running:
     if r == target or r.startswith(target + ':') or target == r.split(':')[0]:
         print(r)
@@ -1070,11 +1092,13 @@ for r in running:
 
     # 获取模型大小
     local model_size
-    model_size=$(curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | python3 -c "
-import sys, json
+    model_size=$(curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | \
+        TARGET_MODEL="${model}" python3 -c "
+import sys, json, os
 data = json.load(sys.stdin)
+target = os.environ['TARGET_MODEL']
 for m in data.get('models', []):
-    if m['name'] == '${model}' or m['name'].startswith('${model}:') or '${model}' == m['name'].split(':')[0]:
+    if m['name'] == target or m['name'].startswith(target + ':') or target == m['name'].split(':')[0]:
         print(f\"{m.get('size', 0) / (1024**3):.1f} GiB\")
         break
 " 2>/dev/null)
@@ -1270,11 +1294,13 @@ do_bench() {
     echo -e "\n${BOLD}测试 3/3: 并发测试 (4路)${NC}"
     start_time=$(date +%s%N)
 
+    local bench_tmp_dir
+    bench_tmp_dir=$(mktemp -d)
     local pids=()
     for i in $(seq 1 4); do
         curl -sf "${OLLAMA_API}/api/generate" \
             -d "{\"model\":\"${model}\",\"prompt\":\"Count from 1 to 20 in words.\",\"stream\":false}" \
-            > "/tmp/ollama_bench_${i}.json" 2>/dev/null &
+            > "${bench_tmp_dir}/bench_${i}.json" 2>/dev/null &
         pids+=($!)
     done
 
@@ -1291,13 +1317,13 @@ do_bench() {
 
     local total_tokens=0
     for i in $(seq 1 4); do
-        if [ -f "/tmp/ollama_bench_${i}.json" ]; then
+        if [ -f "${bench_tmp_dir}/bench_${i}.json" ]; then
             local t
-            t=$(python3 -c "import json; print(json.load(open('/tmp/ollama_bench_${i}.json')).get('eval_count',0))" 2>/dev/null || echo "0")
+            t=$(python3 -c "import json; print(json.load(open('${bench_tmp_dir}/bench_${i}.json')).get('eval_count',0))" 2>/dev/null || echo "0")
             total_tokens=$((total_tokens + t))
-            rm -f "/tmp/ollama_bench_${i}.json"
         fi
     done
+    rm -rf "${bench_tmp_dir}"
 
     local overall_tps="N/A"
     if [ "$duration_ms" -gt 0 ]; then
@@ -1380,7 +1406,7 @@ do_exec() {
     fi
 
     log_info "进入 Ollama 容器 (${cmd})..."
-    docker exec -it ollama $cmd
+    docker exec -it ollama "$cmd"
 }
 
 # 健康检查
@@ -1398,7 +1424,16 @@ do_health() {
     container_status=$(docker inspect --format='{{.State.Status}}' ollama 2>/dev/null || echo "not_found")
     if [ "$container_status" = "running" ]; then
         local uptime
-        uptime=$(docker inspect --format='{{.State.StartedAt}}' ollama 2>/dev/null | xargs -I{} date -d {} "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "N/A")
+        local started_at
+        started_at=$(docker inspect --format='{{.State.StartedAt}}' ollama 2>/dev/null || echo "")
+        if [ -n "$started_at" ]; then
+            # 兼容 Linux (date -d) 和 macOS (date -jf)
+            uptime=$(date -d "$started_at" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || \
+                     date -jf "%Y-%m-%dT%H:%M:%S" "$(echo "$started_at" | cut -d. -f1)" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || \
+                     echo "${started_at:0:19}")
+        else
+            uptime="N/A"
+        fi
         echo -e "  ✅ Docker 容器        运行中 (启动于: ${uptime})"
         passed_checks=$((passed_checks + 1))
     else
@@ -1426,9 +1461,9 @@ do_health() {
     gpu_detected=$(docker logs ollama 2>&1 | grep "inference compute" | tail -1)
     if [ -n "$gpu_detected" ]; then
         local gpu_lib
-        gpu_lib=$(echo "$gpu_detected" | grep -oP 'library=\K\w+')
+        gpu_lib=$(echo "$gpu_detected" | sed -n 's/.*library=\([a-zA-Z0-9_]*\).*/\1/p')
         local gpu_vram
-        gpu_vram=$(echo "$gpu_detected" | grep -oP 'total="\K[^"]+')
+        gpu_vram=$(echo "$gpu_detected" | sed -n 's/.*total="\([^"]*\)".*/\1/p')
         echo -e "  ✅ GPU 加速           ${gpu_lib} | VRAM: ${gpu_vram}"
         passed_checks=$((passed_checks + 1))
     else
@@ -1440,7 +1475,7 @@ do_health() {
     total_checks=$((total_checks + 1))
     if docker exec ollama nvidia-smi &>/dev/null; then
         local cuda_ver
-        cuda_ver=$(docker exec ollama nvidia-smi 2>/dev/null | grep -oP 'CUDA Version: \K[\d.]+' || echo "N/A")
+        cuda_ver=$(docker exec ollama nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9.]*\).*/\1/p' || echo "N/A")
         echo -e "  ✅ CUDA Runtime       版本: ${cuda_ver}"
         passed_checks=$((passed_checks + 1))
     else
@@ -1451,7 +1486,7 @@ do_health() {
     # 5. FlashAttention
     total_checks=$((total_checks + 1))
     local flash_attn
-    flash_attn=$(docker logs ollama 2>&1 | grep -oP 'OLLAMA_FLASH_ATTENTION:\K\w+' | tail -1)
+    flash_attn=$(docker logs ollama 2>&1 | sed -n 's/.*OLLAMA_FLASH_ATTENTION:\([a-zA-Z0-9_]*\).*/\1/p' | tail -1)
     if [ "$flash_attn" = "true" ]; then
         echo -e "  ✅ FlashAttention     已启用"
         passed_checks=$((passed_checks + 1))
@@ -1476,7 +1511,7 @@ do_health() {
     # 7. 磁盘空间
     total_checks=$((total_checks + 1))
     local disk_avail
-    disk_avail=$(df -BG "${DATA_DIR}" 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'G')
+    disk_avail=$(df -k "${DATA_DIR}" 2>/dev/null | tail -1 | awk '{printf "%.0f", $4/1048576}')
     if [ -n "$disk_avail" ] && [ "$disk_avail" -gt 20 ]; then
         echo -e "  ✅ 磁盘空间           ${disk_avail}G 可用"
         passed_checks=$((passed_checks + 1))
@@ -1857,7 +1892,7 @@ services:
     networks:
       - ai-network
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     environment:
       - TZ=Asia/Shanghai
       - OLLAMA_HOST=0.0.0.0
@@ -2238,7 +2273,8 @@ ollama_api = '${ollama_api}'
 _translate_cache = {}
 _translation_count = 0
 MAX_TRANSLATIONS = 15
-TRANSLATION_TIMEOUT = 10
+TRANSLATION_TIMEOUT_FIRST = 60   # 首次翻译（模型可能需要冷启动加载到 VRAM）
+TRANSLATION_TIMEOUT_NORMAL = 15  # 后续翻译（模型已在内存中）
 
 def ollama_translate(text):
     \"\"\"用本地 Ollama 模型翻译英文为中文（使用 chat API，禁用 thinking）\"\"\"
@@ -2254,6 +2290,7 @@ def ollama_translate(text):
     
     try:
         _translation_count += 1
+        timeout = TRANSLATION_TIMEOUT_FIRST if _translation_count == 1 else TRANSLATION_TIMEOUT_NORMAL
         payload = json.dumps({
             'model': ollama_model,
             'messages': [
@@ -2269,7 +2306,7 @@ def ollama_translate(text):
             data=payload,
             headers={'Content-Type': 'application/json'}
         )
-        with urllib.request.urlopen(req, timeout=TRANSLATION_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             result = json.loads(resp.read().decode('utf-8'))
             translated = result.get('message', {}).get('content', '').strip()
             # 清理可能残留的 think 标签

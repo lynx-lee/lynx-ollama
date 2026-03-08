@@ -48,6 +48,7 @@ git clone <repo-url> && cd lynx-ollama
 - NVIDIA Container Toolkit
 - NVIDIA 驱动 + CUDA 12.x
 - curl
+- Python 3.6+（搜索、翻译、模型管理功能需要）
 
 ## 命令一览
 
