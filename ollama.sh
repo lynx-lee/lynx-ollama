@@ -556,7 +556,8 @@ do_status() {
     cd "${PROJECT_DIR}"
 
     # Docker 容器状态
-    echo -e "  ${BOLD}容器状态:${NC}"
+    echo -e "  ${BOLD}🐳 容器状态${NC}"
+    echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
     $COMPOSE_CMD ps
     echo ""
 
@@ -564,38 +565,68 @@ do_status() {
     local container_id
     container_id=$(docker ps -q --filter "name=${PROJECT_NAME}" 2>/dev/null)
     if [ -n "$container_id" ]; then
-        echo -e "  ${BOLD}资源使用:${NC}"
+        echo -e "  ${BOLD}💾 资源使用${NC}"
+        echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
         docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}" "$container_id"
         echo ""
     fi
 
     # Ollama 服务信息
     if is_api_ready; then
-        echo -e "  ${BOLD}Ollama 版本:${NC}"
-        local version
-        version=$(curl -sf "${OLLAMA_API}/api/version" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','未知'))" 2>/dev/null || echo "未知")
-        echo -e "    版本: ${version}"
-        echo ""
-
-        # 已下载模型
-        echo -e "  ${BOLD}已下载模型:${NC}"
+        echo -e "  ${BOLD}📦 已下载模型${NC}"
+        echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
+        
         curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | python3 -c "
 import sys, json
+
 data = json.load(sys.stdin)
 models = data.get('models', [])
+
 if not models:
     print('    (无)')
 else:
-    for m in models:
-        size_gb = m.get('size', 0) / (1024**3)
-        modified = m.get('modified_at', 'N/A')[:19]
-        print(f\"    {m['name']:<45s} {size_gb:>6.1f} GiB   {modified}\")
-    print(f\"\n    共 {len(models)} 个模型\")
+    # 分组：云端模型和本地模型
+    cloud_models = [m for m in models if ':cloud' in m.get('name', '')]
+    local_models = [m for m in models if ':cloud' not in m.get('name', '')]
+    
+    # 显示云端模型
+    if cloud_models:
+        print()
+        print(f'    ${CYAN}☁️  云端模型 ({len(cloud_models)} 个)${NC}')
+        print('    ┌─────────────────────────────────────────────────────┐')
+        print('    │ 模型名称                              │ 大小     │ 下载时间       │')
+        print('    ├─────────────────────────────────────────────────────┤')
+        for m in cloud_models:
+            name = m['name'][:38]
+            size_gb = m.get('size', 0) / (1024**3)
+            modified = m.get('modified_at', 'N/A')[:10]
+            print(f'    │ {name:<38s} │ {size_gb:>6.1f} GiB │ {modified} │')
+        print('    └─────────────────────────────────────────────────────┘')
+    
+    # 显示本地模型
+    if local_models:
+        if cloud_models:
+            print()
+        print(f'    ${GREEN}💻  本地模型 ({len(local_models)} 个)${NC}')
+        print('    ┌─────────────────────────────────────────────────────┐')
+        print('    │ 模型名称                              │ 大小     │ 下载时间       │')
+        print('    ├─────────────────────────────────────────────────────┤')
+        for m in local_models:
+            name = m['name'][:38]
+            size_gb = m.get('size', 0) / (1024**3)
+            modified = m.get('modified_at', 'N/A')[:10]
+            print(f'    │ {name:<38s} │ {size_gb:>6.1f} GiB │ {modified} │')
+        print('    └─────────────────────────────────────────────────────┘')
+    
+    print()
+    print(f'    ${BOLD}总计: {len(models)} 个模型${NC}')
+    print()
 " 2>/dev/null || echo "    (无法获取)"
         echo ""
 
         # 当前运行的模型
-        echo -e "  ${BOLD}运行中模型:${NC}"
+        echo -e "  ${BOLD}🚀 运行中模型${NC}"
+        echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
         curl -sf "${OLLAMA_API}/api/ps" 2>/dev/null | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
@@ -603,10 +634,17 @@ models = data.get('models', [])
 if not models:
     print('    (无)')
 else:
+    print()
+    print('    ┌───────────────────────────────────────────────────────────────┐')
+    print('    │ 模型名称                              │ VRAM使用  │ 过期时间       │')
+    print('    ├───────────────────────────────────────────────────────────────┤')
     for m in models:
+        name = m['name'][:38]
         vram_gb = m.get('size_vram', 0) / (1024**3)
         expires = m.get('expires_at', 'N/A')[:19]
-        print(f\"    {m['name']:<45s} VRAM: {vram_gb:>6.1f} GiB   过期: {expires}\")
+        print(f'    │ {name:<38s} │ {vram_gb:>6.1f} GiB │ {expires} │')
+    print('    └───────────────────────────────────────────────────────────────┘')
+    print()
 " 2>/dev/null || echo "    (无法获取)"
         echo ""
 
@@ -616,24 +654,33 @@ else:
 
     # GPU 状态简览
     if command -v nvidia-smi &> /dev/null; then
-        echo -e "  ${BOLD}GPU 概览:${NC}"
+        echo -e "  ${BOLD}🎮 GPU 状态${NC}"
+        echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
         nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu \
             --format=csv,noheader 2>/dev/null | while IFS=',' read -r name mem_used mem_total gpu_util temp; do
-            echo -e "    ${name} | 显存: ${mem_used}/${mem_total} | GPU: ${gpu_util} | 温度: ${temp}"
+            echo -e "    GPU: ${name}"
+            echo -e "    显存: ${mem_used} / ${mem_total}"
+            echo -e "    利用率: ${gpu_util}"
+            echo -e "    温度: ${temp}"
         done
         echo ""
     fi
 
     # 磁盘使用
-    echo -e "  ${BOLD}磁盘使用:${NC}"
+    echo -e "  ${BOLD}💿 磁盘使用${NC}"
+    echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
     if [ -d "${DATA_DIR}" ]; then
         local data_size
         data_size=$(du -sh "${DATA_DIR}" 2>/dev/null | awk '{print $1}')
         local disk_avail
         disk_avail=$(df -h "${DATA_DIR}" 2>/dev/null | tail -1 | awk '{print $4}')
-        echo -e "    模型数据: ${data_size} (可用: ${disk_avail})"
+        local disk_used
+        disk_used=$(df -h "${DATA_DIR}" 2>/dev/null | tail -1 | awk '{print $3}')
+        echo -e "    模型数据: ${data_size}"
+        echo -e "    已用空间: ${disk_used}"
+        echo -e "    可用空间: ${disk_avail}"
     else
-        echo -e "    数据目录不存在: ${DATA_DIR}"
+        echo -e "    ${RED}✗ 数据目录不存在: ${DATA_DIR}${NC}"
     fi
     echo ""
 }
