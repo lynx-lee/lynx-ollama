@@ -301,6 +301,47 @@ COMPOSE_CMD=$(get_compose_cmd)
 #-------------------------------------------------------------------------------
 
 # 初始化环境
+# 从模板生成 docker-compose.yaml
+# 模板中使用 ${VAR:-default} 语法，Docker Compose 启动时自动从 .env 读取变量
+generate_compose_from_template() {
+    local template_file="${PROJECT_DIR}/docker-compose.yaml.template"
+
+    if [ ! -f "${template_file}" ]; then
+        log_error "模板文件不存在: ${template_file}"
+        log_error "请确保项目完整，包含 docker-compose.yaml.template"
+        return 1
+    fi
+
+    cp "${template_file}" "${DOCKER_COMPOSE_FILE}"
+    return 0
+}
+
+# 更新 .env 文件中的指定变量（不存在则追加）
+# 用法: update_env_var "KEY" "VALUE"
+update_env_var() {
+    local key="$1"
+    local value="$2"
+    local env_file="${PROJECT_DIR}/.env"
+
+    if [ ! -f "${env_file}" ]; then
+        log_warn ".env 文件不存在，跳过更新: ${key}"
+        return 1
+    fi
+
+    # 如果 key 已存在（包括注释掉的行），更新它
+    if grep -q "^${key}=" "${env_file}" 2>/dev/null; then
+        # macOS 和 Linux 的 sed -i 兼容写法
+        if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' "s|^${key}=.*|${key}=${value}|" "${env_file}"
+        else
+            sed -i "s|^${key}=.*|${key}=${value}|" "${env_file}"
+        fi
+    else
+        # key 不存在，追加到文件末尾
+        echo "${key}=${value}" >> "${env_file}"
+    fi
+}
+
 do_init() {
     log_info "初始化部署环境..."
 
@@ -320,80 +361,13 @@ do_init() {
 
     # 3. 从模板生成 docker-compose.yaml（如果不存在）
     if [ ! -f "${DOCKER_COMPOSE_FILE}" ]; then
-        log_step "生成 docker-compose.yaml..."
-        
-        # 检查模板文件是否存在
-        if [ -f "${PROJECT_DIR}/docker-compose.yaml.template" ]; then
-            cp "${PROJECT_DIR}/docker-compose.yaml.template" "${DOCKER_COMPOSE_FILE}"
-            log_success "docker-compose.yaml 已从模板生成"
-        else
-            log_warn "模板文件不存在，使用默认配置"
-            cat > "${DOCKER_COMPOSE_FILE}" << 'COMPOSE_EOF'
-services:
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    networks:
-      - ai-network
-    ports:
-      - "127.0.0.1:11434:11434"
-    environment:
-      - TZ=Asia/Shanghai
-      - OLLAMA_HOST=0.0.0.0
-      - NVIDIA_VISIBLE_DEVICES=all
-      - OLLAMA_FLASH_ATTENTION=1
-      - OLLAMA_NUM_PARALLEL=8
-      - OLLAMA_MAX_QUEUE=512
-      - OLLAMA_MAX_LOADED_MODELS=4
-      - OLLAMA_KEEP_ALIVE=30m
-      - OLLAMA_CONTEXT_LENGTH=131072
-      - OLLAMA_KV_CACHE_TYPE=q8_0
-      - OLLAMA_DEBUG=INFO
-    volumes:
-      - /opt/ai/ollama/ollama_data:/root/.ollama
-      - /etc/localtime:/etc/localtime:ro
-      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-          cpus: '4.0'
-          memory: 16G
-        limits:
-          cpus: '10.0'
-          memory: 120G
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/ || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 120s
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
-    restart: unless-stopped
-
-networks:
-  ai-network:
-    driver: bridge
-COMPOSE_EOF
-            log_success "docker-compose.yaml 已生成（默认配置）"
+        log_step "从模板生成 docker-compose.yaml..."
+        if ! generate_compose_from_template; then
+            return 1
         fi
+        log_success "docker-compose.yaml 已从模板生成"
     else
-        log_info "docker-compose.yaml 已存在，跳过生成"
+        log_info "docker-compose.yaml 已存在，跳过生成（如需重新生成请先删除）"
     fi
 
     # 4. 生成 .env 文件（如果不存在）
@@ -2200,7 +2174,7 @@ do_optimize() {
 
     #--- 6. 确认并写入 ---
     if [ "$auto_apply" != true ]; then
-        echo -e "  ${YELLOW}将修改: ${DOCKER_COMPOSE_FILE}${NC}"
+        echo -e "  ${YELLOW}将修改: ${PROJECT_DIR}/.env 和 ${DOCKER_COMPOSE_FILE}${NC}"
         read -rp "  应用以上优化? [y/N]: " confirm
         if [[ ! "$confirm" =~ ^[yY]$ ]]; then
             log_info "取消优化"
@@ -2208,120 +2182,89 @@ do_optimize() {
         fi
     fi
 
-    # 备份原文件
-    local backup_file="${DOCKER_COMPOSE_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
-    cp -f "${DOCKER_COMPOSE_FILE}" "${backup_file}"
-    log_step "已备份原文件: ${backup_file}"
+    #--- 7. 更新 .env 文件 ---
+    log_step "更新 .env 配置..."
 
-    #--- 7. 生成优化后的 docker-compose.yaml ---
-    log_step "生成优化配置..."
-
-    # 判断 GPU 设备块
-    local gpu_block=""
-    if [ "$has_nvidia" = true ]; then
-        gpu_block="        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-          cpus: '${cpu_reservation}.0'
-          memory: ${mem_reservation_gb}G"
-    else
-        gpu_block="        reservations:
-          cpus: '${cpu_reservation}.0'
-          memory: ${mem_reservation_gb}G"
-    fi
-
-    cat > "${DOCKER_COMPOSE_FILE}" << COMPOSE_EOF
-# ============================================================================
-# Ollama Docker Compose 配置
+    # 确保 .env 文件存在
+    if [ ! -f "${PROJECT_DIR}/.env" ]; then
+        log_step "生成 .env 配置文件..."
+        cat > "${PROJECT_DIR}/.env" << ENV_EOF
+#===============================================================================
+# Ollama 服务环境配置
 # 由 ollama.sh optimize 自动生成于 $(date '+%Y-%m-%d %H:%M:%S')
 # 硬件: ${cpu_model:-Unknown} | ${cpu_cores} cores | ${total_mem_gb}G RAM | ${gpu_name}
-# ============================================================================
+# 修改后需运行: ./ollama.sh restart
+#===============================================================================
 
-services:
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    networks:
-      - ai-network
-    ports:
-      - "127.0.0.1:11434:11434"
-    environment:
-      - TZ=Asia/Shanghai
-      - OLLAMA_HOST=0.0.0.0
-      - NVIDIA_VISIBLE_DEVICES=all
-      - OLLAMA_FLASH_ATTENTION=1
+# 基础配置
+OLLAMA_BIND_ADDRESS=127.0.0.1
+OLLAMA_PORT=11434
+OLLAMA_VERSION=latest
 
-      # 并行请求数 (基于 ${effective_vram_gb}G VRAM + ${cpu_cores} CPU核心)
-      # 每个并行请求独立使用CPU线程池，llama.cpp自动利用所有可用核心
-      - OLLAMA_NUM_PARALLEL=${num_parallel}
+# 数据目录 (容器外路径)
+OLLAMA_DATA_DIR=${DATA_DIR}
 
-      # 请求队列上限 (超出返回503)
-      - OLLAMA_MAX_QUEUE=${max_queue}
+# GPU 与性能
+OLLAMA_FLASH_ATTENTION=1
+OLLAMA_NUM_PARALLEL=${num_parallel}
+OLLAMA_MAX_QUEUE=${max_queue}
+OLLAMA_MAX_LOADED_MODELS=${max_loaded_models}
+OLLAMA_KEEP_ALIVE=${keep_alive}
+OLLAMA_CONTEXT_LENGTH=${context_length}
+OLLAMA_KV_CACHE_TYPE=${kv_cache_type}
 
-      # 同时驻留模型数
-      - OLLAMA_MAX_LOADED_MODELS=${max_loaded_models}
+# 资源限制
+OLLAMA_CPU_RESERVATION=${cpu_reservation}.0
+OLLAMA_CPU_LIMIT=${cpu_limit}.0
+OLLAMA_MEM_RESERVATION=${mem_reservation_gb}G
+OLLAMA_MEM_LIMIT=${mem_limit_gb}G
+OLLAMA_START_PERIOD=${start_period}
 
-      # 模型保持时间
-      - OLLAMA_KEEP_ALIVE=${keep_alive}
+# 日志级别: DEBUG | INFO | WARN | ERROR
+OLLAMA_DEBUG=INFO
+ENV_EOF
+        log_success ".env 配置文件已生成"
+    else
+        # .env 已存在，逐项更新
+        update_env_var "OLLAMA_NUM_PARALLEL"      "${num_parallel}"
+        update_env_var "OLLAMA_MAX_QUEUE"          "${max_queue}"
+        update_env_var "OLLAMA_MAX_LOADED_MODELS"  "${max_loaded_models}"
+        update_env_var "OLLAMA_KEEP_ALIVE"         "${keep_alive}"
+        update_env_var "OLLAMA_CONTEXT_LENGTH"     "${context_length}"
+        update_env_var "OLLAMA_KV_CACHE_TYPE"      "${kv_cache_type}"
+        update_env_var "OLLAMA_CPU_RESERVATION"    "${cpu_reservation}.0"
+        update_env_var "OLLAMA_CPU_LIMIT"          "${cpu_limit}.0"
+        update_env_var "OLLAMA_MEM_RESERVATION"    "${mem_reservation_gb}G"
+        update_env_var "OLLAMA_MEM_LIMIT"          "${mem_limit_gb}G"
+        update_env_var "OLLAMA_START_PERIOD"        "${start_period}"
+        log_success ".env 配置已更新"
+    fi
 
-      # 上下文窗口大小
-      - OLLAMA_CONTEXT_LENGTH=${context_length}
+    #--- 8. 从模板重新生成 docker-compose.yaml ---
+    # 备份原文件（如果存在）
+    if [ -f "${DOCKER_COMPOSE_FILE}" ]; then
+        local backup_file="${DOCKER_COMPOSE_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+        cp -f "${DOCKER_COMPOSE_FILE}" "${backup_file}"
+        log_step "已备份原配置: ${backup_file}"
+    fi
 
-      # KV 缓存精度
-      - OLLAMA_KV_CACHE_TYPE=${kv_cache_type}
-
-      # 日志级别
-      - OLLAMA_DEBUG=INFO
-
-    volumes:
-      - ${DATA_DIR}:/root/.ollama
-      - /etc/localtime:/etc/localtime:ro
-      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
-    deploy:
-      resources:
-${gpu_block}
-        limits:
-          cpus: '${cpu_limit}.0'
-          memory: ${mem_limit_gb}G
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/ || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: ${start_period}
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
-    restart: unless-stopped
-
-networks:
-  ai-network:
-    driver: bridge
-COMPOSE_EOF
+    log_step "从模板重新生成 docker-compose.yaml..."
+    if ! generate_compose_from_template; then
+        return 1
+    fi
 
     echo ""
     print_separator
     log_success "配置优化完成！"
     echo ""
-    echo -e "  ${BOLD}文件:${NC}   ${DOCKER_COMPOSE_FILE}"
-    echo -e "  ${BOLD}备份:${NC}   ${backup_file}"
+    echo -e "  ${BOLD}模板:${NC}   ${PROJECT_DIR}/docker-compose.yaml.template"
+    echo -e "  ${BOLD}配置:${NC}   ${PROJECT_DIR}/.env"
+    echo -e "  ${BOLD}生成:${NC}   ${DOCKER_COMPOSE_FILE}"
     echo ""
     echo -e "  ${BOLD}后续操作:${NC}"
-    echo -e "    查看配置:  ${CYAN}cat ${DOCKER_COMPOSE_FILE}${NC}"
+    echo -e "    查看配置:  ${CYAN}cat ${PROJECT_DIR}/.env${NC}"
+    echo -e "    手动调整:  ${CYAN}vim ${PROJECT_DIR}/.env${NC}"
     echo -e "    应用生效:  ${CYAN}./ollama.sh restart${NC}"
-    echo -e "    回滚配置:  ${CYAN}cp ${backup_file} ${DOCKER_COMPOSE_FILE}${NC}"
     echo ""
 
     # 如果服务正在运行，提示重启

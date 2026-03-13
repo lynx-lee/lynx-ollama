@@ -95,20 +95,22 @@ git clone <repo-url> && cd lynx-ollama
 
 ## 硬件自动优化
 
-`optimize` 命令会检测宿主机硬件并自动计算最佳配置：
+`optimize` 命令会检测宿主机硬件，自动计算最佳配置并写入 `.env` 文件，然后从模板重新生成 `docker-compose.yaml`：
 
 ```bash
 # 查看优化方案（不修改文件）
 ./ollama.sh optimize --dry-run
 
-# 自动应用优化
+# 自动应用优化（更新 .env + 重新生成 docker-compose.yaml）
 ./ollama.sh optimize
 
 # 跳过确认直接应用并重启
 ./ollama.sh optimize --yes
 ```
 
-**自动调整的参数：**
+**工作流程：** `optimize` → 检测硬件 → 更新 `.env` → 从 `docker-compose.yaml.template` 重新生成 `docker-compose.yaml` → 重启生效
+
+**自动调整的参数（写入 .env）：**
 
 | 参数 | 说明 | 计算逻辑 |
 |------|------|----------|
@@ -244,17 +246,19 @@ Ollama 底层使用 `llama.cpp`，推理时通过 **OpenMP 线程池自动利用
 ```
 lynx-ollama/
 ├── ollama.sh                    # 管理脚本（服务/模型/GPU/维护）
-├── docker-compose.yaml.template # Docker Compose 模板（纳入版本管理）
-├── docker-compose.yaml          # 运行时配置（由 init/optimize 生成，不纳入 Git）
+├── docker-compose.yaml.template # Docker Compose 模板（纳入版本管理，source of truth）
+├── docker-compose.yaml          # 运行时配置（从模板生成，不纳入 Git）
+├── .env                         # 环境变量配置（由 init/optimize 生成，不纳入 Git）
 └── README.md                    # 项目文档
 ```
 
-> **注意**：`docker-compose.yaml` 是由 `ollama.sh init` 从模板生成或由 `ollama.sh optimize` 根据硬件自动生成的，已在 `.gitignore` 中排除。克隆项目后需执行 `./ollama.sh init` 或 `./ollama.sh optimize` 生成该文件。
+> **配置架构**：`docker-compose.yaml.template` 是配置的唯一模板源。模板中使用 `${VAR:-default}` 语法引用变量，运行时 Docker Compose 自动从 `.env` 文件读取变量值。`init` 和 `optimize` 都通过复制模板生成 `docker-compose.yaml`，`optimize` 额外将硬件检测结果写入 `.env`。克隆项目后需执行 `./ollama.sh init` 或 `./ollama.sh optimize` 生成运行时配置。
 
 ## 更新日志
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.2.0 | 2026-03-13 | 重构 `optimize` 与 `init` 配置生成架构：`optimize` 不再直接覆盖 `docker-compose.yaml`，改为更新 `.env` 文件后从模板重新生成；抽出 `generate_compose_from_template()` 和 `update_env_var()` 公共函数；删除 `init` 中的 heredoc 内联默认配置，统一走模板路径；所有配置变更都通过 `.env` + 模板联动 |
 | v1.1.1 | 2026-03-13 | 修复容器时间与主机不同步：挂载 `/etc/localtime` 和 `/usr/share/zoneinfo` 到容器，配合 `TZ=Asia/Shanghai` 环境变量确保时区生效 |
 | v1.1.0 | 2026-03-13 | `status` 输出格式全面优化：表格精确对齐（中英文混排宽度计算）、容器状态/资源使用格式化、GPU 信息表格化、磁盘使用增加进度条、运行中模型汇总 VRAM、模型列表汇总总大小、并行调度配置表减少 docker exec 调用次数 |
 
