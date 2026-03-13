@@ -243,10 +243,13 @@ Ollama 底层使用 `llama.cpp`，推理时通过 **OpenMP 线程池自动利用
 
 ```
 lynx-ollama/
-├── ollama.sh              # 管理脚本（服务/模型/GPU/维护）
-├── docker-compose.yaml    # Docker Compose 配置
-└── README.md              # 项目文档
+├── ollama.sh                    # 管理脚本（服务/模型/GPU/维护）
+├── docker-compose.yaml.template # Docker Compose 模板（纳入版本管理）
+├── docker-compose.yaml          # 运行时配置（由 init/optimize 生成，不纳入 Git）
+└── README.md                    # 项目文档
 ```
+
+> **注意**：`docker-compose.yaml` 是由 `ollama.sh init` 从模板生成或由 `ollama.sh optimize` 根据硬件自动生成的，已在 `.gitignore` 中排除。克隆项目后需执行 `./ollama.sh init` 或 `./ollama.sh optimize` 生成该文件。
 
 ## 作者
 
