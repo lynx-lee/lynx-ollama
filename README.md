@@ -258,6 +258,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.2.3 | 2026-03-13 | 修复状态检测：当 Docker healthcheck 处于 `start_period` 报告 `starting` 时，`status`/`health` 命令主动检测 API 可达性，避免服务已就绪但显示 starting 的误报；修复容器时区：移除 `/etc/localtime` symlink 挂载（宿主机 symlink 在容器内可能解析异常导致时区显示为 "Asia"），改为直接挂载 `/usr/share/zoneinfo/${OLLAMA_TZ}` 到容器 `/etc/localtime`；添加 `ZONEINFO=/usr/share/zoneinfo` 环境变量确保 Go runtime 正确加载时区数据；TZ 改为可配置（`OLLAMA_TZ`） |
 | v1.2.2 | 2026-03-13 | 统一所有表格输出使用 Python `display_width()` 渲染：`print_banner()` ASCII art 居中对齐、`do_clean()` 清理操作提示框、`do_pull()` 推荐模型表格，全面消除中英文混排宽度不对齐问题 |
 | v1.2.1 | 2026-03-13 | 修复容器时区：增加 `/etc/timezone` 挂载确保 Go runtime 正确识别时区（Go `slog` 日志时间由 `time.Now()` Local 时区决定）；`optimize` 方案表格使用 Python `display_width()` 正确处理中英文混排宽度对齐 |
 | v1.2.0 | 2026-03-13 | 重构 `optimize` 与 `init` 配置生成架构：`optimize` 不再直接覆盖 `docker-compose.yaml`，改为更新 `.env` 文件后从模板重新生成；抽出 `generate_compose_from_template()` 和 `update_env_var()` 公共函数；删除 `init` 中的 heredoc 内联默认配置，统一走模板路径；所有配置变更都通过 `.env` + 模板联动 |

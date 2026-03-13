@@ -436,6 +436,9 @@ OLLAMA_START_PERIOD=120s
 
 # 日志级别: DEBUG | INFO | WARN | ERROR
 OLLAMA_DEBUG=INFO
+
+# 容器时区 (影响日志时间戳)
+OLLAMA_TZ=Asia/Shanghai
 ENV_EOF
         log_success ".env 配置文件已生成"
     fi
@@ -589,6 +592,12 @@ do_status() {
         fi
         # 端口映射
         c_ports=$(docker port ollama 2>/dev/null | head -1 || echo "N/A")
+
+        # 当 Docker healthcheck 报告 starting 时，主动检测 API 是否已可达
+        # Docker healthcheck 有 start_period（默认120s），在此期间即使服务已就绪也显示 starting
+        if [ "$c_health" = "starting" ] && is_api_ready; then
+            c_health="healthy"
+        fi
 
         local health_icon="⚪"
         case "$c_health" in
@@ -1917,6 +1926,10 @@ do_health() {
     total_checks=$((total_checks + 1))
     local health_status
     health_status=$(docker inspect --format='{{.State.Health.Status}}' ollama 2>/dev/null || echo "unknown")
+    # 当 Docker healthcheck 报告 starting 时（处于 start_period 内），主动检测 API 是否已可达
+    if [ "$health_status" = "starting" ] && is_api_ready; then
+        health_status="healthy"
+    fi
     case "$health_status" in
         healthy)
             echo -e "  ✅ 容器健康检查       ${health_status}"
@@ -2349,6 +2362,9 @@ OLLAMA_START_PERIOD=${start_period}
 
 # 日志级别: DEBUG | INFO | WARN | ERROR
 OLLAMA_DEBUG=INFO
+
+# 容器时区 (影响日志时间戳)
+OLLAMA_TZ=Asia/Shanghai
 ENV_EOF
         log_success ".env 配置文件已生成"
     else
