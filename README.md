@@ -15,6 +15,7 @@
 ## 核心特性
 
 - **统一内存优化** — 自动识别 GPU/CPU 共享内存架构，最大化可用显存
+- **多核 CPU 并行调度** — 通过 `OLLAMA_NUM_PARALLEL` + `OLLAMA_MAX_QUEUE` 实现多路并发推理，每路请求自动利用全部 CPU 核心（llama.cpp OpenMP 线程池），`optimize` 命令综合 VRAM 和 CPU 核心数自动计算最优并行数
 - **智能硬件检测** — `optimize` 命令自动检测硬件并生成最佳 docker-compose 配置
 - **大模型就绪** — 默认 131K 上下文、8 路并行、4 模型常驻、q8_0 KV 缓存
 - **安全加固** — no-new-privileges、最小 capability、只读安全策略
@@ -79,7 +80,7 @@ git clone <repo-url> && cd lynx-ollama
 |------|------|
 | `gpu` | 查看 GPU 详细信息 |
 | `bench <model>` | 运行性能基准测试（冷启动/热启动/并发） |
-| `health` | 全面健康检查（9 项） |
+| `health` | 全面健康检查（10 项） |
 | `optimize [选项]` | 检测硬件并优化 docker-compose 配置 |
 
 ### 维护操作
@@ -113,13 +114,47 @@ git clone <repo-url> && cd lynx-ollama
 |------|------|----------|
 | CPU limits/reservations | 容器 CPU 配额 | 预留 2 核给系统 |
 | Memory limits | 容器内存上限 | 统一内存：总量 - 4~8G；独立显存：80% |
-| `OLLAMA_NUM_PARALLEL` | 并行请求数 | ≥96G→8, ≥48G→4, ≥24G→2 |
+| `OLLAMA_NUM_PARALLEL` | 并行请求数 | 综合 VRAM 和 CPU 核心数取较小值 |
+| `OLLAMA_MAX_QUEUE` | 请求队列上限 | NUM_PARALLEL × 64（128~1024） |
 | `OLLAMA_MAX_LOADED_MODELS` | 常驻模型数 | ≥96G→4, ≥48G→3, ≥24G→2 |
 | `OLLAMA_CONTEXT_LENGTH` | 上下文窗口 | ≥96G→131K, ≥48G→64K, ≥24G→32K |
 | `OLLAMA_KV_CACHE_TYPE` | KV 缓存精度 | ≥48G→q8_0, <48G→q4_0 |
 | `OLLAMA_KEEP_ALIVE` | 模型驻留时间 | 统一内存≥64G→30m |
 
 支持自动识别统一内存架构（GH200 / Grace / GB10 / GB200 / Jetson）。
+
+## 多核 CPU 并行调度
+
+Ollama 底层使用 `llama.cpp`，推理时通过 **OpenMP 线程池自动利用所有可用 CPU 核心**。多核并行调度通过以下两个层级实现：
+
+### 层级 1：单请求多核（自动）
+
+每个推理请求会自动分配 CPU 线程池进行矩阵运算，无需额外配置。`llama.cpp` 会根据系统可用核心数自动设置线程数。
+
+### 层级 2：多请求并行（需配置）
+
+通过 `OLLAMA_NUM_PARALLEL` 控制每个模型同时处理的并发请求数。每个并行请求独立使用线程池，多个请求可以同时利用 CPU/GPU 资源：
+
+| 环境变量 | 作用 | 推荐值 |
+|---|---|---|
+| `OLLAMA_NUM_PARALLEL` | 每个模型的并发请求数 | `optimize` 自动计算（综合 VRAM + CPU 核心数） |
+| `OLLAMA_MAX_QUEUE` | 请求队列上限（超出返回 503） | NUM_PARALLEL × 64 |
+| `OLLAMA_MAX_LOADED_MODELS` | 同时加载的模型数 | 基于可用 VRAM 自动计算 |
+
+### 自动优化
+
+`optimize` 命令会综合 **VRAM** 和 **CPU 核心数** 计算最优 `OLLAMA_NUM_PARALLEL`（取两者推算值的较小值），确保 CPU 和 GPU 都不会过载：
+
+```bash
+# 查看当前并行调度配置
+./ollama.sh status    # ⚡ 并行调度配置 面板
+
+# 检测硬件自动计算最优值
+./ollama.sh optimize --dry-run
+
+# 健康检查中包含并行调度诊断
+./ollama.sh health    # 第6项：并行调度
+```
 
 ## 模型搜索
 

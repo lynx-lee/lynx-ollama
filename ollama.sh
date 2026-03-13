@@ -343,6 +343,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - OLLAMA_FLASH_ATTENTION=1
       - OLLAMA_NUM_PARALLEL=8
+      - OLLAMA_MAX_QUEUE=512
       - OLLAMA_MAX_LOADED_MODELS=4
       - OLLAMA_KEEP_ALIVE=30m
       - OLLAMA_CONTEXT_LENGTH=131072
@@ -413,6 +414,7 @@ OLLAMA_DATA_DIR=/opt/ai/ollama/ollama_data
 # GPU 与性能
 OLLAMA_FLASH_ATTENTION=1
 OLLAMA_NUM_PARALLEL=8
+OLLAMA_MAX_QUEUE=512
 OLLAMA_MAX_LOADED_MODELS=4
 OLLAMA_KEEP_ALIVE=30m
 OLLAMA_CONTEXT_LENGTH=131072
@@ -650,6 +652,66 @@ else:
 
     else
         log_warn "Ollama API 不可达，服务可能未运行"
+    fi
+
+    # 并行调度配置
+    if [ -n "$container_id" ]; then
+        echo -e "  ${BOLD}⚡ 并行调度配置${NC}"
+        echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
+
+        # 从容器环境变量读取配置
+        local env_num_parallel env_max_queue env_max_loaded env_keep_alive env_ctx_len
+        env_num_parallel=$(docker exec ollama printenv OLLAMA_NUM_PARALLEL 2>/dev/null || echo "1(默认)")
+        env_max_queue=$(docker exec ollama printenv OLLAMA_MAX_QUEUE 2>/dev/null || echo "512(默认)")
+        env_max_loaded=$(docker exec ollama printenv OLLAMA_MAX_LOADED_MODELS 2>/dev/null || echo "auto")
+        env_keep_alive=$(docker exec ollama printenv OLLAMA_KEEP_ALIVE 2>/dev/null || echo "5m(默认)")
+        env_ctx_len=$(docker exec ollama printenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || echo "auto")
+
+        # 获取宿主机 CPU 核心数
+        local host_cpu_cores
+        if [ -f /proc/cpuinfo ]; then
+            host_cpu_cores=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo)
+        elif command -v sysctl &>/dev/null; then
+            host_cpu_cores=$(sysctl -n hw.ncpu 2>/dev/null || echo "?")
+        else
+            host_cpu_cores=$(nproc 2>/dev/null || echo "?")
+        fi
+
+        # 容器 CPU 限制
+        local container_cpus
+        container_cpus=$(docker inspect --format='{{.HostConfig.NanoCpus}}' ollama 2>/dev/null || echo "0")
+        if [ "$container_cpus" -gt 0 ] 2>/dev/null; then
+            container_cpus=$(awk "BEGIN {printf \"%.1f\", $container_cpus / 1000000000}")
+        else
+            container_cpus="无限制"
+        fi
+
+        echo "    ┌──────────────────────────────┬────────────────────┐"
+        echo "    │ 配置项                        │ 当前值             │"
+        echo "    ├──────────────────────────────┼────────────────────┤"
+        printf "    │ %-28s │ %-18s │\n" "宿主机 CPU 核心数"       "$host_cpu_cores"
+        printf "    │ %-28s │ %-18s │\n" "容器 CPU 限制"           "$container_cpus"
+        printf "    │ %-28s │ %-18s │\n" "OLLAMA_NUM_PARALLEL"     "$env_num_parallel"
+        printf "    │ %-28s │ %-18s │\n" "OLLAMA_MAX_QUEUE"        "$env_max_queue"
+        printf "    │ %-28s │ %-18s │\n" "OLLAMA_MAX_LOADED_MODELS" "$env_max_loaded"
+        printf "    │ %-28s │ %-18s │\n" "OLLAMA_KEEP_ALIVE"       "$env_keep_alive"
+        printf "    │ %-28s │ %-18s │\n" "OLLAMA_CONTEXT_LENGTH"   "$env_ctx_len"
+        echo "    └──────────────────────────────┴────────────────────┘"
+
+        # 当前排队情况（通过 /api/ps 获取活跃模型数）
+        if is_api_ready; then
+            local running_count
+            running_count=$(curl -sf "${OLLAMA_API}/api/ps" 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+models = data.get('models', [])
+print(len(models))
+" 2>/dev/null || echo "0")
+            echo ""
+            echo -e "    ${DIM}当前活跃模型: ${running_count} / ${env_max_loaded}${NC}"
+            echo -e "    ${DIM}每模型并行上限: ${env_num_parallel} 路  │  队列上限: ${env_max_queue}${NC}"
+        fi
+        echo ""
     fi
 
     # GPU 状态简览
@@ -1541,7 +1603,24 @@ do_health() {
         echo -e "  ⚠️  FlashAttention     未启用 (建议开启)"
     fi
 
-    # 6. 模型目录
+    # 6. 并行调度配置
+    total_checks=$((total_checks + 1))
+    local h_num_parallel
+    h_num_parallel=$(docker exec ollama printenv OLLAMA_NUM_PARALLEL 2>/dev/null || echo "")
+    local h_max_queue
+    h_max_queue=$(docker exec ollama printenv OLLAMA_MAX_QUEUE 2>/dev/null || echo "")
+    if [ -n "$h_num_parallel" ] && [ "$h_num_parallel" -gt 1 ] 2>/dev/null; then
+        local queue_info=""
+        [ -n "$h_max_queue" ] && queue_info=" | 队列: ${h_max_queue}"
+        echo -e "  ✅ 并行调度           ${h_num_parallel} 路并行${queue_info}"
+        passed_checks=$((passed_checks + 1))
+    elif [ -n "$h_num_parallel" ]; then
+        echo -e "  ⚠️  并行调度           单路 (建议多核机器设 OLLAMA_NUM_PARALLEL>1)"
+    else
+        echo -e "  ⚠️  并行调度           未配置 (默认1路，建议通过 optimize 优化)"
+    fi
+
+    # 7. 模型目录
     total_checks=$((total_checks + 1))
     if [ -d "${DATA_DIR}" ]; then
         local data_size
@@ -1555,7 +1634,7 @@ do_health() {
         all_healthy=false
     fi
 
-    # 7. 磁盘空间
+    # 8. 磁盘空间
     total_checks=$((total_checks + 1))
     local disk_avail
     disk_avail=$(df -k "${DATA_DIR}" 2>/dev/null | tail -1 | awk '{printf "%.0f", $4/1048576}')
@@ -1569,7 +1648,7 @@ do_health() {
         all_healthy=false
     fi
 
-    # 8. 容器健康检查状态
+    # 9. 容器健康检查状态
     total_checks=$((total_checks + 1))
     local health_status
     health_status=$(docker inspect --format='{{.State.Health.Status}}' ollama 2>/dev/null || echo "unknown")
@@ -1590,7 +1669,7 @@ do_health() {
             ;;
     esac
 
-    # 9. 推理测试
+    # 10. 推理测试
     total_checks=$((total_checks + 1))
     if is_api_ready; then
         local test_model
@@ -1796,7 +1875,7 @@ do_optimize() {
     if [ "$mem_limit_gb" -lt 8 ]; then mem_limit_gb=8; fi
 
     # === Ollama 并行与模型配置 ===
-    local num_parallel max_loaded_models context_length kv_cache_type keep_alive
+    local num_parallel max_queue max_loaded_models context_length kv_cache_type keep_alive
 
     # 计算可用 VRAM（统一内存取内存总量减系统预留，独立显存取 GPU VRAM）
     local effective_vram_gb
@@ -1808,16 +1887,44 @@ do_optimize() {
         effective_vram_gb=0
     fi
 
-    # 并行数：基于可用 VRAM
+    # 并行数 (OLLAMA_NUM_PARALLEL)：
+    # - 决定每个模型同时处理的并发请求数
+    # - 每个并行请求使用独立的 CPU 线程池 (llama.cpp OpenMP)
+    # - 综合考虑可用 VRAM 和 CPU 核心数，取两者推算值的较小值
+    local vram_parallel cpu_parallel
+    # 基于 VRAM 推算
     if [ "$effective_vram_gb" -ge 96 ]; then
-        num_parallel=8
+        vram_parallel=8
     elif [ "$effective_vram_gb" -ge 48 ]; then
-        num_parallel=4
+        vram_parallel=4
     elif [ "$effective_vram_gb" -ge 24 ]; then
-        num_parallel=2
+        vram_parallel=2
     else
-        num_parallel=1
+        vram_parallel=1
     fi
+    # 基于 CPU 核心数推算（每路并行至少需要 2 个核心）
+    if [ "$cpu_cores" -ge 16 ]; then
+        cpu_parallel=8
+    elif [ "$cpu_cores" -ge 8 ]; then
+        cpu_parallel=4
+    elif [ "$cpu_cores" -ge 4 ]; then
+        cpu_parallel=2
+    else
+        cpu_parallel=1
+    fi
+    # 取两者较小值，确保 CPU 和 VRAM 都能支撑
+    if [ "$vram_parallel" -le "$cpu_parallel" ]; then
+        num_parallel=$vram_parallel
+    else
+        num_parallel=$cpu_parallel
+    fi
+
+    # 请求队列 (OLLAMA_MAX_QUEUE)：
+    # - 超出队列长度的请求返回 503
+    # - 设为 num_parallel 的 64 倍，兼顾高并发突发流量
+    max_queue=$((num_parallel * 64))
+    if [ "$max_queue" -lt 128 ]; then max_queue=128; fi
+    if [ "$max_queue" -gt 1024 ]; then max_queue=1024; fi
 
     # 同时加载模型数
     if [ "$effective_vram_gb" -ge 96 ]; then
@@ -1877,7 +1984,8 @@ do_optimize() {
     printf "  │ %-34s │ %-10s │ %-22s │\n" "deploy.resources.reservations.cpus" "${cpu_reservation}.0"  "预留系统核心"
     printf "  │ %-34s │ %-10s │ %-22s │\n" "deploy.resources.limits.memory"     "${mem_limit_gb}G"      "总内存: ${total_mem_gb}G"
     printf "  │ %-34s │ %-10s │ %-22s │\n" "deploy.resources.reservations.mem"  "${mem_reservation_gb}G" "最低保障"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_NUM_PARALLEL"               "$num_parallel"          "有效VRAM: ${effective_vram_gb}G"
+    printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_NUM_PARALLEL"               "$num_parallel"          "VRAM:${effective_vram_gb}G CPU:${cpu_cores}核"
+    printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_MAX_QUEUE"                   "$max_queue"             "NUM_PARALLEL×64"
     printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_MAX_LOADED_MODELS"           "$max_loaded_models"     "有效VRAM: ${effective_vram_gb}G"
     printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_CONTEXT_LENGTH"              "$context_length"        "有效VRAM: ${effective_vram_gb}G"
     printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_KV_CACHE_TYPE"               "$kv_cache_type"         "VRAM充裕度"
@@ -1946,8 +2054,12 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - OLLAMA_FLASH_ATTENTION=1
 
-      # 并行请求数 (基于 ${effective_vram_gb}G 有效 VRAM)
+      # 并行请求数 (基于 ${effective_vram_gb}G VRAM + ${cpu_cores} CPU核心)
+      # 每个并行请求独立使用CPU线程池，llama.cpp自动利用所有可用核心
       - OLLAMA_NUM_PARALLEL=${num_parallel}
+
+      # 请求队列上限 (超出返回503)
+      - OLLAMA_MAX_QUEUE=${max_queue}
 
       # 同时驻留模型数
       - OLLAMA_MAX_LOADED_MODELS=${max_loaded_models}
@@ -2685,7 +2797,7 @@ show_help() {
     echo -e "${BOLD}GPU 与性能:${NC}"
     echo "  gpu                 查看GPU详细信息"
     echo "  bench <model>       运行性能基准测试"
-    echo "  health              全面健康检查 (9项)"
+    echo "  health              全面健康检查 (10项)"
     echo "  optimize            检测硬件并优化docker-compose配置"
     echo "                        --dry-run  仅显示方案不修改文件"
     echo "                        --yes      跳过确认直接应用"
