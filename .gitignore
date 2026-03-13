@@ -10,6 +10,7 @@
 *~
 .vscode/
 .idea/
+.codebuddy/
 
 # Project specific
 .env
