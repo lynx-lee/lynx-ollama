@@ -557,19 +557,59 @@ do_status() {
 
     cd "${PROJECT_DIR}"
 
-    # Docker 容器状态
+    # Docker 容器状态（格式化输出）
     echo -e "  ${BOLD}🐳 容器状态${NC}"
     echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
-    $COMPOSE_CMD ps
-    echo ""
-
-    # 容器资源使用
     local container_id
     container_id=$(docker ps -q --filter "name=${PROJECT_NAME}" 2>/dev/null)
     if [ -n "$container_id" ]; then
+        local c_image c_status c_created c_ports c_uptime
+        c_image=$(docker inspect --format='{{.Config.Image}}' ollama 2>/dev/null || echo "N/A")
+        c_status=$(docker inspect --format='{{.State.Status}}' ollama 2>/dev/null || echo "N/A")
+        c_created=$(docker inspect --format='{{.Created}}' ollama 2>/dev/null | cut -d'T' -f1 || echo "N/A")
+        # 健康状态
+        local c_health
+        c_health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}' ollama 2>/dev/null || echo "N/A")
+        # 启动时间
+        local c_started_at
+        c_started_at=$(docker inspect --format='{{.State.StartedAt}}' ollama 2>/dev/null || echo "")
+        if [ -n "$c_started_at" ]; then
+            c_uptime=$(date -d "$c_started_at" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || \
+                       date -jf "%Y-%m-%dT%H:%M:%S" "$(echo "$c_started_at" | cut -d. -f1)" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || \
+                       echo "${c_started_at:0:19}")
+        else
+            c_uptime="N/A"
+        fi
+        # 端口映射
+        c_ports=$(docker port ollama 2>/dev/null | head -1 || echo "N/A")
+
+        local health_icon="⚪"
+        case "$c_health" in
+            healthy)   health_icon="${GREEN}●${NC}" ;;
+            starting)  health_icon="${YELLOW}●${NC}" ;;
+            unhealthy) health_icon="${RED}●${NC}" ;;
+        esac
+
+        echo -e "    状态:   ${health_icon} ${c_status} (health: ${c_health})"
+        echo -e "    镜像:   ${c_image}"
+        echo -e "    启动于: ${c_uptime}"
+        echo -e "    端口:   ${c_ports}"
+    else
+        echo -e "    ${RED}✗ 容器未运行${NC}"
+    fi
+    echo ""
+
+    # 容器资源使用（格式化输出）
+    if [ -n "$container_id" ]; then
         echo -e "  ${BOLD}💾 资源使用${NC}"
         echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
-        docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}" "$container_id"
+        docker stats --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}|{{.BlockIO}}' "$container_id" 2>/dev/null | \
+            while IFS='|' read -r cpu mem mem_pct net block; do
+                echo -e "    CPU:    ${cpu}"
+                echo -e "    内存:   ${mem} (${mem_pct})"
+                echo -e "    网络:   ${net}"
+                echo -e "    磁盘IO: ${block}"
+            done
         echo ""
     fi
 
@@ -579,7 +619,32 @@ do_status() {
         echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
         
         curl -sf "${OLLAMA_API}/api/tags" 2>/dev/null | python3 -c "
-import sys, json
+import sys, json, unicodedata
+
+def display_width(s):
+    \"\"\"计算字符串的终端显示宽度（CJK 字符占 2 列）\"\"\"
+    w = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def pad_right(s, width):
+    \"\"\"按显示宽度右填充空格\"\"\"
+    return s + ' ' * (width - display_width(s))
+
+def pad_left(s, width):
+    \"\"\"按显示宽度左填充空格\"\"\"
+    return ' ' * (width - display_width(s)) + s
+
+# 列宽定义
+COL_NAME = 42
+COL_SIZE = 10
+COL_DATE = 10
+# 总内宽 = COL_NAME + 3 + COL_SIZE + 3 + COL_DATE （含分隔符两侧空格）
+INNER_W = COL_NAME + 3 + COL_SIZE + 3 + COL_DATE
 
 data = json.load(sys.stdin)
 models = data.get('models', [])
@@ -587,41 +652,49 @@ models = data.get('models', [])
 if not models:
     print('    (无)')
 else:
-    # 分组：云端模型和本地模型
     cloud_models = [m for m in models if ':cloud' in m.get('name', '')]
     local_models = [m for m in models if ':cloud' not in m.get('name', '')]
-    
-    # 显示云端模型
+
+    def print_model_table(model_list, icon, label, color_start, color_end):
+        print(f'    {color_start}{icon}  {label} ({len(model_list)} 个){color_end}')
+        print(f'    ┌{\"─\" * (COL_NAME + 2)}┬{\"─\" * (COL_SIZE + 2)}┬{\"─\" * (COL_DATE + 2)}┐')
+        header_name = pad_right('模型名称', COL_NAME)
+        header_size = pad_left('大小', COL_SIZE)
+        header_date = pad_right('下载时间', COL_DATE)
+        print(f'    │ {header_name} │ {header_size} │ {header_date} │')
+        print(f'    ├{\"─\" * (COL_NAME + 2)}┼{\"─\" * (COL_SIZE + 2)}┼{\"─\" * (COL_DATE + 2)}┤')
+        for m in model_list:
+            name = m['name']
+            # 按显示宽度截断
+            truncated = ''
+            w = 0
+            for ch in name:
+                cw = 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+                if w + cw > COL_NAME:
+                    break
+                truncated += ch
+                w += cw
+            name = truncated
+            size_gb = m.get('size', 0) / (1024**3)
+            size_str = pad_left(f'{size_gb:.1f} GiB', COL_SIZE)
+            modified = m.get('modified_at', 'N/A')[:10]
+            date_str = pad_right(modified, COL_DATE)
+            name_str = pad_right(name, COL_NAME)
+            print(f'    │ {name_str} │ {size_str} │ {date_str} │')
+        print(f'    └{\"─\" * (COL_NAME + 2)}┴{\"─\" * (COL_SIZE + 2)}┴{\"─\" * (COL_DATE + 2)}┘')
+
     if cloud_models:
         print()
-        print(f'    ${CYAN}☁️  云端模型 ({len(cloud_models)} 个)${NC}')
-        print('    ┌─────────────────────────────────────────────────────────┐')
-        print('    │ 模型名称                                │ 大小      │ 下载时间   │')
-        print('    ├─────────────────────────────────────────────────────────┤')
-        for m in cloud_models:
-            name = m['name'][:40]
-            size_gb = m.get('size', 0) / (1024**3)
-            modified = m.get('modified_at', 'N/A')[:10]
-            print(f'    │ {name:<40s} │ {size_gb:>7.1f} GiB │ {modified} │')
-        print('    └─────────────────────────────────────────────────────────┘')
-    
-    # 显示本地模型
+        print_model_table(cloud_models, '☁️', '云端模型', '\033[0;36m', '\033[0m')
+
     if local_models:
         if cloud_models:
             print()
-        print(f'    ${GREEN}💻  本地模型 ({len(local_models)} 个)${NC}')
-        print('    ┌─────────────────────────────────────────────────────────┐')
-        print('    │ 模型名称                                │ 大小      │ 下载时间   │')
-        print('    ├─────────────────────────────────────────────────────────┤')
-        for m in local_models:
-            name = m['name'][:40]
-            size_gb = m.get('size', 0) / (1024**3)
-            modified = m.get('modified_at', 'N/A')[:10]
-            print(f'    │ {name:<40s} │ {size_gb:>7.1f} GiB │ {modified} │')
-        print('    └─────────────────────────────────────────────────────────┘')
-    
+        print_model_table(local_models, '💻', '本地模型', '\033[0;32m', '\033[0m')
+
+    total_size = sum(m.get('size', 0) for m in models) / (1024**3)
     print()
-    print(f'    ${BOLD}总计: {len(models)} 个模型${NC}')
+    print(f'    \033[1m总计: {len(models)} 个模型，共 {total_size:.1f} GiB\033[0m')
     print()
 " 2>/dev/null || echo "    (无法获取)"
         echo ""
@@ -630,22 +703,44 @@ else:
         echo -e "  ${BOLD}🚀 运行中模型${NC}"
         echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
         curl -sf "${OLLAMA_API}/api/ps" 2>/dev/null | python3 -c "
-import sys, json
+import sys, json, unicodedata
+
+def display_width(s):
+    w = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def pad_right(s, width):
+    return s + ' ' * (width - display_width(s))
+
+def pad_left(s, width):
+    return ' ' * (width - display_width(s)) + s
+
+COL_NAME = 42
+COL_VRAM = 10
+COL_EXPIRE = 19
+
 data = json.load(sys.stdin)
 models = data.get('models', [])
 if not models:
-    print('    (无)')
+    print('    (无运行中模型)')
 else:
-    print()
-    print('    ┌───────────────────────────────────────────────────────────────┐')
-    print('    │ 模型名称                              │ VRAM使用  │ 过期时间       │')
-    print('    ├───────────────────────────────────────────────────────────────┤')
+    print(f'    ┌{\"─\" * (COL_NAME + 2)}┬{\"─\" * (COL_VRAM + 2)}┬{\"─\" * (COL_EXPIRE + 2)}┐')
+    print(f'    │ {pad_right(\"模型名称\", COL_NAME)} │ {pad_left(\"VRAM使用\", COL_VRAM)} │ {pad_right(\"过期时间\", COL_EXPIRE)} │')
+    print(f'    ├{\"─\" * (COL_NAME + 2)}┼{\"─\" * (COL_VRAM + 2)}┼{\"─\" * (COL_EXPIRE + 2)}┤')
+    total_vram = 0
     for m in models:
-        name = m['name'][:38]
+        name = m['name'][:COL_NAME]
         vram_gb = m.get('size_vram', 0) / (1024**3)
-        expires = m.get('expires_at', 'N/A')[:19]
-        print(f'    │ {name:<38s} │ {vram_gb:>6.1f} GiB │ {expires} │')
-    print('    └───────────────────────────────────────────────────────────────┘')
+        total_vram += vram_gb
+        expires = m.get('expires_at', 'N/A')[:COL_EXPIRE]
+        print(f'    │ {pad_right(name, COL_NAME)} │ {pad_left(f\"{vram_gb:.1f} GiB\", COL_VRAM)} │ {pad_right(expires, COL_EXPIRE)} │')
+    print(f'    └{\"─\" * (COL_NAME + 2)}┴{\"─\" * (COL_VRAM + 2)}┴{\"─\" * (COL_EXPIRE + 2)}┘')
+    print(f'    \033[2m共 {len(models)} 个运行中，VRAM 合计: {total_vram:.1f} GiB\033[0m')
     print()
 " 2>/dev/null || echo "    (无法获取)"
         echo ""
@@ -654,18 +749,25 @@ else:
         log_warn "Ollama API 不可达，服务可能未运行"
     fi
 
-    # 并行调度配置
+    # 并行调度配置（使用 Python 精确对齐中英混排表格）
     if [ -n "$container_id" ]; then
         echo -e "  ${BOLD}⚡ 并行调度配置${NC}"
         echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
 
-        # 从容器环境变量读取配置
+        # 从容器环境变量批量读取配置（减少 docker exec 调用次数）
+        local env_vars
+        env_vars=$(docker exec ollama env 2>/dev/null | grep -E '^OLLAMA_(NUM_PARALLEL|MAX_QUEUE|MAX_LOADED_MODELS|KEEP_ALIVE|CONTEXT_LENGTH)=' || true)
         local env_num_parallel env_max_queue env_max_loaded env_keep_alive env_ctx_len
-        env_num_parallel=$(docker exec ollama printenv OLLAMA_NUM_PARALLEL 2>/dev/null || echo "1(默认)")
-        env_max_queue=$(docker exec ollama printenv OLLAMA_MAX_QUEUE 2>/dev/null || echo "512(默认)")
-        env_max_loaded=$(docker exec ollama printenv OLLAMA_MAX_LOADED_MODELS 2>/dev/null || echo "auto")
-        env_keep_alive=$(docker exec ollama printenv OLLAMA_KEEP_ALIVE 2>/dev/null || echo "5m(默认)")
-        env_ctx_len=$(docker exec ollama printenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || echo "auto")
+        env_num_parallel=$(echo "$env_vars" | sed -n 's/^OLLAMA_NUM_PARALLEL=//p')
+        env_max_queue=$(echo "$env_vars" | sed -n 's/^OLLAMA_MAX_QUEUE=//p')
+        env_max_loaded=$(echo "$env_vars" | sed -n 's/^OLLAMA_MAX_LOADED_MODELS=//p')
+        env_keep_alive=$(echo "$env_vars" | sed -n 's/^OLLAMA_KEEP_ALIVE=//p')
+        env_ctx_len=$(echo "$env_vars" | sed -n 's/^OLLAMA_CONTEXT_LENGTH=//p')
+        : "${env_num_parallel:=1(默认)}"
+        : "${env_max_queue:=512(默认)}"
+        : "${env_max_loaded:=auto}"
+        : "${env_keep_alive:=5m(默认)}"
+        : "${env_ctx_len:=auto}"
 
         # 获取宿主机 CPU 核心数
         local host_cpu_cores
@@ -686,19 +788,44 @@ else:
             container_cpus="无限制"
         fi
 
-        echo "    ┌──────────────────────────────┬────────────────────┐"
-        echo "    │ 配置项                        │ 当前值             │"
-        echo "    ├──────────────────────────────┼────────────────────┤"
-        printf "    │ %-28s │ %-18s │\n" "宿主机 CPU 核心数"       "$host_cpu_cores"
-        printf "    │ %-28s │ %-18s │\n" "容器 CPU 限制"           "$container_cpus"
-        printf "    │ %-28s │ %-18s │\n" "OLLAMA_NUM_PARALLEL"     "$env_num_parallel"
-        printf "    │ %-28s │ %-18s │\n" "OLLAMA_MAX_QUEUE"        "$env_max_queue"
-        printf "    │ %-28s │ %-18s │\n" "OLLAMA_MAX_LOADED_MODELS" "$env_max_loaded"
-        printf "    │ %-28s │ %-18s │\n" "OLLAMA_KEEP_ALIVE"       "$env_keep_alive"
-        printf "    │ %-28s │ %-18s │\n" "OLLAMA_CONTEXT_LENGTH"   "$env_ctx_len"
-        echo "    └──────────────────────────────┴────────────────────┘"
+        # 使用 Python 输出对齐表格（正确处理中英文混排宽度）
+        python3 -c "
+import unicodedata
 
-        # 当前排队情况（通过 /api/ps 获取活跃模型数）
+def display_width(s):
+    w = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def pad_right(s, width):
+    return s + ' ' * (width - display_width(s))
+
+COL_KEY = 28
+COL_VAL = 18
+
+rows = [
+    ('宿主机 CPU 核心数',       '${host_cpu_cores}'),
+    ('容器 CPU 限制',            '${container_cpus}'),
+    ('OLLAMA_NUM_PARALLEL',      '${env_num_parallel}'),
+    ('OLLAMA_MAX_QUEUE',         '${env_max_queue}'),
+    ('OLLAMA_MAX_LOADED_MODELS', '${env_max_loaded}'),
+    ('OLLAMA_KEEP_ALIVE',        '${env_keep_alive}'),
+    ('OLLAMA_CONTEXT_LENGTH',    '${env_ctx_len}'),
+]
+
+print(f'    ┌{\"─\" * (COL_KEY + 2)}┬{\"─\" * (COL_VAL + 2)}┐')
+print(f'    │ {pad_right(\"配置项\", COL_KEY)} │ {pad_right(\"当前值\", COL_VAL)} │')
+print(f'    ├{\"─\" * (COL_KEY + 2)}┼{\"─\" * (COL_VAL + 2)}┤')
+for key, val in rows:
+    print(f'    │ {pad_right(key, COL_KEY)} │ {pad_right(val, COL_VAL)} │')
+print(f'    └{\"─\" * (COL_KEY + 2)}┴{\"─\" * (COL_VAL + 2)}┘')
+" 2>/dev/null
+
+        # 当前排队情况
         if is_api_ready; then
             local running_count
             running_count=$(curl -sf "${OLLAMA_API}/api/ps" 2>/dev/null | python3 -c "
@@ -714,33 +841,103 @@ print(len(models))
         echo ""
     fi
 
-    # GPU 状态简览
+    # GPU 状态简览（表格化输出）
     if command -v nvidia-smi &> /dev/null; then
         echo -e "  ${BOLD}🎮 GPU 状态${NC}"
         echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
-        nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu \
-            --format=csv,noheader 2>/dev/null | while IFS=',' read -r name mem_used mem_total gpu_util temp; do
-            echo -e "    GPU: ${name}"
-            echo -e "    显存: ${mem_used} / ${mem_total}"
-            echo -e "    利用率: ${gpu_util}"
-            echo -e "    温度: ${temp}"
-        done
+        nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw \
+            --format=csv,noheader 2>/dev/null | python3 -c "
+import sys, unicodedata
+
+def display_width(s):
+    w = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def pad_right(s, width):
+    return s + ' ' * (width - display_width(s))
+
+COL_KEY = 12
+COL_VAL = 36
+
+lines = sys.stdin.read().strip().split('\n')
+for i, line in enumerate(lines):
+    parts = [p.strip() for p in line.split(',')]
+    if len(parts) < 5:
+        continue
+    name = parts[0]
+    mem_used = parts[1]
+    mem_total = parts[2]
+    gpu_util = parts[3]
+    temp = parts[4]
+    power = parts[5] if len(parts) > 5 else 'N/A'
+
+    # 清理显示值
+    mem_str = f'{mem_used} / {mem_total}'
+    temp_str = f'{temp}°C' if not temp.strip().endswith('C') else temp.strip()
+    if temp_str.endswith(' C'):
+        temp_str = temp_str[:-2] + '°C'
+
+    if i > 0:
+        print()
+    print(f'    ┌{\"─\" * (COL_KEY + 2)}┬{\"─\" * (COL_VAL + 2)}┐')
+    print(f'    │ {pad_right(\"GPU\", COL_KEY)} │ {pad_right(name, COL_VAL)} │')
+    print(f'    │ {pad_right(\"显存\", COL_KEY)} │ {pad_right(mem_str, COL_VAL)} │')
+    print(f'    │ {pad_right(\"利用率\", COL_KEY)} │ {pad_right(gpu_util, COL_VAL)} │')
+    print(f'    │ {pad_right(\"温度\", COL_KEY)} │ {pad_right(temp_str, COL_VAL)} │')
+    print(f'    │ {pad_right(\"功耗\", COL_KEY)} │ {pad_right(power, COL_VAL)} │')
+    print(f'    └{\"─\" * (COL_KEY + 2)}┴{\"─\" * (COL_VAL + 2)}┘')
+" 2>/dev/null || {
+            # Python 不可用时的降级输出
+            nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu \
+                --format=csv,noheader 2>/dev/null | while IFS=',' read -r name mem_used mem_total gpu_util temp; do
+                echo -e "    GPU:    ${name}"
+                echo -e "    显存:   ${mem_used} /${mem_total}"
+                echo -e "    利用率: ${gpu_util}"
+                echo -e "    温度:   ${temp}"
+            done
+        }
         echo ""
     fi
 
-    # 磁盘使用
+    # 磁盘使用（带进度条）
     echo -e "  ${BOLD}💿 磁盘使用${NC}"
     echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
     if [ -d "${DATA_DIR}" ]; then
         local data_size
         data_size=$(du -sh "${DATA_DIR}" 2>/dev/null | awk '{print $1}')
-        local disk_avail
-        disk_avail=$(df -h "${DATA_DIR}" 2>/dev/null | tail -1 | awk '{print $4}')
-        local disk_used
-        disk_used=$(df -h "${DATA_DIR}" 2>/dev/null | tail -1 | awk '{print $3}')
-        echo -e "    模型数据: ${data_size}"
-        echo -e "    已用空间: ${disk_used}"
-        echo -e "    可用空间: ${disk_avail}"
+        local disk_info
+        disk_info=$(df -h "${DATA_DIR}" 2>/dev/null | tail -1)
+        local disk_total disk_used disk_avail disk_pct
+        disk_total=$(echo "$disk_info" | awk '{print $2}')
+        disk_used=$(echo "$disk_info" | awk '{print $3}')
+        disk_avail=$(echo "$disk_info" | awk '{print $4}')
+        disk_pct=$(echo "$disk_info" | awk '{gsub(/%/,""); print $5}')
+
+        echo -e "    模型数据:   ${BOLD}${data_size}${NC}"
+        echo -e "    磁盘总量:   ${disk_total}"
+        echo -e "    已用/可用:  ${disk_used} / ${disk_avail}"
+
+        # 绘制进度条
+        if [ -n "$disk_pct" ] && [ "$disk_pct" -gt 0 ] 2>/dev/null; then
+            local bar_width=30
+            local filled=$(( disk_pct * bar_width / 100 ))
+            local empty=$(( bar_width - filled ))
+            local bar_color="${GREEN}"
+            if [ "$disk_pct" -ge 90 ]; then
+                bar_color="${RED}"
+            elif [ "$disk_pct" -ge 70 ]; then
+                bar_color="${YELLOW}"
+            fi
+            local bar=""
+            for ((i=0; i<filled; i++)); do bar+="█"; done
+            for ((i=0; i<empty; i++)); do bar+="░"; done
+            echo -e "    使用率:     ${bar_color}${bar}${NC} ${disk_pct}%"
+        fi
     else
         echo -e "    ${RED}✗ 数据目录不存在: ${DATA_DIR}${NC}"
     fi

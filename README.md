@@ -251,6 +251,12 @@ lynx-ollama/
 
 > **注意**：`docker-compose.yaml` 是由 `ollama.sh init` 从模板生成或由 `ollama.sh optimize` 根据硬件自动生成的，已在 `.gitignore` 中排除。克隆项目后需执行 `./ollama.sh init` 或 `./ollama.sh optimize` 生成该文件。
 
+## 更新日志
+
+| 版本 | 日期 | 变更 |
+|------|------|------|
+| v1.1.0 | 2026-03-13 | `status` 输出格式全面优化：表格精确对齐（中英文混排宽度计算）、容器状态/资源使用格式化、GPU 信息表格化、磁盘使用增加进度条、运行中模型汇总 VRAM、模型列表汇总总大小、并行调度配置表减少 docker exec 调用次数 |
+
 ## 作者
 
 **lynxlee**
