@@ -258,6 +258,8 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.2.2 | 2026-03-13 | 统一所有表格输出使用 Python `display_width()` 渲染：`print_banner()` ASCII art 居中对齐、`do_clean()` 清理操作提示框、`do_pull()` 推荐模型表格，全面消除中英文混排宽度不对齐问题 |
+| v1.2.1 | 2026-03-13 | 修复容器时区：增加 `/etc/timezone` 挂载确保 Go runtime 正确识别时区（Go `slog` 日志时间由 `time.Now()` Local 时区决定）；`optimize` 方案表格使用 Python `display_width()` 正确处理中英文混排宽度对齐 |
 | v1.2.0 | 2026-03-13 | 重构 `optimize` 与 `init` 配置生成架构：`optimize` 不再直接覆盖 `docker-compose.yaml`，改为更新 `.env` 文件后从模板重新生成；抽出 `generate_compose_from_template()` 和 `update_env_var()` 公共函数；删除 `init` 中的 heredoc 内联默认配置，统一走模板路径；所有配置变更都通过 `.env` + 模板联动 |
 | v1.1.1 | 2026-03-13 | 修复容器时间与主机不同步：挂载 `/etc/localtime` 和 `/usr/share/zoneinfo` 到容器，配合 `TZ=Asia/Shanghai` 环境变量确保时区生效 |
 | v1.1.0 | 2026-03-13 | `status` 输出格式全面优化：表格精确对齐（中英文混排宽度计算）、容器状态/资源使用格式化、GPU 信息表格化、磁盘使用增加进度条、运行中模型汇总 VRAM、模型列表汇总总大小、并行调度配置表减少 docker exec 调用次数 |

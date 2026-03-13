@@ -86,21 +86,52 @@ log_step() {
 }
 
 print_banner() {
-    echo -e "${CYAN}"
-    cat << 'BANNER'
-╔══════════════════════════════════════════════════════════════════╗
-║                                                                  ║
-║      ██████╗ ██╗     ██╗      █████╗ ███╗   ███╗ █████╗         ║
-║     ██╔═══██╗██║     ██║     ██╔══██╗████╗ ████║██╔══██╗        ║
-║     ██║   ██║██║     ██║     ███████║██╔████╔██║███████║        ║
-║     ██║   ██║██║     ██║     ██╔══██║██║╚██╔╝██║██╔══██║        ║
-║     ╚██████╔╝███████╗███████╗██║  ██║██║ ╚═╝ ██║██║  ██║        ║
-║      ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝        ║
-║                                                                  ║
-║          Ollama AI 服务管理工具  ·  DGX Spark Edition            ║
-╚══════════════════════════════════════════════════════════════════╝
-BANNER
-    echo -e "${NC}"
+    python3 -c "
+import unicodedata
+
+def display_width(s):
+    w = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def center_line(text, box_width):
+    \"\"\"在 box_width 宽度的框内居中 text（考虑中文宽度），两侧用 ║ 包裹\"\"\"
+    tw = display_width(text)
+    total_pad = box_width - tw
+    left = total_pad // 2
+    right = total_pad - left
+    return '║' + ' ' * left + text + ' ' * right + '║'
+
+BOX_W = 66  # ║ ... ║ 内部宽度
+
+art = [
+    '  ██████╗ ██╗     ██╗      █████╗ ███╗   ███╗ █████╗ ',
+    ' ██╔═══██╗██║     ██║     ██╔══██╗████╗ ████║██╔══██╗',
+    ' ██║   ██║██║     ██║     ███████║██╔████╔██║███████║',
+    ' ██║   ██║██║     ██║     ██╔══██║██║╚██╔╝██║██╔══██║',
+    ' ╚██████╔╝███████╗███████╗██║  ██║██║ ╚═╝ ██║██║  ██║',
+    '  ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝',
+]
+
+subtitle = 'Ollama AI 服务管理工具  ·  DGX Spark Edition'
+
+cyan = '\033[36m'
+nc = '\033[0m'
+
+print(cyan)
+print('╔' + '═' * BOX_W + '╗')
+print(center_line('', BOX_W))
+for line in art:
+    print(center_line(line, BOX_W))
+print(center_line('', BOX_W))
+print(center_line(subtitle, BOX_W))
+print('╚' + '═' * BOX_W + '╝')
+print(nc)
+"
 }
 
 print_separator() {
@@ -982,15 +1013,41 @@ do_clean() {
 
     cd "${PROJECT_DIR}"
 
-    echo -e "${YELLOW}"
-    echo "┌─────────────────────────────────────────────┐"
-    echo "│  ⚠ 清理操作                                 │"
-    echo "│                                              │"
-    echo "│  --soft   仅停止容器 (保留镜像和数据)         │"
-    echo "│  --hard   停止容器 + 删除镜像                 │"
-    echo "│  --purge  停止容器 + 删除镜像 + 删除所有模型   │"
-    echo "└─────────────────────────────────────────────┘"
-    echo -e "${NC}"
+    python3 -c "
+import unicodedata
+
+def display_width(s):
+    w = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def pad_right(s, width):
+    return s + ' ' * (width - display_width(s))
+
+BOX_W = 44
+
+lines = [
+    '⚠ 清理操作',
+    '',
+    '--soft   仅停止容器 (保留镜像和数据)',
+    '--hard   停止容器 + 删除镜像',
+    '--purge  停止容器 + 删除镜像 + 删除所有模型',
+]
+
+yellow = '\033[33m'
+nc = '\033[0m'
+
+print(yellow)
+print('┌' + '─' * (BOX_W + 2) + '┐')
+for line in lines:
+    print('│ ' + pad_right(line, BOX_W) + ' │')
+print('└' + '─' * (BOX_W + 2) + '┘')
+print(nc)
+"
 
     case "$mode" in
         --soft)
@@ -1232,18 +1289,53 @@ do_pull() {
         echo ""
         echo -e "  ${BOLD}推荐模型 (适合120GB VRAM):${NC}"
         echo ""
-        echo "  ┌─────────────────────────────────────┬────────┬───────────────┐"
-        echo "  │ 模型名称                             │ 大小   │ 适用场景       │"
-        echo "  ├─────────────────────────────────────┼────────┼───────────────┤"
-        echo "  │ qwen2.5:72b-instruct-q4_K_M         │ ~42GB  │ 中文通用       │"
-        echo "  │ qwen2.5-coder:32b-instruct-q8_0     │ ~34GB  │ 代码生成       │"
-        echo "  │ llama3.1:70b-instruct-q4_K_M        │ ~40GB  │ 英文通用       │"
-        echo "  │ deepseek-r1:70b-q4_K_M              │ ~43GB  │ 推理/数学      │"
-        echo "  │ deepseek-coder-v2:236b-q2_K          │ ~86GB  │ 代码(极限)     │"
-        echo "  │ command-r-plus:104b-q4_K_M           │ ~60GB  │ RAG/工具调用   │"
-        echo "  │ mixtral:8x22b-instruct-q4_K_M       │ ~80GB  │ MoE混合专家    │"
-        echo "  │ nomic-embed-text                     │ ~0.3GB │ 文本嵌入       │"
-        echo "  └─────────────────────────────────────┴────────┴───────────────┘"
+
+        # 使用 Python 输出对齐表格（正确处理中英文混排宽度）
+        python3 -c "
+import unicodedata
+
+def display_width(s):
+    w = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def pad_right(s, width):
+    return s + ' ' * (width - display_width(s))
+
+COL_NAME = 37
+COL_SIZE = 6
+COL_USE  = 13
+
+rows = [
+    ('qwen2.5:72b-instruct-q4_K_M',    '~42GB',  '中文通用'),
+    ('qwen2.5-coder:32b-instruct-q8_0', '~34GB',  '代码生成'),
+    ('llama3.1:70b-instruct-q4_K_M',    '~40GB',  '英文通用'),
+    ('deepseek-r1:70b-q4_K_M',          '~43GB',  '推理/数学'),
+    ('deepseek-coder-v2:236b-q2_K',     '~86GB',  '代码(极限)'),
+    ('command-r-plus:104b-q4_K_M',      '~60GB',  'RAG/工具调用'),
+    ('mixtral:8x22b-instruct-q4_K_M',   '~80GB',  'MoE混合专家'),
+    ('nomic-embed-text',                 '~0.3GB', '文本嵌入'),
+]
+
+header = ('模型名称', '大小', '适用场景')
+top = '  ┌' + '─' * (COL_NAME + 2) + '┬' + '─' * (COL_SIZE + 2) + '┬' + '─' * (COL_USE + 2) + '┐'
+mid = '  ├' + '─' * (COL_NAME + 2) + '┼' + '─' * (COL_SIZE + 2) + '┼' + '─' * (COL_USE + 2) + '┤'
+bot = '  └' + '─' * (COL_NAME + 2) + '┴' + '─' * (COL_SIZE + 2) + '┴' + '─' * (COL_USE + 2) + '┘'
+
+def fmt_row(n, s, u):
+    return '  │ ' + pad_right(n, COL_NAME) + ' │ ' + pad_right(s, COL_SIZE) + ' │ ' + pad_right(u, COL_USE) + ' │'
+
+print(top)
+print(fmt_row(*header))
+print(mid)
+for row in rows:
+    print(fmt_row(*row))
+print(bot)
+"
         echo ""
         echo "  示例:"
         echo "    ./ollama.sh pull qwen2.5:72b-instruct-q4_K_M"
@@ -2150,21 +2242,56 @@ do_optimize() {
     #--- 5. 显示优化方案 ---
     echo -e "  ${BOLD}优化方案:${NC}"
     echo ""
-    echo "  ┌──────────────────────────────────┬────────────┬────────────────────────┐"
-    echo "  │ 配置项                            │ 推荐值     │ 依据                   │"
-    echo "  ├──────────────────────────────────┼────────────┼────────────────────────┤"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "deploy.resources.limits.cpus"      "${cpu_limit}.0"         "总核心数: ${cpu_cores}"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "deploy.resources.reservations.cpus" "${cpu_reservation}.0"  "预留系统核心"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "deploy.resources.limits.memory"     "${mem_limit_gb}G"      "总内存: ${total_mem_gb}G"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "deploy.resources.reservations.mem"  "${mem_reservation_gb}G" "最低保障"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_NUM_PARALLEL"               "$num_parallel"          "VRAM:${effective_vram_gb}G CPU:${cpu_cores}核"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_MAX_QUEUE"                   "$max_queue"             "NUM_PARALLEL×64"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_MAX_LOADED_MODELS"           "$max_loaded_models"     "有效VRAM: ${effective_vram_gb}G"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_CONTEXT_LENGTH"              "$context_length"        "有效VRAM: ${effective_vram_gb}G"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_KV_CACHE_TYPE"               "$kv_cache_type"         "VRAM充裕度"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "OLLAMA_KEEP_ALIVE"                  "$keep_alive"            "内存架构/容量"
-    printf "  │ %-34s │ %-10s │ %-22s │\n" "healthcheck.start_period"            "$start_period"         "模型加载预估"
-    echo "  └──────────────────────────────────┴────────────┴────────────────────────┘"
+
+    # 使用 Python 输出对齐表格（正确处理中英文混排宽度）
+    python3 -c "
+import unicodedata
+
+def display_width(s):
+    w = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def pad_right(s, width):
+    return s + ' ' * (width - display_width(s))
+
+COL_CFG = 34
+COL_VAL = 10
+COL_RSN = 22
+
+rows = [
+    ('deploy.resources.limits.cpus',      '${cpu_limit}.0',          '总核心数: ${cpu_cores}'),
+    ('deploy.resources.reservations.cpus', '${cpu_reservation}.0',   '预留系统核心'),
+    ('deploy.resources.limits.memory',     '${mem_limit_gb}G',       '总内存: ${total_mem_gb}G'),
+    ('deploy.resources.reservations.mem',  '${mem_reservation_gb}G', '最低保障'),
+    ('OLLAMA_NUM_PARALLEL',                '${num_parallel}',        'VRAM:${effective_vram_gb}G CPU:${cpu_cores}核'),
+    ('OLLAMA_MAX_QUEUE',                   '${max_queue}',           'NUM_PARALLEL×64'),
+    ('OLLAMA_MAX_LOADED_MODELS',           '${max_loaded_models}',   '有效VRAM: ${effective_vram_gb}G'),
+    ('OLLAMA_CONTEXT_LENGTH',              '${context_length}',      '有效VRAM: ${effective_vram_gb}G'),
+    ('OLLAMA_KV_CACHE_TYPE',               '${kv_cache_type}',       'VRAM充裕度'),
+    ('OLLAMA_KEEP_ALIVE',                  '${keep_alive}',          '内存架构/容量'),
+    ('healthcheck.start_period',           '${start_period}',        '模型加载预估'),
+]
+
+header = ('配置项', '推荐值', '依据')
+top    = '  ┌' + '─' * (COL_CFG + 2) + '┬' + '─' * (COL_VAL + 2) + '┬' + '─' * (COL_RSN + 2) + '┐'
+mid    = '  ├' + '─' * (COL_CFG + 2) + '┼' + '─' * (COL_VAL + 2) + '┼' + '─' * (COL_RSN + 2) + '┤'
+bot    = '  └' + '─' * (COL_CFG + 2) + '┴' + '─' * (COL_VAL + 2) + '┴' + '─' * (COL_RSN + 2) + '┘'
+
+def fmt_row(c, v, r):
+    return '  │ ' + pad_right(c, COL_CFG) + ' │ ' + pad_right(v, COL_VAL) + ' │ ' + pad_right(r, COL_RSN) + ' │'
+
+print(top)
+print(fmt_row(*header))
+print(mid)
+for row in rows:
+    print(fmt_row(*row))
+print(bot)
+"
     echo ""
 
     if [ "$dry_run" = true ]; then
