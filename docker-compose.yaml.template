@@ -39,6 +39,8 @@ services:
 
     volumes:
       - ${OLLAMA_DATA_DIR:-/opt/ai/ollama/ollama_data}:/root/.ollama
+      - /etc/localtime:/etc/localtime:ro
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
     deploy:
       resources:
         reservations:

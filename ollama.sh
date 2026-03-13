@@ -351,6 +351,8 @@ services:
       - OLLAMA_DEBUG=INFO
     volumes:
       - /opt/ai/ollama/ollama_data:/root/.ollama
+      - /etc/localtime:/etc/localtime:ro
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
     deploy:
       resources:
         reservations:
@@ -2275,6 +2277,8 @@ services:
 
     volumes:
       - ${DATA_DIR}:/root/.ollama
+      - /etc/localtime:/etc/localtime:ro
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
     deploy:
       resources:
 ${gpu_block}
