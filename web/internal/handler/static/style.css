@@ -787,6 +787,15 @@ tbody tr:hover { background: var(--bg-hover); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.market-card-desc.translated {
+    animation: fadeInTranslation 0.5s ease;
+}
+
+@keyframes fadeInTranslation {
+    from { opacity: 0.5; }
+    to   { opacity: 1; }
+}
+
 /* ── Responsive ───────────────────────────────────────────────── */
 @media (max-width: 768px) {
     #sidebar { width: 60px; }

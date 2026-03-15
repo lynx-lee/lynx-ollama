@@ -37,6 +37,7 @@ func NewRouter(ollamaSvc *service.OllamaService, dockerSvc *service.DockerServic
 	mux.HandleFunc("GET /api/models", api.ListModels)
 	mux.HandleFunc("GET /api/models/running", api.ListRunningModels)
 	mux.HandleFunc("GET /api/models/search", api.SearchMarketModels)
+	mux.HandleFunc("POST /api/models/search/translate", api.TranslateModelDescriptions)
 	mux.HandleFunc("POST /api/models/pull", api.PullModel)
 	mux.HandleFunc("DELETE /api/models/{name}", api.DeleteModel)
 	mux.HandleFunc("GET /api/models/{name}/info", api.ShowModel)

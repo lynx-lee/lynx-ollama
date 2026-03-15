@@ -100,6 +100,8 @@ docker run -d -p 9981:8080 \
 | POST | `/api/models/pull` | 拉取模型 | ✅ |
 | DELETE | `/api/models/{name}` | 删除模型 | ✅ |
 | GET | `/api/models/{name}/info` | 模型详情 | ✅ |
+| GET | `/api/models/search` | 搜索 Ollama 官网模型市场 | ✅ |
+| POST | `/api/models/search/translate` | 批量翻译模型描述 | ✅ |
 | POST | `/api/models/generate` | 生成对话 | ✅ |
 | GET | `/api/gpu` | GPU 信息 | ✅ |
 | GET | `/api/logs` | 获取日志 | ✅ |

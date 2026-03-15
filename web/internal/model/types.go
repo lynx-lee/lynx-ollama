@@ -170,6 +170,18 @@ type MarketSearchResult struct {
 	Total  int           `json:"total"`
 }
 
+// TranslateRequest is used to request translation of a model description.
+type TranslateRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// TranslateResponse is the result of translating a model description.
+type TranslateResponse struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 // BenchmarkResult holds performance benchmark results.
 type BenchmarkResult struct {
 	TestName       string  `json:"test_name"`

@@ -245,66 +245,132 @@ func (s *OllamaService) ShowModel(name string) (map[string]interface{}, error) {
 	return result, nil
 }
 
-// SearchModels searches the Ollama website for models by scraping HTML.
+// SearchModels searches the Ollama website for models by scraping all pages.
+// It fetches pages sequentially until "No models found" or an empty result is encountered.
+// Returns raw English results without translation (translation is done asynchronously via a separate API).
 // Parameters: query (search term), category (vision/tools/thinking/embedding/code/cloud), sort (popular/newest).
 func (s *OllamaService) SearchModels(query, category, sort string) (*model.MarketSearchResult, error) {
-	// Build URL
-	baseURL := "https://ollama.com/search"
-	params := []string{}
-	if query != "" {
-		params = append(params, "q="+query)
-	}
-	if category != "" {
-		params = append(params, "c="+category)
-	}
-	if sort == "popular" {
-		// popular is default sort, no param needed
-	} else if sort == "newest" {
-		params = append(params, "o=newest")
-	}
-
-	url := baseURL
-	if len(params) > 0 {
-		url += "?" + strings.Join(params, "&")
-	}
-
-	// Fetch HTML
 	fetchClient := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+
+	var allModels []model.MarketModel
+	seen := make(map[string]bool)
+	maxPages := 50 // safety limit to prevent infinite loops
+
+	for page := 1; page <= maxPages; page++ {
+		// Build URL with pagination
+		params := []string{}
+		if query != "" {
+			params = append(params, "q="+query)
+		}
+		if category != "" {
+			params = append(params, "c="+category)
+		}
+		if sort == "newest" {
+			params = append(params, "o=newest")
+		}
+		params = append(params, fmt.Sprintf("page=%d", page))
+
+		url := "https://ollama.com/search"
+		if len(params) > 0 {
+			url += "?" + strings.Join(params, "&")
+		}
+
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request for page %d: %w", page, err)
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; lynx-ollama-web/1.0)")
+		req.Header.Set("Accept", "text/html")
+
+		resp, err := fetchClient.Do(req)
+		if err != nil {
+			// Network error on subsequent pages — return what we have so far
+			if len(allModels) > 0 {
+				break
+			}
+			return nil, fmt.Errorf("failed to fetch ollama.com page %d: %w", page, err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			if len(allModels) > 0 {
+				break
+			}
+			return nil, fmt.Errorf("failed to read response body for page %d: %w", page, err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			if len(allModels) > 0 {
+				break
+			}
+			return nil, fmt.Errorf("ollama.com returned status %d for page %d", resp.StatusCode, page)
+		}
+
+		html := string(body)
+
+		// Check for "No models found" — indicates we've gone past the last page
+		if strings.Contains(html, "No models found") {
+			break
+		}
+
+		models := parseOllamaSearchHTML(html)
+		if len(models) == 0 {
+			break
+		}
+
+		// Deduplicate across pages
+		for _, m := range models {
+			if !seen[m.Name] {
+				seen[m.Name] = true
+				allModels = append(allModels, m)
+			}
+		}
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; lynx-ollama-web/1.0)")
-	req.Header.Set("Accept", "text/html")
 
-	resp, err := fetchClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch ollama.com: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ollama.com returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	html := string(body)
-	models := parseOllamaSearchHTML(html)
-
-	result := &model.MarketSearchResult{
-		Models: models,
+	return &model.MarketSearchResult{
+		Models: allModels,
 		Query:  query,
-		Total:  len(models),
+		Total:  len(allModels),
+	}, nil
+}
+
+// TranslateDescriptions translates the given model descriptions to Chinese using the local Ollama model.
+// Accepts a list of TranslateRequest items and returns the translated descriptions.
+func (s *OllamaService) TranslateDescriptions(items []model.TranslateRequest) []model.TranslateResponse {
+	results := make([]model.TranslateResponse, len(items))
+	for i, item := range items {
+		results[i] = model.TranslateResponse{Name: item.Name, Description: item.Description}
 	}
 
-	// Try to translate descriptions using local Ollama model
-	s.translateModelDescriptions(result)
+	if !s.IsAPIReady() || len(items) == 0 {
+		return results
+	}
 
-	return result, nil
+	translationModel := s.findTranslationModel()
+	if translationModel == "" {
+		return results
+	}
+
+	translateClient := &http.Client{Timeout: 30 * time.Second}
+
+	for i, item := range items {
+		desc := item.Description
+		if desc == "" || len(desc) < 10 {
+			continue
+		}
+		// Skip if already Chinese
+		if containsChinese(desc) {
+			continue
+		}
+
+		translated := s.ollamaTranslate(translateClient, translationModel, desc)
+		if translated != "" && translated != desc {
+			results[i].Description = translated
+		}
+	}
+
+	return results
 }
 
 // parseOllamaSearchHTML extracts model info from ollama.com search HTML using x-test-* attributes.
@@ -495,42 +561,6 @@ func htmlUnescape(s string) string {
 	s = strings.ReplaceAll(s, "&#x27;", "'")
 	s = strings.ReplaceAll(s, "&#x2F;", "/")
 	return s
-}
-
-// translateModelDescriptions uses the local Ollama instance to translate model descriptions to Chinese.
-func (s *OllamaService) translateModelDescriptions(result *model.MarketSearchResult) {
-	if !s.IsAPIReady() || len(result.Models) == 0 {
-		return
-	}
-
-	// Find a suitable translation model
-	translationModel := s.findTranslationModel()
-	if translationModel == "" {
-		return
-	}
-
-	// Translate up to 15 descriptions
-	maxTranslations := 15
-	translateClient := &http.Client{Timeout: 30 * time.Second}
-
-	for i := range result.Models {
-		if i >= maxTranslations {
-			break
-		}
-		desc := result.Models[i].Description
-		if desc == "" || len(desc) < 10 {
-			continue
-		}
-		// Skip if already Chinese (simple check)
-		if containsChinese(desc) {
-			continue
-		}
-
-		translated := s.ollamaTranslate(translateClient, translationModel, desc)
-		if translated != "" && translated != desc {
-			result.Models[i].Description = translated
-		}
-	}
 }
 
 // findTranslationModel finds a suitable model for translation from locally available models.

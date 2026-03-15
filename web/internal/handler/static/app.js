@@ -448,7 +448,7 @@ async function searchMarketModels() {
     const category = document.getElementById('marketCategory').value;
     const sort = document.getElementById('marketSort').value;
 
-    resultsEl.innerHTML = '<div class="market-loading"><span class="spinner"></span>正在搜索 Ollama 官网模型...</div>';
+    resultsEl.innerHTML = '<div class="market-loading"><span class="spinner"></span>正在从 Ollama 官网获取全部模型（遍历所有分页中）...</div>';
 
     try {
         const params = new URLSearchParams();
@@ -463,12 +463,60 @@ async function searchMarketModels() {
             return;
         }
 
+        // Phase 1: Render results immediately with English descriptions
         resultsEl.innerHTML = renderMarketResults(data);
+
+        // Phase 2: Asynchronously translate descriptions in batches
+        translateMarketDescriptions(data.models);
     } catch (err) {
         resultsEl.innerHTML = `<div class="empty-state" style="color:var(--accent-red)">搜索失败: ${escapeHtml(err.message)}<br><small>请检查服务器网络是否可访问 ollama.com</small></div>`;
     } finally {
         marketSearching = false;
     }
+}
+
+// translateMarketDescriptions translates model descriptions in batches and updates the UI progressively.
+async function translateMarketDescriptions(models) {
+    // Filter models that need translation (non-empty, non-Chinese descriptions)
+    const toTranslate = models.filter(m => m.description && m.description.length >= 10 && !containsChineseChar(m.description));
+    if (toTranslate.length === 0) return;
+
+    const batchSize = 5;
+    for (let i = 0; i < toTranslate.length; i += batchSize) {
+        const batch = toTranslate.slice(i, i + batchSize).map(m => ({
+            name: m.name,
+            description: m.description,
+        }));
+
+        try {
+            const results = await api('/api/models/search/translate', {
+                method: 'POST',
+                body: JSON.stringify({ items: batch }),
+            });
+
+            if (!results || !Array.isArray(results)) continue;
+
+            // Update the DOM for each translated description
+            for (const r of results) {
+                if (!r.description || r.description === batch.find(b => b.name === r.name)?.description) continue;
+                // Find and update the description element in the market card
+                const descEl = document.querySelector(`.market-card[data-model="${CSS.escape(r.name)}"] .market-card-desc`);
+                if (descEl) {
+                    descEl.textContent = r.description;
+                    descEl.classList.add('translated');
+                }
+            }
+        } catch (err) {
+            // Translation failure is non-critical — just keep English descriptions
+            console.warn('Translation batch failed:', err);
+            break; // Stop translating if API is not available
+        }
+    }
+}
+
+// containsChineseChar checks if a string contains Chinese characters.
+function containsChineseChar(str) {
+    return /[\u4E00-\u9FFF]/.test(str);
 }
 
 function renderMarketResults(data) {
@@ -492,7 +540,7 @@ function renderMarketResults(data) {
         ).join('');
 
         html += `
-            <div class="market-card">
+            <div class="market-card" data-model="${escapeAttr(m.name)}">
                 <div class="market-card-header">
                     <span class="market-card-name">${escapeHtml(m.name)}</span>
                     ${m.pulls ? `<span class="market-card-pulls">⬇ ${escapeHtml(m.pulls)}</span>` : ''}

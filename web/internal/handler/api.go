@@ -425,6 +425,30 @@ func (h *APIHandler) SearchMarketModels(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, result)
 }
 
+// TranslateModelDescriptions translates model descriptions to Chinese using the local Ollama model.
+func (h *APIHandler) TranslateModelDescriptions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Items []model.TranslateRequest `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Items) == 0 {
+		jsonResponse(w, []model.TranslateResponse{})
+		return
+	}
+
+	// Limit batch size to prevent abuse
+	maxBatch := 10
+	if len(req.Items) > maxBatch {
+		req.Items = req.Items[:maxBatch]
+	}
+
+	results := h.ollama.TranslateDescriptions(req.Items)
+	jsonResponse(w, results)
+}
+
 // ── Health & Diagnostics ────────────────────────────────────────────
 
 // HealthCheck performs comprehensive health checks.
