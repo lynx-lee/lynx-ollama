@@ -170,28 +170,101 @@ func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error)
 		if len(parts) < 10 {
 			continue
 		}
-		gpus = append(gpus, model.GPUInfo{
-			Index:       strings.TrimSpace(parts[0]),
-			Name:        strings.TrimSpace(parts[1]),
-			MemTotal:    strings.TrimSpace(parts[2]) + " MiB",
-			MemUsed:     strings.TrimSpace(parts[3]) + " MiB",
-			MemFree:     strings.TrimSpace(parts[4]) + " MiB",
-			Utilization: strings.TrimSpace(parts[5]) + "%",
-			Temperature: strings.TrimSpace(parts[6]) + "°C",
-			Power:       strings.TrimSpace(parts[7]) + "W",
-			PowerLimit:  strings.TrimSpace(parts[8]) + "W",
-			Driver:      strings.TrimSpace(parts[9]),
-		})
+
+		memTotal := strings.TrimSpace(parts[2])
+		memUsed := strings.TrimSpace(parts[3])
+		memFree := strings.TrimSpace(parts[4])
+		gpuName := strings.TrimSpace(parts[1])
+
+		// Detect unified memory architecture (GB10, GH200, Grace Hopper, GB200, Jetson)
+		// nvidia-smi returns "[N/A]" for memory on these platforms
+		isUnified := isUnifiedMemoryGPU(gpuName) || memTotal == "[N/A]"
+
+		gpu := model.GPUInfo{
+			Index:        strings.TrimSpace(parts[0]),
+			Name:         gpuName,
+			MemTotal:     memTotal + " MiB",
+			MemUsed:      memUsed + " MiB",
+			MemFree:      memFree + " MiB",
+			Utilization:  strings.TrimSpace(parts[5]) + "%",
+			Temperature:  strings.TrimSpace(parts[6]) + "°C",
+			Power:        strings.TrimSpace(parts[7]) + "W",
+			PowerLimit:   strings.TrimSpace(parts[8]) + "W",
+			Driver:       strings.TrimSpace(parts[9]),
+			IsUnifiedMem: isUnified,
+		}
+
+		if isUnified {
+			// Get system total memory from the container
+			sysMem := s.getSystemMemory(ctx)
+			if sysMem != "" {
+				gpu.UnifiedMemTotal = sysMem
+				gpu.MemTotal = sysMem + " (统一内存)"
+				// For unified memory, try to get used memory from /proc/meminfo
+				usedMem := s.getUsedMemory(ctx)
+				if usedMem != "" {
+					gpu.MemUsed = usedMem
+				} else {
+					gpu.MemUsed = "N/A"
+				}
+				gpu.MemFree = "N/A"
+			}
+		} else {
+			// Normal GPU: append MiB suffix for non-[N/A] values
+			if memTotal != "[N/A]" {
+				gpu.MemTotal = memTotal + " MiB"
+			}
+			if memUsed != "[N/A]" {
+				gpu.MemUsed = memUsed + " MiB"
+			}
+			if memFree != "[N/A]" {
+				gpu.MemFree = memFree + " MiB"
+			}
+		}
+
+		gpus = append(gpus, gpu)
 	}
 
 	// Also get CUDA version from the ollama container
 	cudaOut, _ := s.runCommand(ctx, "docker", "exec", "ollama",
-		"bash", "-c", "nvidia-smi | grep 'CUDA Version' | awk '{print $NF}'")
+		"bash", "-c", "nvidia-smi | grep 'CUDA Version' | sed 's/.*CUDA Version: *//;s/ .*//'")
 	for i := range gpus {
 		gpus[i].CUDA = strings.TrimSpace(cudaOut)
 	}
 
 	return gpus, nil
+}
+
+// isUnifiedMemoryGPU checks if the GPU name indicates a unified memory architecture.
+func isUnifiedMemoryGPU(name string) bool {
+	lower := strings.ToLower(name)
+	keywords := []string{"gb10", "gh200", "grace", "gb200", "jetson"}
+	for _, kw := range keywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// getSystemMemory reads total system memory from the ollama container.
+func (s *DockerService) getSystemMemory(ctx context.Context) string {
+	out, err := s.runCommand(ctx, "docker", "exec", "ollama",
+		"bash", "-c", "awk '/MemTotal/ {printf \"%.0f\", $2/1024/1024}' /proc/meminfo")
+	if err != nil || strings.TrimSpace(out) == "" || strings.TrimSpace(out) == "0" {
+		return ""
+	}
+	return strings.TrimSpace(out) + " GiB"
+}
+
+// getUsedMemory reads used system memory from the ollama container.
+func (s *DockerService) getUsedMemory(ctx context.Context) string {
+	out, err := s.runCommand(ctx, "docker", "exec", "ollama",
+		"bash", "-c", "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf \"%.1f GiB\", (t-a)/1024/1024}' /proc/meminfo")
+	if err != nil || strings.TrimSpace(out) == "" {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 // GetDiskUsage returns disk usage information for the data directory.

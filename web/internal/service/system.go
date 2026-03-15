@@ -183,7 +183,11 @@ func (s *SystemService) RunHealthCheck(ctx context.Context, ollamaSvc *OllamaSer
 	if err == nil && len(gpus) > 0 {
 		check.Status = "pass"
 		check.Message = gpus[0].Name
-		check.Detail = fmt.Sprintf("显存: %s, CUDA: %s", gpus[0].MemTotal, gpus[0].CUDA)
+		if gpus[0].IsUnifiedMem {
+			check.Detail = fmt.Sprintf("统一内存: %s, CUDA: %s", gpus[0].UnifiedMemTotal, gpus[0].CUDA)
+		} else {
+			check.Detail = fmt.Sprintf("显存: %s, CUDA: %s", gpus[0].MemTotal, gpus[0].CUDA)
+		}
 	} else {
 		check.Status = "warn"
 		check.Message = "未检测到 GPU"

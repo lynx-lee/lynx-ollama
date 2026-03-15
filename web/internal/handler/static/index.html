@@ -170,15 +170,45 @@
                     </div>
                 </div>
 
-                <div class="card">
-                    <div class="card-header"><h3>📦 已下载模型</h3></div>
-                    <div class="table-container">
-                        <table id="modelsTable">
-                            <thead>
-                                <tr><th>名称</th><th>大小</th><th>参数</th><th>量化</th><th>修改时间</th><th>操作</th></tr>
-                            </thead>
-                            <tbody><tr><td colspan="6" class="empty-state">加载中...</td></tr></tbody>
-                        </table>
+                <!-- Tab bar -->
+                <div class="tab-bar" id="modelsTabBar">
+                    <button class="tab-btn active" data-tab="installed" onclick="switchModelTab('installed')">📦 已下载模型</button>
+                    <button class="tab-btn" data-tab="market" onclick="switchModelTab('market')">🏪 模型市场</button>
+                </div>
+
+                <!-- Installed models tab -->
+                <div class="model-tab active" id="tab-installed">
+                    <div id="modelsContainer">
+                        <div class="card"><div class="empty-state">加载中...</div></div>
+                    </div>
+                </div>
+
+                <!-- Model market tab -->
+                <div class="model-tab" id="tab-market">
+                    <div class="market-search">
+                        <div class="market-search-row">
+                            <input type="text" id="marketSearchInput" placeholder="搜索模型名称（如 qwen, llama, deepseek）..." onkeydown="if(event.key==='Enter')searchMarketModels()" />
+                            <button class="btn btn-primary" onclick="searchMarketModels()">🔍 搜索</button>
+                        </div>
+                        <div class="market-filters">
+                            <select id="marketCategory" onchange="searchMarketModels()">
+                                <option value="">全部类型</option>
+                                <option value="vision">👁 视觉</option>
+                                <option value="tools">🛠 工具调用</option>
+                                <option value="thinking">🧠 思维链</option>
+                                <option value="embedding">📐 嵌入</option>
+                                <option value="code">💻 代码</option>
+                                <option value="cloud">☁️ 云端</option>
+                            </select>
+                            <select id="marketSort" onchange="searchMarketModels()">
+                                <option value="">默认排序</option>
+                                <option value="popular">🔥 热门</option>
+                                <option value="newest">🕐 最新更新</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="marketResults">
+                        <div class="empty-state">输入关键词搜索 Ollama 官网模型，或留空浏览热门模型</div>
                     </div>
                 </div>
             </div>

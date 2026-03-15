@@ -245,6 +245,427 @@ func (s *OllamaService) ShowModel(name string) (map[string]interface{}, error) {
 	return result, nil
 }
 
+// SearchModels searches the Ollama website for models by scraping HTML.
+// Parameters: query (search term), category (vision/tools/thinking/embedding/code/cloud), sort (popular/newest).
+func (s *OllamaService) SearchModels(query, category, sort string) (*model.MarketSearchResult, error) {
+	// Build URL
+	baseURL := "https://ollama.com/search"
+	params := []string{}
+	if query != "" {
+		params = append(params, "q="+query)
+	}
+	if category != "" {
+		params = append(params, "c="+category)
+	}
+	if sort == "popular" {
+		// popular is default sort, no param needed
+	} else if sort == "newest" {
+		params = append(params, "o=newest")
+	}
+
+	url := baseURL
+	if len(params) > 0 {
+		url += "?" + strings.Join(params, "&")
+	}
+
+	// Fetch HTML
+	fetchClient := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; lynx-ollama-web/1.0)")
+	req.Header.Set("Accept", "text/html")
+
+	resp, err := fetchClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch ollama.com: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama.com returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	html := string(body)
+	models := parseOllamaSearchHTML(html)
+
+	result := &model.MarketSearchResult{
+		Models: models,
+		Query:  query,
+		Total:  len(models),
+	}
+
+	// Try to translate descriptions using local Ollama model
+	s.translateModelDescriptions(result)
+
+	return result, nil
+}
+
+// parseOllamaSearchHTML extracts model info from ollama.com search HTML using x-test-* attributes.
+func parseOllamaSearchHTML(html string) []model.MarketModel {
+	var models []model.MarketModel
+
+	// Split by model cards: <li x-test-model
+	cards := strings.Split(html, "<li x-test-model")
+	if len(cards) < 2 {
+		// Try alternative: <li class containing "model"
+		return models
+	}
+	cards = cards[1:] // skip before first match
+
+	seen := make(map[string]bool)
+
+	for _, card := range cards {
+		m := model.MarketModel{}
+
+		// Extract name: <span x-test-search-response-title...>name</span>
+		name := extractTagContent(card, "x-test-search-response-title")
+		if name == "" {
+			continue
+		}
+		m.Name = strings.TrimSpace(name)
+		if seen[m.Name] {
+			continue
+		}
+		seen[m.Name] = true
+
+		// Extract capability tags (vision/tools/thinking/embedding/code/cloud)
+		m.Tags = extractAllTagContents(card, "x-test-capability")
+
+		// Extract parameter sizes (7b/14b/70b/0.6b/350m etc.)
+		m.Sizes = extractAllTagContents(card, "x-test-size")
+
+		// Extract pull count
+		m.Pulls = extractTagContent(card, "x-test-pull-count")
+
+		// Extract updated time
+		m.Updated = extractTagContent(card, "x-test-updated")
+
+		// Extract description from <p> tags (find reasonably long text)
+		m.Description = extractDescription(card)
+
+		models = append(models, m)
+	}
+
+	return models
+}
+
+// extractTagContent extracts the first text content from a tag with the given attribute.
+func extractTagContent(html, attr string) string {
+	// Find <span attr...>content</span>
+	idx := strings.Index(html, attr)
+	if idx < 0 {
+		return ""
+	}
+	// Find closing > of the opening tag
+	rest := html[idx:]
+	gtIdx := strings.Index(rest, ">")
+	if gtIdx < 0 {
+		return ""
+	}
+	rest = rest[gtIdx+1:]
+	// Find </span> or </
+	endIdx := strings.Index(rest, "</")
+	if endIdx < 0 {
+		return ""
+	}
+	content := strings.TrimSpace(rest[:endIdx])
+	// Unescape basic HTML entities
+	content = htmlUnescape(content)
+	return content
+}
+
+// extractAllTagContents extracts all text contents from tags with the given attribute.
+func extractAllTagContents(html, attr string) []string {
+	var results []string
+	seen := make(map[string]bool)
+	remaining := html
+	for {
+		idx := strings.Index(remaining, attr)
+		if idx < 0 {
+			break
+		}
+		remaining = remaining[idx:]
+		gtIdx := strings.Index(remaining, ">")
+		if gtIdx < 0 {
+			break
+		}
+		remaining = remaining[gtIdx+1:]
+		endIdx := strings.Index(remaining, "</")
+		if endIdx < 0 {
+			break
+		}
+		content := strings.TrimSpace(remaining[:endIdx])
+		content = htmlUnescape(content)
+		lower := strings.ToLower(content)
+		if content != "" && !seen[lower] {
+			results = append(results, content)
+			seen[lower] = true
+		}
+	}
+	return results
+}
+
+// extractDescription tries to find a model description from the card HTML.
+func extractDescription(card string) string {
+	// Look for <p ...>long text content</p>
+	remaining := card
+	for {
+		pIdx := strings.Index(remaining, "<p")
+		if pIdx < 0 {
+			break
+		}
+		remaining = remaining[pIdx:]
+		gtIdx := strings.Index(remaining, ">")
+		if gtIdx < 0 {
+			break
+		}
+		remaining = remaining[gtIdx+1:]
+		endIdx := strings.Index(remaining, "</p>")
+		if endIdx < 0 {
+			endIdx = strings.Index(remaining, "</P>")
+		}
+		if endIdx < 0 {
+			break
+		}
+		text := strings.TrimSpace(remaining[:endIdx])
+		// Strip any inner HTML tags
+		text = stripHTMLTags(text)
+		text = htmlUnescape(text)
+		if len(text) >= 20 {
+			return text
+		}
+	}
+
+	// Fallback: find any long text block between tags
+	remaining = card
+	for {
+		gtIdx := strings.Index(remaining, ">")
+		if gtIdx < 0 {
+			break
+		}
+		remaining = remaining[gtIdx+1:]
+		ltIdx := strings.Index(remaining, "<")
+		if ltIdx < 0 {
+			break
+		}
+		text := strings.TrimSpace(remaining[:ltIdx])
+		text = htmlUnescape(text)
+		if len(text) >= 25 {
+			return text
+		}
+	}
+	return ""
+}
+
+// stripHTMLTags removes all HTML tags from a string.
+func stripHTMLTags(s string) string {
+	var result strings.Builder
+	inTag := false
+	for _, ch := range s {
+		if ch == '<' {
+			inTag = true
+			continue
+		}
+		if ch == '>' {
+			inTag = false
+			continue
+		}
+		if !inTag {
+			result.WriteRune(ch)
+		}
+	}
+	return result.String()
+}
+
+// htmlUnescape replaces common HTML entities.
+func htmlUnescape(s string) string {
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	s = strings.ReplaceAll(s, "&quot;", "\"")
+	s = strings.ReplaceAll(s, "&#39;", "'")
+	s = strings.ReplaceAll(s, "&apos;", "'")
+	s = strings.ReplaceAll(s, "&#x27;", "'")
+	s = strings.ReplaceAll(s, "&#x2F;", "/")
+	return s
+}
+
+// translateModelDescriptions uses the local Ollama instance to translate model descriptions to Chinese.
+func (s *OllamaService) translateModelDescriptions(result *model.MarketSearchResult) {
+	if !s.IsAPIReady() || len(result.Models) == 0 {
+		return
+	}
+
+	// Find a suitable translation model
+	translationModel := s.findTranslationModel()
+	if translationModel == "" {
+		return
+	}
+
+	// Translate up to 15 descriptions
+	maxTranslations := 15
+	translateClient := &http.Client{Timeout: 30 * time.Second}
+
+	for i := range result.Models {
+		if i >= maxTranslations {
+			break
+		}
+		desc := result.Models[i].Description
+		if desc == "" || len(desc) < 10 {
+			continue
+		}
+		// Skip if already Chinese (simple check)
+		if containsChinese(desc) {
+			continue
+		}
+
+		translated := s.ollamaTranslate(translateClient, translationModel, desc)
+		if translated != "" && translated != desc {
+			result.Models[i].Description = translated
+		}
+	}
+}
+
+// findTranslationModel finds a suitable model for translation from locally available models.
+func (s *OllamaService) findTranslationModel() string {
+	models, err := s.ListModels()
+	if err != nil || len(models) == 0 {
+		return ""
+	}
+
+	// Preferred: qwen3:8b
+	for _, m := range models {
+		lower := strings.ToLower(m.Name)
+		if lower == "qwen3:8b" || strings.HasPrefix(lower, "qwen3:8b-") {
+			return m.Name
+		}
+	}
+
+	// Embedding model keywords to exclude
+	embedKeywords := []string{"embed", "nomic-embed", "bge-", "mxbai-embed", "all-minilm"}
+	// Text model keywords suitable for translation
+	textKeywords := []string{"qwen", "glm", "llama", "gemma", "mistral", "phi", "deepseek", "yi-"}
+
+	// Sort by size ascending — prefer smaller models
+	type modelEntry struct {
+		name string
+		size int64
+	}
+	var candidates []modelEntry
+	for _, m := range models {
+		lower := strings.ToLower(m.Name)
+		isEmbed := false
+		for _, kw := range embedKeywords {
+			if strings.Contains(lower, kw) {
+				isEmbed = true
+				break
+			}
+		}
+		if isEmbed {
+			continue
+		}
+		candidates = append(candidates, modelEntry{name: m.Name, size: m.Size})
+	}
+
+	// Sort by size
+	for i := 0; i < len(candidates); i++ {
+		for j := i + 1; j < len(candidates); j++ {
+			if candidates[j].size < candidates[i].size {
+				candidates[i], candidates[j] = candidates[j], candidates[i]
+			}
+		}
+	}
+
+	// First pass: find a text model
+	for _, c := range candidates {
+		lower := strings.ToLower(c.name)
+		for _, kw := range textKeywords {
+			if strings.Contains(lower, kw) {
+				return c.name
+			}
+		}
+	}
+
+	// Second pass: any non-embedding model
+	if len(candidates) > 0 {
+		return candidates[0].name
+	}
+
+	return ""
+}
+
+// ollamaTranslate translates a single text from English to Chinese using the local Ollama model.
+func (s *OllamaService) ollamaTranslate(client *http.Client, modelName, text string) string {
+	payload, err := json.Marshal(map[string]interface{}{
+		"model": modelName,
+		"messages": []map[string]string{
+			{"role": "system", "content": "你是翻译助手。将用户给出的英文翻译为简洁流畅的中文，只输出翻译结果，不要解释、不要前缀。"},
+			{"role": "user", "content": text},
+		},
+		"stream":  false,
+		"options": map[string]interface{}{"temperature": 0.1, "num_predict": 256},
+	})
+	if err != nil {
+		return ""
+	}
+
+	req, err := http.NewRequest(http.MethodPost, s.cfg.OllamaAPIURL+"/api/chat", strings.NewReader(string(payload)))
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	var result struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return ""
+	}
+
+	translated := strings.TrimSpace(result.Message.Content)
+	// Clean up possible think tags
+	if idx := strings.Index(translated, "</think>"); idx >= 0 {
+		translated = strings.TrimSpace(translated[idx+len("</think>"):])
+	}
+	// Remove common prefixes
+	for _, prefix := range []string{"翻译：", "翻译:", "译文：", "译文:"} {
+		if strings.HasPrefix(translated, prefix) {
+			translated = strings.TrimSpace(translated[len(prefix):])
+		}
+	}
+
+	return translated
+}
+
+// containsChinese checks if a string contains Chinese characters.
+func containsChinese(s string) bool {
+	for _, r := range s {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			return true
+		}
+	}
+	return false
+}
+
 func formatBytes(b int64) string {
 	const (
 		GiB = 1024 * 1024 * 1024

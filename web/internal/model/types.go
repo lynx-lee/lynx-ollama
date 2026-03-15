@@ -68,17 +68,19 @@ type RunningModel struct {
 
 // GPUInfo holds GPU hardware information.
 type GPUInfo struct {
-	Index       string `json:"index"`
-	Name        string `json:"name"`
-	MemTotal    string `json:"mem_total"`
-	MemUsed     string `json:"mem_used"`
-	MemFree     string `json:"mem_free"`
-	Utilization string `json:"utilization"`
-	Temperature string `json:"temperature"`
-	Power       string `json:"power"`
-	PowerLimit  string `json:"power_limit"`
-	Driver      string `json:"driver"`
-	CUDA        string `json:"cuda"`
+	Index          string `json:"index"`
+	Name           string `json:"name"`
+	MemTotal       string `json:"mem_total"`
+	MemUsed        string `json:"mem_used"`
+	MemFree        string `json:"mem_free"`
+	Utilization    string `json:"utilization"`
+	Temperature    string `json:"temperature"`
+	Power          string `json:"power"`
+	PowerLimit     string `json:"power_limit"`
+	Driver         string `json:"driver"`
+	CUDA           string `json:"cuda"`
+	IsUnifiedMem   bool   `json:"is_unified_mem"`       // true for unified memory architectures (GB10, GH200, Grace)
+	UnifiedMemTotal string `json:"unified_mem_total,omitempty"` // system total memory when unified (e.g. "128 GiB")
 }
 
 // DiskUsage holds disk space information.
@@ -149,6 +151,23 @@ type UpdateInfo struct {
 	OldVersion string `json:"old_version"`
 	NewVersion string `json:"new_version"`
 	ImageID    string `json:"image_id"`
+}
+
+// MarketModel represents a model found on the Ollama website.
+type MarketModel struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Sizes       []string `json:"sizes,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Pulls       string   `json:"pulls,omitempty"`
+	Updated     string   `json:"updated,omitempty"`
+}
+
+// MarketSearchResult holds the search results from the Ollama website.
+type MarketSearchResult struct {
+	Models []MarketModel `json:"models"`
+	Query  string        `json:"query,omitempty"`
+	Total  int           `json:"total"`
 }
 
 // BenchmarkResult holds performance benchmark results.

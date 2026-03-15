@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.4.6-blue)
+![Version](https://img.shields.io/badge/version-v1.4.7-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -279,6 +279,7 @@ WEB_CORS_ORIGIN="https://admin.example.com" ./ollama.sh start
 | `GET /api/status` | 综合服务状态 | ✅ |
 | `POST /api/service/{start,stop,restart,update}` | 服务控制 | ✅ |
 | `GET /api/models` | 已下载模型列表 | ✅ |
+| `GET /api/models/search` | 搜索 Ollama 官网模型市场 | ✅ |
 | `POST /api/models/pull` | 拉取模型 | ✅ |
 | `DELETE /api/models/{name}` | 删除模型 | ✅ |
 | `GET,PUT /api/config` | 读取/更新配置 | ✅ |
@@ -318,6 +319,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.4.7 | 2026-03-15 | GPU 统一内存架构适配：后端 `GetGPUInfo` 通过 GPU 名称关键词（GB10/GH200/Grace）和 `[N/A]` 内存值检测统一内存，自动从 `/proc/meminfo` 读取系统总内存替代显存显示；前端 Dashboard GPU 卡片和 GPU 详情页适配统一内存（显示「统一内存架构」标签，无进度条）；健康检查显示「统一内存: X GiB」替代「显存: [N/A] MiB」；CUDA 版本提取修复（`sed` 替代 `awk` 避免尾部管道符）；模型管理分类展示——云端模型（`:cloud`）与本地模型分组显示，带数量统计和总大小汇总；新增「模型市场」Tab 页——搜索 Ollama 官网模型（`GET /api/models/search`），解析 HTML `x-test-*` 属性提取模型名称/描述/参数规格/标签/下载量/更新时间，支持按类型（vision/tools/thinking/embedding/code/cloud）和排序（热门/最新）筛选，卡片式展示搜索结果，一键拉取模型；后端自动检测本地翻译模型（优先 qwen3:8b），将英文模型描述翻译为中文 |
 | v1.4.6 | 2026-03-15 | Web 管理界面 API 轮询优化：后端新增 `/api/status/lite` 轻量接口（仅查询容器状态、运行模型、版本，3 项替代完整的 7 项并行查询）；前端智能轮询策略——Dashboard 页面 10 秒全量刷新、其他页面 30 秒轻量刷新、浏览器 Tab 不可见时完全暂停轮询；`status` 命令新增 API Key 显示；`update` 命令 Web 版本直接从工程 `VERSION` 变量读取，不再依赖 HTTP API 调用 |
 | v1.4.5 | 2026-03-15 | `update` 命令智能变更检测：`git pull` 前后比对 HEAD commit 判断 `web/` 目录是否有代码变更，`docker pull` 前后比对镜像 ID 判断 Ollama 是否有更新；Ollama 和 Web 均无变化时跳过重建直接提示「一切已是最新」；仅 Ollama 镜像更新时只重建 ollama 容器（不重编译 Web）；仅 Web 代码变更时只 `--build` Web 镜像；两者都变化时才 `--build --force-recreate` 全部重建；清理旧镜像也仅在有变更时执行，大幅减少无效构建耗时 |
 | v1.4.4 | 2026-03-15 | Web 界面图标全面升级：favicon、登录页 logo、侧边栏 logo 从 🦙 emoji 替换为 Ollama 官方 PNG 图标（`ollama.png`），提升品牌一致性和视觉质量 |

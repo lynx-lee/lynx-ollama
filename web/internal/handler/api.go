@@ -411,6 +411,20 @@ func (h *APIHandler) ShowModel(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, info)
 }
 
+// SearchMarketModels searches the Ollama website for models.
+func (h *APIHandler) SearchMarketModels(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	category := r.URL.Query().Get("c")
+	sort := r.URL.Query().Get("sort")
+
+	result, err := h.ollama.SearchModels(query, category, sort)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("搜索失败: %s", err.Error()))
+		return
+	}
+	jsonResponse(w, result)
+}
+
 // ── Health & Diagnostics ────────────────────────────────────────────
 
 // HealthCheck performs comprehensive health checks.

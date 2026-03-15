@@ -235,7 +235,15 @@ function updateDashboard(s) {
     document.getElementById('diskUsage').textContent = s.disk.use_percent || '--';
 
     if (s.gpu && s.gpu.length > 0) {
-        document.getElementById('gpuUsage').textContent = `${s.gpu[0].mem_used} / ${s.gpu[0].mem_total}`;
+        const gpu = s.gpu[0];
+        if (gpu.is_unified_mem && gpu.unified_mem_total) {
+            document.getElementById('gpuUsage').textContent = `${gpu.unified_mem_total}`;
+            document.querySelector('#gpuUsage').closest('.stat-card').querySelector('.stat-label').textContent = '统一内存';
+        } else if (gpu.mem_used && !gpu.mem_used.includes('[N/A]')) {
+            document.getElementById('gpuUsage').textContent = `${gpu.mem_used} / ${gpu.mem_total}`;
+        } else {
+            document.getElementById('gpuUsage').textContent = gpu.name || 'N/A';
+        }
     }
 
     // Container Info
@@ -314,26 +322,75 @@ async function controlService(action) {
 async function loadModels() {
     try {
         const models = await api('/api/models');
-        const tbody = document.querySelector('#modelsTable tbody');
+        const container = document.getElementById('modelsContainer');
 
         if (!models || models.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无模型，点击"拉取模型"下载</td></tr>';
+            container.innerHTML = '<div class="card"><div class="empty-state">暂无模型，点击"拉取模型"下载</div></div>';
             return;
         }
 
-        tbody.innerHTML = models.map(m => `
-            <tr>
-                <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || ''}</span></td>
-                <td>${m.size_human}</td>
-                <td>${m.parameters || '--'}</td>
-                <td>${m.quantization || '--'}</td>
-                <td>${formatTime(m.modified_at)}</td>
-                <td>
-                    <button class="btn btn-sm" onclick="showModelInfo('${escapeAttr(m.name)}')" title="详情">📋</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteModel('${escapeAttr(m.name)}')" title="删除">🗑</button>
-                </td>
-            </tr>
-        `).join('');
+        // Split into cloud and local models
+        const cloudModels = models.filter(m => m.name && m.name.includes(':cloud'));
+        const localModels = models.filter(m => !m.name || !m.name.includes(':cloud'));
+
+        let html = '';
+
+        // Cloud models section
+        if (cloudModels.length > 0) {
+            html += `
+                <div class="card">
+                    <div class="card-header"><h3>☁️ 云端模型 (${cloudModels.length})</h3></div>
+                    <div class="table-container">
+                        <table>
+                            <thead><tr><th>名称</th><th>大小</th><th>修改时间</th><th>操作</th></tr></thead>
+                            <tbody>${cloudModels.map(m => `
+                                <tr>
+                                    <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || '云端推理'}</span></td>
+                                    <td>${m.size_human}</td>
+                                    <td>${formatTime(m.modified_at)}</td>
+                                    <td>
+                                        <button class="btn btn-sm" onclick="showModelInfo('${escapeAttr(m.name)}')" title="详情">📋</button>
+                                        <button class="btn btn-sm btn-danger" onclick="deleteModel('${escapeAttr(m.name)}')" title="删除">🗑</button>
+                                    </td>
+                                </tr>
+                            `).join('')}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+        }
+
+        // Local models section
+        if (localModels.length > 0) {
+            html += `
+                <div class="card">
+                    <div class="card-header"><h3>💻 本地模型 (${localModels.length})</h3></div>
+                    <div class="table-container">
+                        <table>
+                            <thead><tr><th>名称</th><th>大小</th><th>参数</th><th>量化</th><th>修改时间</th><th>操作</th></tr></thead>
+                            <tbody>${localModels.map(m => `
+                                <tr>
+                                    <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || ''}</span></td>
+                                    <td>${m.size_human}</td>
+                                    <td>${m.parameters || '--'}</td>
+                                    <td>${m.quantization || '--'}</td>
+                                    <td>${formatTime(m.modified_at)}</td>
+                                    <td>
+                                        <button class="btn btn-sm" onclick="showModelInfo('${escapeAttr(m.name)}')" title="详情">📋</button>
+                                        <button class="btn btn-sm btn-danger" onclick="deleteModel('${escapeAttr(m.name)}')" title="删除">🗑</button>
+                                    </td>
+                                </tr>
+                            `).join('')}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+        }
+
+        // Summary
+        const totalSize = models.reduce((sum, m) => sum + (m.size || 0), 0);
+        const totalSizeHuman = totalSize >= 1073741824 ? `${(totalSize / 1073741824).toFixed(1)} GiB` : `${(totalSize / 1048576).toFixed(1)} MiB`;
+        html += `<div style="text-align:right;color:var(--text-muted);font-size:12px;margin-top:4px">共 ${models.length} 个模型，总计 ${totalSizeHuman}</div>`;
+
+        container.innerHTML = html;
     } catch (err) {
         showToast('加载模型列表失败: ' + err.message, 'error');
     }
@@ -358,6 +415,109 @@ async function deleteModel(name) {
     } catch (err) {
         showToast('删除失败: ' + err.message, 'error');
     }
+}
+
+// ── Model Tab Switching ─────────────────────────────────────────
+function switchModelTab(tab) {
+    // Update tab buttons
+    document.querySelectorAll('#modelsTabBar .tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+    });
+    // Show/hide tab panels
+    document.querySelectorAll('.model-tab').forEach(panel => {
+        panel.classList.toggle('active', panel.id === `tab-${tab}`);
+    });
+    // Auto-load market on first switch
+    if (tab === 'market') {
+        const results = document.getElementById('marketResults');
+        if (results && results.querySelector('.empty-state')) {
+            searchMarketModels();
+        }
+    }
+}
+
+// ── Model Market Search ─────────────────────────────────────────
+let marketSearching = false;
+
+async function searchMarketModels() {
+    if (marketSearching) return;
+    marketSearching = true;
+
+    const resultsEl = document.getElementById('marketResults');
+    const query = document.getElementById('marketSearchInput').value.trim();
+    const category = document.getElementById('marketCategory').value;
+    const sort = document.getElementById('marketSort').value;
+
+    resultsEl.innerHTML = '<div class="market-loading"><span class="spinner"></span>正在搜索 Ollama 官网模型...</div>';
+
+    try {
+        const params = new URLSearchParams();
+        if (query) params.set('q', query);
+        if (category) params.set('c', category);
+        if (sort) params.set('sort', sort);
+
+        const data = await api(`/api/models/search?${params.toString()}`);
+
+        if (!data.models || data.models.length === 0) {
+            resultsEl.innerHTML = '<div class="empty-state">未找到匹配的模型，请尝试其他关键词</div>';
+            return;
+        }
+
+        resultsEl.innerHTML = renderMarketResults(data);
+    } catch (err) {
+        resultsEl.innerHTML = `<div class="empty-state" style="color:var(--accent-red)">搜索失败: ${escapeHtml(err.message)}<br><small>请检查服务器网络是否可访问 ollama.com</small></div>`;
+    } finally {
+        marketSearching = false;
+    }
+}
+
+function renderMarketResults(data) {
+    const tagEmoji = {
+        'vision': '👁', 'tools': '🛠', 'thinking': '🧠',
+        'embedding': '📐', 'code': '💻', 'cloud': '☁️',
+    };
+
+    let html = `<div style="color:var(--text-muted);font-size:12px;margin-bottom:10px">共找到 ${data.total} 个模型${data.query ? '（关键词: ' + escapeHtml(data.query) + '）' : ''}</div>`;
+    html += '<div class="market-grid">';
+
+    for (const m of data.models) {
+        // Tags
+        const tagsHtml = (m.tags || []).map(t =>
+            `<span class="market-tag">${tagEmoji[t.toLowerCase()] || '🏷'} ${escapeHtml(t)}</span>`
+        ).join('');
+
+        // Sizes
+        const sizesHtml = (m.sizes || []).map(s =>
+            `<span class="market-size">${escapeHtml(s)}</span>`
+        ).join('');
+
+        html += `
+            <div class="market-card">
+                <div class="market-card-header">
+                    <span class="market-card-name">${escapeHtml(m.name)}</span>
+                    ${m.pulls ? `<span class="market-card-pulls">⬇ ${escapeHtml(m.pulls)}</span>` : ''}
+                </div>
+                ${m.description ? `<div class="market-card-desc">${escapeHtml(m.description)}</div>` : ''}
+                <div class="market-card-meta">
+                    ${tagsHtml}${sizesHtml}
+                </div>
+                <div class="market-card-footer">
+                    <span class="market-card-updated">${m.updated ? '🕐 ' + escapeHtml(m.updated) : ''}</span>
+                    <div class="market-card-actions">
+                        <button class="btn btn-sm btn-primary" onclick="pullFromMarket('${escapeAttr(m.name)}')" title="拉取模型">📥 拉取</button>
+                        <a class="btn btn-sm" href="https://ollama.com/library/${encodeURIComponent(m.name)}" target="_blank" title="查看详情">🔗</a>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    html += '</div>';
+    return html;
+}
+
+function pullFromMarket(name) {
+    document.getElementById('pullModelName').value = name;
+    showPullDialog();
 }
 
 // ── Pull Model ──────────────────────────────────────────────────
@@ -622,14 +782,29 @@ async function loadGPUInfo() {
         }
 
         container.innerHTML = gpus.map((gpu, i) => {
+            const isUnified = gpu.is_unified_mem;
             const memTotal = parseFloat(gpu.mem_total) || 1;
             const memUsed = parseFloat(gpu.mem_used) || 0;
-            const memPct = ((memUsed / memTotal) * 100).toFixed(1);
+            const memPct = isUnified ? 0 : ((memUsed / memTotal) * 100).toFixed(1);
             const utilPct = parseFloat(gpu.utilization) || 0;
 
-            return `
-                <div class="gpu-card">
-                    <h3>🎮 GPU ${gpu.index}: ${escapeHtml(gpu.name)}</h3>
+            // Memory display section
+            let memSection;
+            if (isUnified) {
+                memSection = `
+                    <div class="gpu-meter">
+                        <div class="gpu-meter-label">
+                            <span>🔗 统一内存 (CPU/GPU 共享)</span>
+                            <span>${gpu.unified_mem_total || gpu.mem_total}</span>
+                        </div>
+                        ${gpu.mem_used && !gpu.mem_used.includes('N/A') ? `
+                        <div class="gpu-meter-label" style="margin-top:4px">
+                            <span>已使用</span>
+                            <span>${gpu.mem_used}</span>
+                        </div>` : ''}
+                    </div>`;
+            } else {
+                memSection = `
                     <div class="gpu-meter">
                         <div class="gpu-meter-label">
                             <span>显存使用</span>
@@ -638,7 +813,13 @@ async function loadGPUInfo() {
                         <div class="meter-bar">
                             <div class="meter-fill ${memPct > 90 ? 'warn' : ''}" style="width:${memPct}%"></div>
                         </div>
-                    </div>
+                    </div>`;
+            }
+
+            return `
+                <div class="gpu-card">
+                    <h3>🎮 GPU ${gpu.index}: ${escapeHtml(gpu.name)}${isUnified ? ' <span style="color:var(--accent-purple);font-size:12px">统一内存架构</span>' : ''}</h3>
+                    ${memSection}
                     <div class="gpu-meter">
                         <div class="gpu-meter-label">
                             <span>GPU 利用率</span>
@@ -654,7 +835,7 @@ async function loadGPUInfo() {
                             '功耗': `${gpu.power} / ${gpu.power_limit}`,
                             '驱动': gpu.driver,
                             'CUDA': gpu.cuda || '--',
-                            '空闲显存': gpu.mem_free,
+                            ...(isUnified ? {'内存架构': '统一内存 (CPU/GPU 共享)'} : {'空闲显存': gpu.mem_free}),
                         })}
                     </div>
                 </div>
