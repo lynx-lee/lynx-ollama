@@ -94,11 +94,6 @@ function applyTheme(pref) {
     const actual = resolveTheme(pref);
     document.documentElement.setAttribute('data-theme', actual);
 
-    // Update settings panel active state (if rendered)
-    document.querySelectorAll('#themeOptions .theme-option').forEach(opt => {
-        opt.classList.toggle('active', opt.dataset.themeValue === pref);
-    });
-
     // Update topbar theme buttons active state
     document.querySelectorAll('#topbarThemeBtns .topbar-theme-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.themeValue === pref);
@@ -160,8 +155,7 @@ function switchPage(page) {
         case 'health': break; // Manual trigger
         case 'logs': loadLogs(); break;
         case 'config': loadConfig(); break;
-        case 'gpu': loadGPUInfo(); break;
-        case 'settings': applyTheme(getThemePreference()); break;
+        case 'gpu': renderGpuCards(currentStatus ? currentStatus.gpu : null); break;
     }
 }
 
@@ -232,10 +226,16 @@ async function refreshStatus() {
                 currentStatus.ollama_version = lite.ollama_version;
                 currentStatus.api_reachable = lite.api_reachable;
                 currentStatus.project_version = lite.project_version;
+                if (lite.gpu) {
+                    currentStatus.gpu = lite.gpu;
+                }
             } else {
                 currentStatus = lite;
             }
             updateTopbarBadges(currentStatus);
+            if (currentPage === 'gpu') {
+                renderGpuCards(currentStatus.gpu);
+            }
         }
     } catch (err) {
         if (currentPage === 'dashboard') {
@@ -256,18 +256,29 @@ function handleStatusWSMessage(msg) {
         } else {
             updateTopbarBadges(status);
         }
+        // GPU page also benefits from full data
+        if (currentPage === 'gpu') {
+            renderGpuCards(status.gpu);
+        }
     } else {
-        // lite mode — merge into currentStatus
+        // lite mode — merge into currentStatus (now includes GPU data)
         if (currentStatus) {
             currentStatus.container = status.container;
             currentStatus.running_models = status.running_models;
             currentStatus.ollama_version = status.ollama_version;
             currentStatus.api_reachable = status.api_reachable;
             currentStatus.project_version = status.project_version;
+            if (status.gpu) {
+                currentStatus.gpu = status.gpu;
+            }
         } else {
             currentStatus = status;
         }
         updateTopbarBadges(currentStatus);
+        // Auto-refresh GPU page when on it
+        if (currentPage === 'gpu') {
+            renderGpuCards(currentStatus.gpu);
+        }
     }
 }
 
@@ -930,76 +941,87 @@ async function runClean(mode) {
 }
 
 // ── GPU ─────────────────────────────────────────────────────────
+
+// renderGpuCards renders the GPU cards from a data array (used by WebSocket push).
+function renderGpuCards(gpus) {
+    const container = document.getElementById('gpuCards');
+    if (!container) return;
+
+    if (!gpus || gpus.length === 0) {
+        container.innerHTML = '<div class="card"><div class="empty-state">未检测到 GPU</div></div>';
+        return;
+    }
+
+    container.innerHTML = gpus.map((gpu, i) => {
+        const isUnified = gpu.is_unified_mem;
+        const memTotal = parseFloat(gpu.mem_total) || 1;
+        const memUsed = parseFloat(gpu.mem_used) || 0;
+        const memPct = isUnified ? 0 : ((memUsed / memTotal) * 100).toFixed(1);
+        const utilPct = parseFloat(gpu.utilization) || 0;
+
+        // Memory display section
+        let memSection;
+        if (isUnified) {
+            memSection = `
+                <div class="gpu-meter">
+                    <div class="gpu-meter-label">
+                        <span>🔗 统一内存 (CPU/GPU 共享)</span>
+                        <span>${gpu.unified_mem_total || gpu.mem_total}</span>
+                    </div>
+                    ${gpu.mem_used && !gpu.mem_used.includes('N/A') ? `
+                    <div class="gpu-meter-label" style="margin-top:4px">
+                        <span>已使用</span>
+                        <span>${gpu.mem_used}</span>
+                    </div>` : ''}
+                </div>`;
+        } else {
+            memSection = `
+                <div class="gpu-meter">
+                    <div class="gpu-meter-label">
+                        <span>显存使用</span>
+                        <span>${gpu.mem_used} / ${gpu.mem_total} (${memPct}%)</span>
+                    </div>
+                    <div class="meter-bar">
+                        <div class="meter-fill ${memPct > 90 ? 'warn' : ''}" style="width:${memPct}%"></div>
+                    </div>
+                </div>`;
+        }
+
+        return `
+            <div class="gpu-card">
+                <h3>🎮 GPU ${gpu.index}: ${escapeHtml(gpu.name)}${isUnified ? ' <span style="color:var(--accent-purple);font-size:12px">统一内存架构</span>' : ''}</h3>
+                ${memSection}
+                <div class="gpu-meter">
+                    <div class="gpu-meter-label">
+                        <span>GPU 利用率</span>
+                        <span>${gpu.utilization}</span>
+                    </div>
+                    <div class="meter-bar">
+                        <div class="meter-fill ${utilPct > 90 ? 'warn' : ''}" style="width:${utilPct}%"></div>
+                    </div>
+                </div>
+                <div class="info-list">
+                    ${buildInfoList({
+                        '温度': gpu.temperature,
+                        '功耗': `${gpu.power} / ${gpu.power_limit}`,
+                        '驱动': gpu.driver,
+                        'CUDA': gpu.cuda || '--',
+                        ...(isUnified ? {'内存架构': '统一内存 (CPU/GPU 共享)'} : {'空闲显存': gpu.mem_free}),
+                    })}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// loadGPUInfo is the HTTP fallback for manual refresh or initial load.
 async function loadGPUInfo() {
     try {
         const gpus = await api('/api/gpu');
-        const container = document.getElementById('gpuCards');
-
-        if (!gpus || gpus.length === 0) {
-            container.innerHTML = '<div class="card"><div class="empty-state">未检测到 GPU</div></div>';
-            return;
+        if (currentStatus) {
+            currentStatus.gpu = gpus;
         }
-
-        container.innerHTML = gpus.map((gpu, i) => {
-            const isUnified = gpu.is_unified_mem;
-            const memTotal = parseFloat(gpu.mem_total) || 1;
-            const memUsed = parseFloat(gpu.mem_used) || 0;
-            const memPct = isUnified ? 0 : ((memUsed / memTotal) * 100).toFixed(1);
-            const utilPct = parseFloat(gpu.utilization) || 0;
-
-            // Memory display section
-            let memSection;
-            if (isUnified) {
-                memSection = `
-                    <div class="gpu-meter">
-                        <div class="gpu-meter-label">
-                            <span>🔗 统一内存 (CPU/GPU 共享)</span>
-                            <span>${gpu.unified_mem_total || gpu.mem_total}</span>
-                        </div>
-                        ${gpu.mem_used && !gpu.mem_used.includes('N/A') ? `
-                        <div class="gpu-meter-label" style="margin-top:4px">
-                            <span>已使用</span>
-                            <span>${gpu.mem_used}</span>
-                        </div>` : ''}
-                    </div>`;
-            } else {
-                memSection = `
-                    <div class="gpu-meter">
-                        <div class="gpu-meter-label">
-                            <span>显存使用</span>
-                            <span>${gpu.mem_used} / ${gpu.mem_total} (${memPct}%)</span>
-                        </div>
-                        <div class="meter-bar">
-                            <div class="meter-fill ${memPct > 90 ? 'warn' : ''}" style="width:${memPct}%"></div>
-                        </div>
-                    </div>`;
-            }
-
-            return `
-                <div class="gpu-card">
-                    <h3>🎮 GPU ${gpu.index}: ${escapeHtml(gpu.name)}${isUnified ? ' <span style="color:var(--accent-purple);font-size:12px">统一内存架构</span>' : ''}</h3>
-                    ${memSection}
-                    <div class="gpu-meter">
-                        <div class="gpu-meter-label">
-                            <span>GPU 利用率</span>
-                            <span>${gpu.utilization}</span>
-                        </div>
-                        <div class="meter-bar">
-                            <div class="meter-fill ${utilPct > 90 ? 'warn' : ''}" style="width:${utilPct}%"></div>
-                        </div>
-                    </div>
-                    <div class="info-list">
-                        ${buildInfoList({
-                            '温度': gpu.temperature,
-                            '功耗': `${gpu.power} / ${gpu.power_limit}`,
-                            '驱动': gpu.driver,
-                            'CUDA': gpu.cuda || '--',
-                            ...(isUnified ? {'内存架构': '统一内存 (CPU/GPU 共享)'} : {'空闲显存': gpu.mem_free}),
-                        })}
-                    </div>
-                </div>
-            `;
-        }).join('');
+        renderGpuCards(gpus);
     } catch (err) {
         document.getElementById('gpuCards').innerHTML = `<div class="card"><div class="empty-state">加载 GPU 信息失败: ${escapeHtml(err.message)}</div></div>`;
     }

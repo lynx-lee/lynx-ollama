@@ -203,7 +203,7 @@ func (h *APIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, status)
 }
 
-// GetStatusLite returns a lightweight status snapshot (container + API + running models).
+// GetStatusLite returns a lightweight status snapshot (container + API + running models + GPU).
 // This is used for background polling when the user is NOT on the Dashboard page,
 // significantly reducing the number of requests to Ollama and Docker.
 func (h *APIHandler) GetStatusLite(w http.ResponseWriter, r *http.Request) {
@@ -212,8 +212,8 @@ func (h *APIHandler) GetStatusLite(w http.ResponseWriter, r *http.Request) {
 
 	status := model.ServiceStatus{}
 
-	// Only 3 lightweight queries (vs. 7 in full status)
-	ch := make(chan collectResult, 3)
+	// 4 lightweight queries (vs. 7 in full status)
+	ch := make(chan collectResult, 4)
 
 	go func() {
 		info, err := h.docker.GetContainerInfo(ctx)
@@ -227,8 +227,12 @@ func (h *APIHandler) GetStatusLite(w http.ResponseWriter, r *http.Request) {
 		version, err := h.ollama.GetVersion()
 		ch <- collectResult{"version", version, err}
 	}()
+	go func() {
+		gpus, err := h.docker.GetGPUInfo(ctx)
+		ch <- collectResult{"gpu", gpus, err}
+	}()
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		r := <-ch
 		switch r.key {
 		case "container":
@@ -240,6 +244,10 @@ func (h *APIHandler) GetStatusLite(w http.ResponseWriter, r *http.Request) {
 		case "version":
 			if r.val != nil {
 				status.OllamaVersion = r.val.(string)
+			}
+		case "gpu":
+			if r.val != nil {
+				status.GPU = r.val.([]model.GPUInfo)
 			}
 		}
 	}
@@ -977,6 +985,7 @@ func (hub *StatusHub) collectFullStatus() model.ServiceStatus {
 }
 
 // collectLiteStatus collects lightweight status (same as GetStatusLite handler).
+// It now also includes GPU data so the GPU page can be updated via WebSocket.
 func (hub *StatusHub) collectLiteStatus() model.ServiceStatus {
 	h := hub.handler
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -984,7 +993,7 @@ func (hub *StatusHub) collectLiteStatus() model.ServiceStatus {
 
 	status := model.ServiceStatus{}
 
-	ch := make(chan collectResult, 3)
+	ch := make(chan collectResult, 4)
 	go func() {
 		info, err := h.docker.GetContainerInfo(ctx)
 		ch <- collectResult{"container", info, err}
@@ -997,8 +1006,12 @@ func (hub *StatusHub) collectLiteStatus() model.ServiceStatus {
 		version, err := h.ollama.GetVersion()
 		ch <- collectResult{"version", version, err}
 	}()
+	go func() {
+		gpus, err := h.docker.GetGPUInfo(ctx)
+		ch <- collectResult{"gpu", gpus, err}
+	}()
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		r := <-ch
 		switch r.key {
 		case "container":
@@ -1010,6 +1023,10 @@ func (hub *StatusHub) collectLiteStatus() model.ServiceStatus {
 		case "version":
 			if r.val != nil {
 				status.OllamaVersion = r.val.(string)
+			}
+		case "gpu":
+			if r.val != nil {
+				status.GPU = r.val.([]model.GPUInfo)
 			}
 		}
 	}

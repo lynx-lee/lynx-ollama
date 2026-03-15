@@ -968,66 +968,6 @@ tbody tr:hover { background: var(--bg-hover); }
     to   { opacity: 1; }
 }
 
-/* ── Appearance Settings ──────────────────────────────────────── */
-.appearance-section {
-    margin-bottom: 24px;
-}
-
-.appearance-section h4 {
-    font-size: 15px;
-    font-weight: 500;
-    margin-bottom: 16px;
-    color: var(--text-primary);
-}
-
-.theme-options {
-    display: flex;
-    gap: 12px;
-}
-
-.theme-option {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    padding: 20px 16px;
-    background: var(--bg-primary);
-    border: 2px solid var(--border-color);
-    border-radius: var(--radius);
-    cursor: pointer;
-    transition: all var(--transition);
-    color: var(--text-secondary);
-    font-size: 13px;
-    font-weight: 500;
-}
-
-.theme-option:hover {
-    border-color: var(--accent-blue);
-    background: var(--bg-hover);
-}
-
-.theme-option.active {
-    border-color: var(--accent-blue);
-    color: var(--accent-blue);
-    background: rgba(91, 141, 239, 0.08);
-}
-
-[data-theme="light"] .theme-option.active {
-    background: rgba(52, 120, 246, 0.08);
-}
-
-.theme-option-icon {
-    font-size: 28px;
-    line-height: 1;
-    color: var(--text-muted);
-    transition: color var(--transition);
-}
-
-.theme-option.active .theme-option-icon {
-    color: var(--accent-blue);
-}
-
 /* ── Light theme overrides for specific components ────────────── */
 [data-theme="light"] .modal-overlay {
     background: rgba(0, 0, 0, 0.3);
