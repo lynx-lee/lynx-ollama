@@ -48,12 +48,13 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m' # No Color
 
-# 项目版本（唯一真相源: web/cmd/server/main.go → var Version = "vX.Y.Z"）
-VERSION=$(grep -m1 'var Version' "${PROJECT_DIR}/web/cmd/server/main.go" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' || echo "dev")
-
 # 项目配置
 PROJECT_NAME="ollama"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 项目版本（唯一真相源: web/cmd/server/main.go → var Version = "vX.Y.Z"）
+VERSION=$(grep -m1 'var Version' "${PROJECT_DIR}/web/cmd/server/main.go" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/')
+[ -z "$VERSION" ] && VERSION="dev"
 DOCKER_COMPOSE_FILE="${PROJECT_DIR}/docker-compose.yaml"
 BACKUP_DIR="${PROJECT_DIR}/backups"
 LOG_DIR="${PROJECT_DIR}/logs"
