@@ -1062,17 +1062,10 @@ do_update() {
 
     # ── 获取当前版本 ──────────────────────────────────────────
     local current_ollama_ver="未知"
-    local current_web_ver="未知"
-    local web_port="${WEB_PORT:-9981}"
+    local current_web_ver="${VERSION}"
 
     if is_api_ready; then
         current_ollama_ver=$(curl -sf "${OLLAMA_API}/api/version" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','未知'))" 2>/dev/null || echo "未知")
-    fi
-    # 从 Web API 获取版本
-    local web_ver_json
-    web_ver_json=$(curl -sf "http://localhost:${web_port}/api/version" -H "Authorization: Bearer ${WEB_API_KEY:-}" 2>/dev/null || true)
-    if [ -n "$web_ver_json" ]; then
-        current_web_ver=$(echo "$web_ver_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('project_version','未知'))" 2>/dev/null || echo "未知")
     fi
 
     log_info "当前版本: Ollama ${current_ollama_ver} | Web ${current_web_ver}"
@@ -1196,21 +1189,8 @@ do_update() {
         local new_ollama_ver
         new_ollama_ver=$(curl -sf "${OLLAMA_API}/api/version" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','未知'))" 2>/dev/null || echo "未知")
 
-        # 等待 Web 就绪
-        local new_web_ver="未知"
-        local web_wait=0
-        while [ $web_wait -lt 30 ]; do
-            web_ver_json=$(curl -sf "http://localhost:${web_port}/api/health" 2>/dev/null || true)
-            if [ -n "$web_ver_json" ]; then
-                web_ver_json=$(curl -sf "http://localhost:${web_port}/api/version" -H "Authorization: Bearer ${WEB_API_KEY:-}" 2>/dev/null || true)
-                if [ -n "$web_ver_json" ]; then
-                    new_web_ver=$(echo "$web_ver_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('project_version','未知'))" 2>/dev/null || echo "未知")
-                fi
-                break
-            fi
-            sleep 2
-            web_wait=$((web_wait + 2))
-        done
+        # Web 版本直接从更新后的脚本 VERSION 变量获取
+        local new_web_ver="${VERSION}"
 
         echo ""
         print_separator

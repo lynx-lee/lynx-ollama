@@ -318,7 +318,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
-| v1.4.6 | 2026-03-15 | Web 管理界面 API 轮询优化：后端新增 `/api/status/lite` 轻量接口（仅查询容器状态、运行模型、版本，3 项替代完整的 7 项并行查询）；前端智能轮询策略——Dashboard 页面 10 秒全量刷新、其他页面 30 秒轻量刷新、浏览器 Tab 不可见时完全暂停轮询；大幅减少对 Ollama API 的请求密度；`status` 命令 Web 管理界面区域新增 API Key 显示 |
+| v1.4.6 | 2026-03-15 | Web 管理界面 API 轮询优化：后端新增 `/api/status/lite` 轻量接口（仅查询容器状态、运行模型、版本，3 项替代完整的 7 项并行查询）；前端智能轮询策略——Dashboard 页面 10 秒全量刷新、其他页面 30 秒轻量刷新、浏览器 Tab 不可见时完全暂停轮询；`status` 命令新增 API Key 显示；`update` 命令 Web 版本直接从工程 `VERSION` 变量读取，不再依赖 HTTP API 调用 |
 | v1.4.5 | 2026-03-15 | `update` 命令智能变更检测：`git pull` 前后比对 HEAD commit 判断 `web/` 目录是否有代码变更，`docker pull` 前后比对镜像 ID 判断 Ollama 是否有更新；Ollama 和 Web 均无变化时跳过重建直接提示「一切已是最新」；仅 Ollama 镜像更新时只重建 ollama 容器（不重编译 Web）；仅 Web 代码变更时只 `--build` Web 镜像；两者都变化时才 `--build --force-recreate` 全部重建；清理旧镜像也仅在有变更时执行，大幅减少无效构建耗时 |
 | v1.4.4 | 2026-03-15 | Web 界面图标全面升级：favicon、登录页 logo、侧边栏 logo 从 🦙 emoji 替换为 Ollama 官方 PNG 图标（`ollama.png`），提升品牌一致性和视觉质量 |
 | v1.4.3 | 2026-03-15 | 修复 Web 日志查看功能不显示日志：`GetLogs` 和 `StreamLogs` 从 `docker compose logs` 改为 `docker logs`（直接通过 Docker API 按容器名获取日志，避免在容器内执行 docker compose 时的项目上下文问题）；`StreamLogs` WebSocket 合并 stderr 到 stdout pipe（`docker logs` 将容器 stderr 输出到自身 stderr），确保所有日志行都能被捕获 |
