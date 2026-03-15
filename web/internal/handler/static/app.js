@@ -482,7 +482,26 @@ async function translateMarketDescriptions(models) {
     if (toTranslate.length === 0) return;
 
     const batchSize = 5;
+    let translatedCount = 0;
+    let consecutiveFailures = 0;
+    const maxConsecutiveFailures = 3; // Stop after 3 consecutive batch failures
+
+    // Show translation progress indicator
+    const progressEl = document.createElement('div');
+    progressEl.id = 'translateProgress';
+    progressEl.style.cssText = 'color:var(--text-muted);font-size:12px;margin-bottom:8px;display:flex;align-items:center;gap:6px;';
+    progressEl.innerHTML = `<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span><span>正在翻译模型描述 (0/${toTranslate.length})...</span>`;
+    const marketGrid = document.querySelector('.market-grid');
+    if (marketGrid && marketGrid.parentNode) {
+        marketGrid.parentNode.insertBefore(progressEl, marketGrid);
+    }
+
     for (let i = 0; i < toTranslate.length; i += batchSize) {
+        if (consecutiveFailures >= maxConsecutiveFailures) {
+            console.warn('Translation stopped: too many consecutive failures');
+            break;
+        }
+
         const batch = toTranslate.slice(i, i + batchSize).map(m => ({
             name: m.name,
             description: m.description,
@@ -494,8 +513,12 @@ async function translateMarketDescriptions(models) {
                 body: JSON.stringify({ items: batch }),
             });
 
-            if (!results || !Array.isArray(results)) continue;
+            if (!results || !Array.isArray(results)) {
+                consecutiveFailures++;
+                continue;
+            }
 
+            let batchTranslated = 0;
             // Update the DOM for each translated description
             for (const r of results) {
                 if (!r.description || r.description === batch.find(b => b.name === r.name)?.description) continue;
@@ -504,12 +527,39 @@ async function translateMarketDescriptions(models) {
                 if (descEl) {
                     descEl.textContent = r.description;
                     descEl.classList.add('translated');
+                    batchTranslated++;
                 }
+            }
+
+            translatedCount += batchTranslated;
+            if (batchTranslated > 0) {
+                consecutiveFailures = 0; // Reset on success
+            } else {
+                consecutiveFailures++;
+            }
+
+            // Update progress indicator
+            if (progressEl) {
+                const processed = Math.min(i + batchSize, toTranslate.length);
+                progressEl.querySelector('span:last-child').textContent =
+                    `正在翻译模型描述 (${processed}/${toTranslate.length})，已翻译 ${translatedCount} 条...`;
             }
         } catch (err) {
             // Translation failure is non-critical — just keep English descriptions
             console.warn('Translation batch failed:', err);
-            break; // Stop translating if API is not available
+            consecutiveFailures++;
+            // Don't break — try next batch unless too many consecutive failures
+        }
+    }
+
+    // Remove progress indicator and show summary
+    if (progressEl) {
+        if (translatedCount > 0) {
+            progressEl.innerHTML = `<span>✅ 已翻译 ${translatedCount}/${toTranslate.length} 条模型描述</span>`;
+            setTimeout(() => progressEl.remove(), 5000);
+        } else {
+            progressEl.innerHTML = `<span>⚠️ 翻译未成功，请确保有可用的本地大模型</span>`;
+            setTimeout(() => progressEl.remove(), 8000);
         }
     }
 }

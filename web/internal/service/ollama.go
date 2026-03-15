@@ -337,6 +337,7 @@ func (s *OllamaService) SearchModels(query, category, sort string) (*model.Marke
 
 // TranslateDescriptions translates the given model descriptions to Chinese using the local Ollama model.
 // Accepts a list of TranslateRequest items and returns the translated descriptions.
+// Uses the best available model (preferring currently running models for faster response).
 func (s *OllamaService) TranslateDescriptions(items []model.TranslateRequest) []model.TranslateResponse {
 	results := make([]model.TranslateResponse, len(items))
 	for i, item := range items {
@@ -352,9 +353,17 @@ func (s *OllamaService) TranslateDescriptions(items []model.TranslateRequest) []
 		return results
 	}
 
-	translateClient := &http.Client{Timeout: 30 * time.Second}
+	// Longer timeout: cold-start models may need time to load into VRAM
+	translateClient := &http.Client{Timeout: 120 * time.Second}
+
+	consecutiveFailures := 0
+	maxConsecutiveFailures := 3 // Stop trying after 3 consecutive failures
 
 	for i, item := range items {
+		if consecutiveFailures >= maxConsecutiveFailures {
+			break // Model is likely unavailable, stop wasting time
+		}
+
 		desc := item.Description
 		if desc == "" || len(desc) < 10 {
 			continue
@@ -367,6 +376,9 @@ func (s *OllamaService) TranslateDescriptions(items []model.TranslateRequest) []
 		translated := s.ollamaTranslate(translateClient, translationModel, desc)
 		if translated != "" && translated != desc {
 			results[i].Description = translated
+			consecutiveFailures = 0 // Reset on success
+		} else {
+			consecutiveFailures++
 		}
 	}
 
@@ -563,14 +575,71 @@ func htmlUnescape(s string) string {
 	return s
 }
 
-// findTranslationModel finds a suitable model for translation from locally available models.
+// isTranslationCapableModel checks if a model name suggests it can handle text translation tasks.
+// Returns false for embedding models, vision-only models, and other non-text-generation models.
+func isTranslationCapableModel(name string) bool {
+	lower := strings.ToLower(name)
+
+	// Exclude: embedding models
+	excludeKeywords := []string{
+		"embed", "nomic-embed", "bge-", "mxbai-embed", "all-minilm",
+		"snowflake-arctic-embed",
+	}
+	for _, kw := range excludeKeywords {
+		if strings.Contains(lower, kw) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isPreferredTranslationModel checks if a model is particularly good at translation
+// (multilingual LLMs that handle Chinese well).
+func isPreferredTranslationModel(name string) bool {
+	lower := strings.ToLower(name)
+	preferredKeywords := []string{
+		"qwen", "glm", "deepseek", "yi-", "internlm", "baichuan",
+		"llama", "gemma", "mistral", "phi", "nemotron",
+	}
+	for _, kw := range preferredKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// findTranslationModel finds the best model for translation tasks.
+// Priority order:
+//  1. Currently running model that supports translation (already loaded in memory = fastest response)
+//  2. Preferred translation model from downloaded list (qwen, deepseek, llama, etc.)
+//  3. Any non-embedding downloaded model as fallback
 func (s *OllamaService) findTranslationModel() string {
+	// === Phase 1: Check currently running models (loaded in VRAM, instant response) ===
+	runningModels, err := s.ListRunningModels()
+	if err == nil && len(runningModels) > 0 {
+		// First: find a preferred running model (qwen, deepseek, llama, etc.)
+		for _, m := range runningModels {
+			if isTranslationCapableModel(m.Name) && isPreferredTranslationModel(m.Name) {
+				return m.Name
+			}
+		}
+		// Second: any running model that can translate
+		for _, m := range runningModels {
+			if isTranslationCapableModel(m.Name) {
+				return m.Name
+			}
+		}
+	}
+
+	// === Phase 2: Fall back to downloaded models ===
 	models, err := s.ListModels()
 	if err != nil || len(models) == 0 {
 		return ""
 	}
 
-	// Preferred: qwen3:8b
+	// Preferred: qwen3:8b (explicitly known good translation model)
 	for _, m := range models {
 		lower := strings.ToLower(m.Name)
 		if lower == "qwen3:8b" || strings.HasPrefix(lower, "qwen3:8b-") {
@@ -578,33 +647,19 @@ func (s *OllamaService) findTranslationModel() string {
 		}
 	}
 
-	// Embedding model keywords to exclude
-	embedKeywords := []string{"embed", "nomic-embed", "bge-", "mxbai-embed", "all-minilm"}
-	// Text model keywords suitable for translation
-	textKeywords := []string{"qwen", "glm", "llama", "gemma", "mistral", "phi", "deepseek", "yi-"}
-
-	// Sort by size ascending — prefer smaller models
+	// Collect translation-capable candidates, sorted by size ascending (prefer smaller = faster)
 	type modelEntry struct {
 		name string
 		size int64
 	}
 	var candidates []modelEntry
 	for _, m := range models {
-		lower := strings.ToLower(m.Name)
-		isEmbed := false
-		for _, kw := range embedKeywords {
-			if strings.Contains(lower, kw) {
-				isEmbed = true
-				break
-			}
+		if isTranslationCapableModel(m.Name) {
+			candidates = append(candidates, modelEntry{name: m.Name, size: m.Size})
 		}
-		if isEmbed {
-			continue
-		}
-		candidates = append(candidates, modelEntry{name: m.Name, size: m.Size})
 	}
 
-	// Sort by size
+	// Sort by size ascending
 	for i := 0; i < len(candidates); i++ {
 		for j := i + 1; j < len(candidates); j++ {
 			if candidates[j].size < candidates[i].size {
@@ -613,17 +668,14 @@ func (s *OllamaService) findTranslationModel() string {
 		}
 	}
 
-	// First pass: find a text model
+	// Preferred text models first
 	for _, c := range candidates {
-		lower := strings.ToLower(c.name)
-		for _, kw := range textKeywords {
-			if strings.Contains(lower, kw) {
-				return c.name
-			}
+		if isPreferredTranslationModel(c.name) {
+			return c.name
 		}
 	}
 
-	// Second pass: any non-embedding model
+	// Any capable model as last resort
 	if len(candidates) > 0 {
 		return candidates[0].name
 	}
