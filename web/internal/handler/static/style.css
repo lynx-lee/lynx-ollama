@@ -55,7 +55,8 @@ body {
     border-bottom: 1px solid var(--border-color);
 }
 
-.sidebar-header .logo { font-size: 28px; }
+.sidebar-header .logo { font-size: 28px; line-height: 1; }
+.sidebar-logo-img { width: 36px; height: 36px; object-fit: contain; border-radius: 6px; }
 .sidebar-header h1 { font-size: 18px; font-weight: 600; }
 
 .version-badge {
