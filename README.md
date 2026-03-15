@@ -68,7 +68,7 @@ git clone <repo-url> && cd lynx-ollama
 | `restart` | 重启 Ollama 服务 |
 | `status` | 查看服务状态（容器/模型/GPU/磁盘） |
 | `logs [lines]` | 查看日志（默认 200 行） |
-| `update` | 拉取最新镜像并重启 |
+| `update` | 更新代码（git pull）、拉取最新 Ollama 镜像、重建 Web 镜像并重启 |
 
 ### 模型管理
 

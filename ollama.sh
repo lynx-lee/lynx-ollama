@@ -15,7 +15,7 @@
 #   restart     重启 Ollama 服务
 #   status      查看服务状态与GPU信息
 #   logs        查看服务日志
-#   update      更新镜像并重启
+#   update      更新代码、拉取最新镜像、重建Web并重启
 #   clean       清理容器与镜像
 #   init        初始化部署环境
 #   backup      备份模型与配置
@@ -1041,43 +1041,90 @@ do_logs() {
 
 # 更新镜像并重启
 do_update() {
-    log_info "更新 Ollama..."
+    log_info "更新 Ollama 服务与 Web 管理界面..."
 
     cd "${PROJECT_DIR}"
 
-    # 获取当前版本
-    local current_ver="未知"
-    if is_api_ready; then
-        current_ver=$(curl -sf "${OLLAMA_API}/api/version" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','未知'))" 2>/dev/null || echo "未知")
-    fi
-    log_info "当前版本: ${current_ver}"
+    # ── 获取当前版本 ──────────────────────────────────────────
+    local current_ollama_ver="未知"
+    local current_web_ver="未知"
+    local web_port="${WEB_PORT:-9981}"
 
-    # 拉取最新镜像
+    if is_api_ready; then
+        current_ollama_ver=$(curl -sf "${OLLAMA_API}/api/version" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','未知'))" 2>/dev/null || echo "未知")
+    fi
+    # 从 Web API 获取版本
+    local web_ver_json
+    web_ver_json=$(curl -sf "http://localhost:${web_port}/api/version" -H "Authorization: Bearer ${WEB_API_KEY:-}" 2>/dev/null || true)
+    if [ -n "$web_ver_json" ]; then
+        current_web_ver=$(echo "$web_ver_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('project_version','未知'))" 2>/dev/null || echo "未知")
+    fi
+
+    log_info "当前版本: Ollama ${current_ollama_ver} | Web ${current_web_ver}"
+
+    # ── 更新项目代码 (git pull) ───────────────────────────────
+    if [ -d "${PROJECT_DIR}/.git" ]; then
+        log_step "拉取最新项目代码..."
+        local git_output
+        git_output=$(cd "${PROJECT_DIR}" && git pull 2>&1) || {
+            log_error "git pull 失败: ${git_output}"
+            log_warn "跳过代码更新，继续更新镜像..."
+        }
+        if [ -n "$git_output" ]; then
+            echo "  ${git_output}"
+        fi
+    else
+        log_warn "非 git 仓库，跳过代码更新"
+    fi
+
+    # ── 拉取最新 Ollama 镜像 ──────────────────────────────────
     log_step "拉取最新 Ollama 镜像..."
     docker pull ollama/ollama:latest
 
-    # 获取新镜像ID
     local new_image_id
     new_image_id=$(docker inspect --format='{{.Id}}' ollama/ollama:latest 2>/dev/null | cut -c8-19)
     log_info "新镜像ID: ${new_image_id}"
 
-    # 重建并启动
-    log_step "重建容器..."
-    $COMPOSE_CMD up -d --force-recreate
+    # ── 重新构建 Web 镜像并启动 ───────────────────────────────
+    log_step "重新构建 Web 镜像并启动所有服务..."
+    $COMPOSE_CMD up -d --build --force-recreate
 
-    # 等待就绪
+    # ── 等待就绪并显示版本变化 ─────────────────────────────────
     if wait_for_api 120; then
-        local new_ver
-        new_ver=$(curl -sf "${OLLAMA_API}/api/version" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','未知'))" 2>/dev/null || echo "未知")
-        log_success "更新完成: ${current_ver} → ${new_ver}"
+        local new_ollama_ver
+        new_ollama_ver=$(curl -sf "${OLLAMA_API}/api/version" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','未知'))" 2>/dev/null || echo "未知")
+
+        # 等待 Web 就绪
+        local new_web_ver="未知"
+        local web_wait=0
+        while [ $web_wait -lt 30 ]; do
+            web_ver_json=$(curl -sf "http://localhost:${web_port}/api/health" 2>/dev/null || true)
+            if [ -n "$web_ver_json" ]; then
+                web_ver_json=$(curl -sf "http://localhost:${web_port}/api/version" -H "Authorization: Bearer ${WEB_API_KEY:-}" 2>/dev/null || true)
+                if [ -n "$web_ver_json" ]; then
+                    new_web_ver=$(echo "$web_ver_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('project_version','未知'))" 2>/dev/null || echo "未知")
+                fi
+                break
+            fi
+            sleep 2
+            web_wait=$((web_wait + 2))
+        done
+
+        echo ""
+        print_separator
+        log_success "更新完成！"
+        echo ""
+        echo -e "  ${BOLD}Ollama:${NC}  ${current_ollama_ver} → ${CYAN}${new_ollama_ver}${NC}"
+        echo -e "  ${BOLD}Web:${NC}     ${current_web_ver} → ${CYAN}${new_web_ver}${NC}"
+        echo ""
     else
         log_error "更新后服务启动异常"
         exit 1
     fi
 
-    # 清理旧镜像
+    # ── 清理旧镜像 ────────────────────────────────────────────
     log_step "清理旧镜像..."
-    docker image prune -f --filter "label=maintainer" > /dev/null 2>&1 || true
+    docker image prune -f > /dev/null 2>&1 || true
 }
 
 # 清理
@@ -3160,7 +3207,7 @@ show_help() {
     echo "  restart             重启 Ollama 服务"
     echo "  status              查看服务状态 (容器/模型/GPU/磁盘)"
     echo "  logs [lines]        查看日志 (默认200行, Ctrl+C退出)"
-    echo "  update              拉取最新镜像并重启"
+    echo "  update              更新代码、拉取最新镜像、重建Web并重启"
     echo ""
     echo -e "${BOLD}模型管理:${NC}"
     echo "  pull <model>        拉取/更新模型"
