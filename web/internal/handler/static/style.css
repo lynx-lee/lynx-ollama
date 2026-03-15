@@ -56,7 +56,7 @@ body {
 }
 
 .sidebar-header .logo { font-size: 28px; line-height: 1; }
-.sidebar-logo-img { width: 36px; height: 36px; object-fit: contain; border-radius: 6px; }
+.sidebar-logo-img { width: 36px; height: 36px; object-fit: contain; border-radius: 6px; filter: invert(1); }
 .sidebar-header h1 { font-size: 18px; font-weight: 600; }
 
 .version-badge {
@@ -552,7 +552,7 @@ tbody tr:hover { background: var(--bg-hover); }
 }
 
 .auth-logo { margin-bottom: 16px; }
-.auth-logo-img { width: 64px; height: auto; }
+.auth-logo-img { width: 64px; height: auto; filter: invert(1); }
 .auth-card h2 { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
 .auth-subtitle { color: var(--text-secondary); font-size: 14px; margin-bottom: 28px; }
 
