@@ -74,6 +74,48 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+// ── Theme Management ────────────────────────────────────────────
+const THEME_KEY = 'ollama_web_theme';
+
+// getThemePreference returns the stored preference: 'light', 'dark', or 'system'.
+function getThemePreference() {
+    return localStorage.getItem(THEME_KEY) || 'system';
+}
+
+// resolveTheme translates a preference into the actual theme ('light' or 'dark').
+function resolveTheme(pref) {
+    if (pref === 'light' || pref === 'dark') return pref;
+    // 'system' — detect from OS
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+// applyTheme sets the data-theme attribute on <html> and updates the settings UI.
+function applyTheme(pref) {
+    const actual = resolveTheme(pref);
+    document.documentElement.setAttribute('data-theme', actual);
+
+    // Update settings panel active state (if rendered)
+    document.querySelectorAll('#themeOptions .theme-option').forEach(opt => {
+        opt.classList.toggle('active', opt.dataset.themeValue === pref);
+    });
+}
+
+// setTheme is called by the user clicking a theme option.
+function setTheme(pref) {
+    localStorage.setItem(THEME_KEY, pref);
+    applyTheme(pref);
+}
+
+// Listen for OS theme changes (relevant when preference is 'system').
+window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (getThemePreference() === 'system') {
+        applyTheme('system');
+    }
+});
+
+// Apply theme immediately on script load (before DOMContentLoaded) to avoid FOUC.
+applyTheme(getThemePreference());
+
 // ── State ────────────────────────────────────────────────────────
 let logWs = null;
 let logStreaming = false;
@@ -109,6 +151,7 @@ function switchPage(page) {
         case 'logs': loadLogs(); break;
         case 'config': loadConfig(); break;
         case 'gpu': loadGPUInfo(); break;
+        case 'settings': applyTheme(getThemePreference()); break;
     }
 }
 

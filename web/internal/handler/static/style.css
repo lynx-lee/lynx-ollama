@@ -19,6 +19,27 @@
     --radius-sm: 6px;
     --shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
     --transition: 0.2s ease;
+    --logo-invert: invert(1);
+}
+
+/* ── Light Theme ──────────────────────────────────────────────── */
+[data-theme="light"] {
+    --bg-primary: #f5f5f7;
+    --bg-secondary: #ffffff;
+    --bg-card: #ffffff;
+    --bg-hover: #f0f1f5;
+    --bg-input: #f5f5f7;
+    --border-color: #e0e2e8;
+    --text-primary: #1d1d1f;
+    --text-secondary: #6e6e73;
+    --text-muted: #a1a1a6;
+    --accent-blue: #3478f6;
+    --accent-green: #30d158;
+    --accent-yellow: #f59e0b;
+    --accent-red: #ff3b30;
+    --accent-purple: #8b5cf6;
+    --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+    --logo-invert: invert(0);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -56,7 +77,7 @@ body {
 }
 
 .sidebar-header .logo { font-size: 28px; line-height: 1; }
-.sidebar-logo-img { width: 36px; height: 36px; object-fit: contain; border-radius: 6px; filter: invert(1); }
+.sidebar-logo-img { width: 36px; height: 36px; object-fit: contain; border-radius: 6px; filter: var(--logo-invert); }
 .sidebar-header h1 { font-size: 18px; font-weight: 600; }
 
 .version-badge {
@@ -552,7 +573,7 @@ tbody tr:hover { background: var(--bg-hover); }
 }
 
 .auth-logo { margin-bottom: 16px; }
-.auth-logo-img { width: 64px; height: auto; filter: invert(1); }
+.auth-logo-img { width: 64px; height: auto; filter: var(--logo-invert); }
 .auth-card h2 { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
 .auth-subtitle { color: var(--text-secondary); font-size: 14px; margin-bottom: 28px; }
 
@@ -795,6 +816,89 @@ tbody tr:hover { background: var(--bg-hover); }
     from { opacity: 0.5; }
     to   { opacity: 1; }
 }
+
+/* ── Appearance Settings ──────────────────────────────────────── */
+.appearance-section {
+    margin-bottom: 24px;
+}
+
+.appearance-section h4 {
+    font-size: 15px;
+    font-weight: 500;
+    margin-bottom: 16px;
+    color: var(--text-primary);
+}
+
+.theme-options {
+    display: flex;
+    gap: 12px;
+}
+
+.theme-option {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 20px 16px;
+    background: var(--bg-primary);
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all var(--transition);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.theme-option:hover {
+    border-color: var(--accent-blue);
+    background: var(--bg-hover);
+}
+
+.theme-option.active {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+    background: rgba(91, 141, 239, 0.08);
+}
+
+[data-theme="light"] .theme-option.active {
+    background: rgba(52, 120, 246, 0.08);
+}
+
+.theme-option-icon {
+    font-size: 28px;
+    line-height: 1;
+    color: var(--text-muted);
+    transition: color var(--transition);
+}
+
+.theme-option.active .theme-option-icon {
+    color: var(--accent-blue);
+}
+
+/* ── Light theme overrides for specific components ────────────── */
+[data-theme="light"] .modal-overlay {
+    background: rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] .toast.success { background: rgba(48, 209, 88, 0.15); }
+[data-theme="light"] .toast.error { background: rgba(255, 59, 48, 0.15); }
+[data-theme="light"] .toast.info { background: rgba(52, 120, 246, 0.15); }
+
+[data-theme="light"] .market-tag {
+    background: rgba(52, 120, 246, 0.08);
+    border-color: rgba(52, 120, 246, 0.2);
+}
+
+[data-theme="light"] .market-size {
+    background: rgba(139, 92, 246, 0.08);
+    border-color: rgba(139, 92, 246, 0.2);
+}
+
+[data-theme="light"] .btn-success { background: rgba(48, 209, 88, 0.1); }
+[data-theme="light"] .btn-warning { background: rgba(245, 158, 11, 0.1); }
+[data-theme="light"] .btn-danger { background: rgba(255, 59, 48, 0.1); }
 
 /* ── Responsive ───────────────────────────────────────────────── */
 @media (max-width: 768px) {
