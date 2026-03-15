@@ -79,6 +79,8 @@ let logWs = null;
 let logStreaming = false;
 let statusInterval = null;
 let currentStatus = null;
+let currentPage = 'dashboard';     // track which page is active
+let pageVisible = true;            // track browser tab visibility
 
 // ── Navigation ──────────────────────────────────────────────────
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -94,6 +96,11 @@ function switchPage(page) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById(`page-${page}`).classList.add('active');
 
+    currentPage = page;
+
+    // Restart polling with interval suited to the new page
+    restartPolling();
+
     // Load data for the page
     switch (page) {
         case 'dashboard': refreshStatus(); break;
@@ -104,6 +111,21 @@ function switchPage(page) {
         case 'gpu': loadGPUInfo(); break;
     }
 }
+
+// ── Browser visibility detection ────────────────────────────────
+document.addEventListener('visibilitychange', () => {
+    pageVisible = !document.hidden;
+    if (pageVisible) {
+        // Tab became visible — resume polling immediately
+        restartPolling();
+    } else {
+        // Tab hidden — pause polling to save resources
+        if (statusInterval) {
+            clearInterval(statusInterval);
+            statusInterval = null;
+        }
+    }
+});
 
 // ── API Helpers ──────────────────────────────────────────────────
 async function api(url, options = {}) {
@@ -138,13 +160,46 @@ function showToast(message, type = 'info') {
 }
 
 // ── Dashboard ───────────────────────────────────────────────────
+
+// refreshStatus: when on Dashboard, fetch full status; otherwise fetch lite.
 async function refreshStatus() {
     try {
-        const status = await api('/api/status');
-        currentStatus = status;
-        updateDashboard(status);
+        if (currentPage === 'dashboard') {
+            // Full status — 7 parallel queries on backend
+            const status = await api('/api/status');
+            currentStatus = status;
+            updateDashboard(status);
+        } else {
+            // Lite status — only container + running models + version (3 queries)
+            const lite = await api('/api/status/lite');
+            // Merge lite into currentStatus so sidebar badges stay updated
+            if (currentStatus) {
+                currentStatus.container = lite.container;
+                currentStatus.running_models = lite.running_models;
+                currentStatus.ollama_version = lite.ollama_version;
+                currentStatus.api_reachable = lite.api_reachable;
+                currentStatus.project_version = lite.project_version;
+            } else {
+                currentStatus = lite;
+            }
+            // Update only the sidebar version badges (lightweight)
+            updateSidebarBadges(currentStatus);
+        }
     } catch (err) {
-        showToast('无法获取服务状态: ' + err.message, 'error');
+        // Only show toast on Dashboard to avoid noise on other pages
+        if (currentPage === 'dashboard') {
+            showToast('无法获取服务状态: ' + err.message, 'error');
+        }
+    }
+}
+
+// updateSidebarBadges updates just the version info in the sidebar (used by lite polling).
+function updateSidebarBadges(s) {
+    if (s.project_version) {
+        document.getElementById('projectVersion').textContent = s.project_version;
+    }
+    if (s.ollama_version) {
+        document.getElementById('ollamaVersion').textContent = s.ollama_version;
     }
 }
 
@@ -646,10 +701,28 @@ function formatTime(isoStr) {
     }
 }
 
-// ── Auto-refresh ────────────────────────────────────────────────
+// ── Auto-refresh (smart polling) ────────────────────────────────
+// Dashboard visible:  full /api/status every 10s
+// Other pages:        lite /api/status/lite every 30s
+// Tab hidden:         polling paused entirely
+
+const POLL_INTERVAL_DASHBOARD = 10000;  // 10s — full status on dashboard
+const POLL_INTERVAL_BACKGROUND = 30000; // 30s — lite status when off-dashboard
+
 function startAutoRefresh() {
-    refreshStatus();
-    statusInterval = setInterval(refreshStatus, 10000); // 10s
+    refreshStatus();                      // immediate first fetch
+    restartPolling();
+}
+
+function restartPolling() {
+    if (statusInterval) {
+        clearInterval(statusInterval);
+        statusInterval = null;
+    }
+    if (!pageVisible) return;             // don't start if tab is hidden
+
+    const interval = (currentPage === 'dashboard') ? POLL_INTERVAL_DASHBOARD : POLL_INTERVAL_BACKGROUND;
+    statusInterval = setInterval(refreshStatus, interval);
 }
 
 // ── Init ────────────────────────────────────────────────────────

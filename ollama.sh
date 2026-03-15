@@ -49,7 +49,7 @@ DIM='\033[2m'
 NC='\033[0m' # No Color
 
 # 项目版本
-VERSION="v1.4.4"
+VERSION="v1.4.6"
 
 # 项目配置
 PROJECT_NAME="ollama"
@@ -1020,6 +1020,17 @@ for i, line in enumerate(lines):
         echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
         echo -e "    状态:   ${web_icon} ${web_status} (health: ${web_health})"
         echo -e "    地址:   ${CYAN}http://localhost:${web_port}${NC}"
+        # 显示 API Key（从环境变量或容器日志获取）
+        local web_api_key="${WEB_API_KEY:-}"
+        if [ -z "$web_api_key" ]; then
+            # 尝试从运行中的容器获取自动生成的 Key
+            web_api_key=$(docker logs ollama-web 2>&1 | grep -oP '(?<=API Key: )\S+' | tail -1 || true)
+        fi
+        if [ -n "$web_api_key" ]; then
+            echo -e "    API Key: ${YELLOW}${web_api_key}${NC}"
+        else
+            echo -e "    API Key: ${DIM}(未获取到，尝试: docker logs ollama-web | grep 'API Key')${NC}"
+        fi
         echo ""
     fi
 }
@@ -1039,11 +1050,15 @@ do_logs() {
     $COMPOSE_CMD logs -f --tail="$lines"
 }
 
-# 更新镜像并重启
+# 更新镜像并重启（智能检测：无变更时跳过重建）
 do_update() {
     log_info "更新 Ollama 服务与 Web 管理界面..."
 
     cd "${PROJECT_DIR}"
+
+    # 变更追踪标志
+    local ollama_changed=false
+    local web_changed=false
 
     # ── 获取当前版本 ──────────────────────────────────────────
     local current_ollama_ver="未知"
@@ -1065,6 +1080,11 @@ do_update() {
     # ── 更新项目代码 (git pull) ───────────────────────────────
     if [ -d "${PROJECT_DIR}/.git" ]; then
         log_step "拉取最新项目代码..."
+
+        # 记录 pull 前的 HEAD
+        local git_head_before
+        git_head_before=$(git -C "${PROJECT_DIR}" rev-parse HEAD 2>/dev/null || echo "")
+
         local git_output
         git_output=$(cd "${PROJECT_DIR}" && git pull 2>&1) || {
             log_error "git pull 失败: ${git_output}"
@@ -1073,22 +1093,103 @@ do_update() {
         if [ -n "$git_output" ]; then
             echo "  ${git_output}"
         fi
+
+        # 比较 pull 前后 HEAD，检测 web/ 目录是否有变更
+        local git_head_after
+        git_head_after=$(git -C "${PROJECT_DIR}" rev-parse HEAD 2>/dev/null || echo "")
+
+        if [ -n "$git_head_before" ] && [ -n "$git_head_after" ] && [ "$git_head_before" != "$git_head_after" ]; then
+            # 检查 web/ 目录下是否有文件变更
+            local web_diff
+            web_diff=$(git -C "${PROJECT_DIR}" diff --name-only "${git_head_before}" "${git_head_after}" -- web/ 2>/dev/null || echo "")
+            if [ -n "$web_diff" ]; then
+                web_changed=true
+                log_info "检测到 Web 代码变更:"
+                echo "$web_diff" | while read -r f; do echo "    ${f}"; done
+            fi
+
+            # 检查非 web/ 的变更（ollama.sh、docker-compose 等也可能影响服务）
+            local other_diff
+            other_diff=$(git -C "${PROJECT_DIR}" diff --name-only "${git_head_before}" "${git_head_after}" -- ':!web/' 2>/dev/null || echo "")
+            if [ -n "$other_diff" ]; then
+                log_info "检测到其他文件变更:"
+                echo "$other_diff" | while read -r f; do echo "    ${f}"; done
+            fi
+        else
+            log_info "项目代码已是最新，无变更"
+        fi
     else
         log_warn "非 git 仓库，跳过代码更新"
     fi
 
     # ── 拉取最新 Ollama 镜像 ──────────────────────────────────
     log_step "拉取最新 Ollama 镜像..."
+
+    # 记录 pull 前的镜像 ID
+    local old_image_id
+    old_image_id=$(docker inspect --format='{{.Id}}' ollama/ollama:latest 2>/dev/null || echo "")
+
     docker pull ollama/ollama:latest
 
     local new_image_id
-    new_image_id=$(docker inspect --format='{{.Id}}' ollama/ollama:latest 2>/dev/null | cut -c8-19)
-    log_info "新镜像ID: ${new_image_id}"
+    new_image_id=$(docker inspect --format='{{.Id}}' ollama/ollama:latest 2>/dev/null || echo "")
 
-    # ── 重新构建 Web 镜像并启动 ───────────────────────────────
-    log_step "重新构建 Web 镜像并启动所有服务..."
-    export WEB_VERSION="${VERSION}"
-    $COMPOSE_CMD up -d --build --force-recreate
+    if [ -n "$old_image_id" ] && [ "$old_image_id" != "$new_image_id" ]; then
+        ollama_changed=true
+        log_info "Ollama 镜像已更新: ${old_image_id:7:12} → ${new_image_id:7:12}"
+    else
+        log_info "Ollama 镜像已是最新，无变更"
+    fi
+
+    # ── 根据变更情况决定是否重建 ──────────────────────────────
+    if [ "$ollama_changed" = true ] || [ "$web_changed" = true ]; then
+        # 有变更，按需重建
+        local compose_args="-d"
+
+        if [ "$web_changed" = true ]; then
+            log_step "Web 代码有变更，重新构建 Web 镜像..."
+            compose_args="-d --build"
+        fi
+
+        if [ "$ollama_changed" = true ] && [ "$web_changed" = true ]; then
+            log_step "Ollama 镜像和 Web 代码均有更新，重建全部服务..."
+            compose_args="-d --build --force-recreate"
+        elif [ "$ollama_changed" = true ]; then
+            log_step "Ollama 镜像有更新，重建 Ollama 服务..."
+            # 仅 force-recreate ollama 容器，Web 不重建
+            export WEB_VERSION="${VERSION}"
+            $COMPOSE_CMD up -d --force-recreate ollama
+            # Web 无变更，确保在运行即可
+            $COMPOSE_CMD up -d ollama-web
+
+            compose_args=""  # 已处理，后面不再执行
+        fi
+
+        if [ -n "$compose_args" ]; then
+            export WEB_VERSION="${VERSION}"
+            # shellcheck disable=SC2086
+            $COMPOSE_CMD up $compose_args
+        fi
+    else
+        # 无任何变更
+        echo ""
+        print_separator
+        log_success "一切已是最新，无需重建！"
+        echo ""
+        echo -e "  ${BOLD}Ollama:${NC}  ${current_ollama_ver} ${DIM}(镜像未变化)${NC}"
+        echo -e "  ${BOLD}Web:${NC}     ${current_web_ver} ${DIM}(代码未变化)${NC}"
+        echo ""
+        # 确保服务在运行
+        local running
+        running=$(docker ps -q --filter "name=${PROJECT_NAME}" 2>/dev/null)
+        if [ -z "$running" ]; then
+            log_warn "服务未运行，正在启动..."
+            export WEB_VERSION="${VERSION}"
+            $COMPOSE_CMD up -d
+            wait_for_api 120
+        fi
+        return 0
+    fi
 
     # ── 等待就绪并显示版本变化 ─────────────────────────────────
     if wait_for_api 120; then
@@ -1115,8 +1216,18 @@ do_update() {
         print_separator
         log_success "更新完成！"
         echo ""
-        echo -e "  ${BOLD}Ollama:${NC}  ${current_ollama_ver} → ${CYAN}${new_ollama_ver}${NC}"
-        echo -e "  ${BOLD}Web:${NC}     ${current_web_ver} → ${CYAN}${new_web_ver}${NC}"
+
+        # 智能显示版本变化（区分有无变更）
+        if [ "$ollama_changed" = true ]; then
+            echo -e "  ${BOLD}Ollama:${NC}  ${current_ollama_ver} → ${CYAN}${new_ollama_ver}${NC}"
+        else
+            echo -e "  ${BOLD}Ollama:${NC}  ${new_ollama_ver} ${DIM}(未变化)${NC}"
+        fi
+        if [ "$web_changed" = true ]; then
+            echo -e "  ${BOLD}Web:${NC}     ${current_web_ver} → ${CYAN}${new_web_ver}${NC}"
+        else
+            echo -e "  ${BOLD}Web:${NC}     ${new_web_ver} ${DIM}(未变化)${NC}"
+        fi
         echo ""
     else
         log_error "更新后服务启动异常"
@@ -1124,8 +1235,10 @@ do_update() {
     fi
 
     # ── 清理旧镜像 ────────────────────────────────────────────
-    log_step "清理旧镜像..."
-    docker image prune -f > /dev/null 2>&1 || true
+    if [ "$ollama_changed" = true ] || [ "$web_changed" = true ]; then
+        log_step "清理旧镜像..."
+        docker image prune -f > /dev/null 2>&1 || true
+    fi
 }
 
 # 清理

@@ -82,52 +82,53 @@ func (h *APIHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 
 // ── Service Status ──────────────────────────────────────────────────
 
-// GetStatus returns comprehensive service status.
+// collectResult is used for parallel data collection in status endpoints.
+type collectResult struct {
+	key string
+	val interface{}
+	err error
+}
+
+// GetStatus returns comprehensive service status (full version, used on Dashboard).
 func (h *APIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
 	status := model.ServiceStatus{}
 
-	// Parallel data collection
-	type result struct {
-		key string
-		val interface{}
-		err error
-	}
-	ch := make(chan result, 7)
+	// Parallel data collection — 7 goroutines
+	ch := make(chan collectResult, 7)
 
 	go func() {
 		info, err := h.docker.GetContainerInfo(ctx)
-		// Override starting -> healthy if API reachable
 		if info.Health == "starting" && h.ollama.IsAPIReady() {
 			info.Health = "healthy"
 		}
-		ch <- result{"container", info, err}
+		ch <- collectResult{"container", info, err}
 	}()
 	go func() {
 		usage, err := h.docker.GetResourceUsage(ctx)
-		ch <- result{"resources", usage, err}
+		ch <- collectResult{"resources", usage, err}
 	}()
 	go func() {
 		models, err := h.ollama.ListModels()
-		ch <- result{"models", models, err}
+		ch <- collectResult{"models", models, err}
 	}()
 	go func() {
 		running, err := h.ollama.ListRunningModels()
-		ch <- result{"running", running, err}
+		ch <- collectResult{"running", running, err}
 	}()
 	go func() {
 		gpus, err := h.docker.GetGPUInfo(ctx)
-		ch <- result{"gpu", gpus, err}
+		ch <- collectResult{"gpu", gpus, err}
 	}()
 	go func() {
 		disk, err := h.docker.GetDiskUsage(ctx)
-		ch <- result{"disk", disk, err}
+		ch <- collectResult{"disk", disk, err}
 	}()
 	go func() {
 		version, err := h.ollama.GetVersion()
-		ch <- result{"version", version, err}
+		ch <- collectResult{"version", version, err}
 	}()
 
 	for i := 0; i < 7; i++ {
@@ -187,6 +188,56 @@ func (h *APIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 			Timezone:        cfgMap["OLLAMA_TZ"],
 		}
 	}
+
+	jsonResponse(w, status)
+}
+
+// GetStatusLite returns a lightweight status snapshot (container + API + running models).
+// This is used for background polling when the user is NOT on the Dashboard page,
+// significantly reducing the number of requests to Ollama and Docker.
+func (h *APIHandler) GetStatusLite(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
+	status := model.ServiceStatus{}
+
+	// Only 3 lightweight queries (vs. 7 in full status)
+	ch := make(chan collectResult, 3)
+
+	go func() {
+		info, err := h.docker.GetContainerInfo(ctx)
+		if info.Health == "starting" && h.ollama.IsAPIReady() {
+			info.Health = "healthy"
+		}
+		ch <- collectResult{"container", info, err}
+	}()
+	go func() {
+		running, err := h.ollama.ListRunningModels()
+		ch <- collectResult{"running", running, err}
+	}()
+	go func() {
+		version, err := h.ollama.GetVersion()
+		ch <- collectResult{"version", version, err}
+	}()
+
+	for i := 0; i < 3; i++ {
+		r := <-ch
+		switch r.key {
+		case "container":
+			status.Container = r.val.(model.ContainerInfo)
+		case "running":
+			if r.val != nil {
+				status.RunningModels = r.val.([]model.RunningModel)
+			}
+		case "version":
+			if r.val != nil {
+				status.OllamaVersion = r.val.(string)
+			}
+		}
+	}
+
+	status.APIReachable = h.ollama.IsAPIReady()
+	status.ProjectVersion = h.version
 
 	jsonResponse(w, status)
 }

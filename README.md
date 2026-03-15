@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.4.3-blue)
+![Version](https://img.shields.io/badge/version-v1.4.6-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -68,7 +68,7 @@ git clone <repo-url> && cd lynx-ollama
 | `restart` | 重启 Ollama 服务 |
 | `status` | 查看服务状态（容器/模型/GPU/磁盘） |
 | `logs [lines]` | 查看日志（默认 200 行） |
-| `update` | 更新代码（git pull）、拉取最新 Ollama 镜像、重建 Web 镜像并重启 |
+| `update` | 智能更新：拉取代码和最新镜像，仅在有实际变更时重建对应服务（无变化则跳过编译） |
 
 ### 模型管理
 
@@ -318,6 +318,8 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.4.6 | 2026-03-15 | Web 管理界面 API 轮询优化：后端新增 `/api/status/lite` 轻量接口（仅查询容器状态、运行模型、版本，3 项替代完整的 7 项并行查询）；前端智能轮询策略——Dashboard 页面 10 秒全量刷新、其他页面 30 秒轻量刷新、浏览器 Tab 不可见时完全暂停轮询；大幅减少对 Ollama API 的请求密度；`status` 命令 Web 管理界面区域新增 API Key 显示 |
+| v1.4.5 | 2026-03-15 | `update` 命令智能变更检测：`git pull` 前后比对 HEAD commit 判断 `web/` 目录是否有代码变更，`docker pull` 前后比对镜像 ID 判断 Ollama 是否有更新；Ollama 和 Web 均无变化时跳过重建直接提示「一切已是最新」；仅 Ollama 镜像更新时只重建 ollama 容器（不重编译 Web）；仅 Web 代码变更时只 `--build` Web 镜像；两者都变化时才 `--build --force-recreate` 全部重建；清理旧镜像也仅在有变更时执行，大幅减少无效构建耗时 |
 | v1.4.4 | 2026-03-15 | Web 界面图标全面升级：favicon、登录页 logo、侧边栏 logo 从 🦙 emoji 替换为 Ollama 官方 PNG 图标（`ollama.png`），提升品牌一致性和视觉质量 |
 | v1.4.3 | 2026-03-15 | 修复 Web 日志查看功能不显示日志：`GetLogs` 和 `StreamLogs` 从 `docker compose logs` 改为 `docker logs`（直接通过 Docker API 按容器名获取日志，避免在容器内执行 docker compose 时的项目上下文问题）；`StreamLogs` WebSocket 合并 stderr 到 stdout pipe（`docker logs` 将容器 stderr 输出到自身 stderr），确保所有日志行都能被捕获 |
 | v1.4.2 | 2026-03-15 | 修复 GPU 状态获取失败（`nvidia-smi` 在 Web 容器内不可用）：`GetGPUInfo` 改为通过 `docker exec ollama` 在 ollama 容器内执行 `nvidia-smi`，因为只有 ollama 容器配置了 NVIDIA GPU 设备映射 |
