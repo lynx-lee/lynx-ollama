@@ -550,7 +550,8 @@ tbody tr:hover { background: var(--bg-hover); }
     box-shadow: var(--shadow);
 }
 
-.auth-logo { font-size: 56px; margin-bottom: 16px; }
+.auth-logo { margin-bottom: 16px; }
+.auth-logo-img { width: 64px; height: auto; }
 .auth-card h2 { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
 .auth-subtitle { color: var(--text-secondary); font-size: 14px; margin-bottom: 28px; }
 

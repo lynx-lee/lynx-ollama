@@ -525,15 +525,17 @@ func (h *APIHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Stream logs using docker compose logs -f
-	dir := "'" + strings.ReplaceAll(h.cfg.ProjectDir, "'", "'\"'\"'") + "'"
-	cmd := createCommand(ctx, "bash", "-c", fmt.Sprintf("cd %s && docker compose logs -f --tail=100 2>&1 || docker-compose logs -f --tail=100 2>&1", dir))
+	// Stream logs using docker logs -f (direct API, avoids compose context issues)
+	cmd := createCommand(ctx, "docker", "logs", "-f", "--tail", "100", "--timestamps", "ollama")
 
+	// docker logs outputs container stderr to its own stderr;
+	// merge stderr into stdout so we capture all log lines through one pipe.
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		slog.Error("failed to get stdout pipe", "error", err)
 		return
 	}
+	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Start(); err != nil {
 		slog.Error("failed to start log command", "error", err)

@@ -137,16 +137,22 @@ func (s *DockerService) UpdateService(ctx context.Context) (string, error) {
 }
 
 // GetLogs returns recent container logs.
+// Uses "docker logs" directly instead of "docker compose logs" to avoid
+// compose project context issues when running inside a container.
 func (s *DockerService) GetLogs(ctx context.Context, lines int) (string, error) {
 	if lines <= 0 {
 		lines = 200
 	}
-	return s.runShell(ctx, fmt.Sprintf("cd %s && %s logs --tail=%d ollama 2>&1", shellQuote(s.cfg.ProjectDir), s.composeCmd, lines))
+	tail := fmt.Sprintf("%d", lines)
+	return s.runCommand(ctx, "docker", "logs", "--tail", tail, "--timestamps", "ollama")
 }
 
-// GetGPUInfo returns GPU information via nvidia-smi.
+// GetGPUInfo returns GPU information via nvidia-smi inside the ollama container.
+// The web container does not have GPU device access, so we exec into the ollama
+// container which has the NVIDIA runtime configured.
 func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error) {
-	out, err := s.runCommand(ctx, "nvidia-smi",
+	out, err := s.runCommand(ctx, "docker", "exec", "ollama",
+		"nvidia-smi",
 		"--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw,power.limit,driver_version",
 		"--format=csv,noheader,nounits")
 	if err != nil {
@@ -178,8 +184,9 @@ func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error)
 		})
 	}
 
-	// Also get CUDA version
-	cudaOut, _ := s.runShell(ctx, "nvidia-smi | grep 'CUDA Version' | awk '{print $NF}'")
+	// Also get CUDA version from the ollama container
+	cudaOut, _ := s.runCommand(ctx, "docker", "exec", "ollama",
+		"bash", "-c", "nvidia-smi | grep 'CUDA Version' | awk '{print $NF}'")
 	for i := range gpus {
 		gpus[i].CUDA = strings.TrimSpace(cudaOut)
 	}

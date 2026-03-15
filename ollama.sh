@@ -49,7 +49,7 @@ DIM='\033[2m'
 NC='\033[0m' # No Color
 
 # 项目版本
-VERSION="v1.4.1"
+VERSION="v1.4.4"
 
 # 项目配置
 PROJECT_NAME="ollama"

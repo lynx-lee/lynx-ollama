@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.4.1-blue)
+![Version](https://img.shields.io/badge/version-v1.4.3-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -318,6 +318,9 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.4.4 | 2026-03-15 | Web 界面图标全面升级：favicon、登录页 logo、侧边栏 logo 从 🦙 emoji 替换为 Ollama 官方 PNG 图标（`ollama.png`），提升品牌一致性和视觉质量 |
+| v1.4.3 | 2026-03-15 | 修复 Web 日志查看功能不显示日志：`GetLogs` 和 `StreamLogs` 从 `docker compose logs` 改为 `docker logs`（直接通过 Docker API 按容器名获取日志，避免在容器内执行 docker compose 时的项目上下文问题）；`StreamLogs` WebSocket 合并 stderr 到 stdout pipe（`docker logs` 将容器 stderr 输出到自身 stderr），确保所有日志行都能被捕获 |
+| v1.4.2 | 2026-03-15 | 修复 GPU 状态获取失败（`nvidia-smi` 在 Web 容器内不可用）：`GetGPUInfo` 改为通过 `docker exec ollama` 在 ollama 容器内执行 `nvidia-smi`，因为只有 ollama 容器配置了 NVIDIA GPU 设备映射 |
 | v1.4.1 | 2026-03-15 | 修复 Web 版本显示"未知"：docker-compose 构建 Web 镜像时新增 `VERSION` build arg（通过 `WEB_VERSION` 环境变量传递，默认 v1.4.1），确保版本号正确注入二进制文件；`/api/version` 端点改为免认证（与 `/api/health` 同级），修复 `ollama.sh update` 在未配置 API Key 时因鉴权失败获取不到版本的问题；Shell 注入防护（`docker.go` 新增 `shellQuote()` 对所有路径参数转义）；`.env` 写入改为原子操作（先写 `.tmp` 再 `os.Rename`）+ value 净化防注入；`PullModel` 改用无超时专用 HTTP client 防止大模型下载被截断；`UpdateService` 等待循环增加 `ctx.Done()` 检查 |
 | v1.4.0 | 2026-03-15 | Web 管理界面安全加固：新增 API Key 认证中间件（所有 /api/* 端点强制校验，支持 Header/Bearer/Query 三种传递方式）；首次启动自动生成随机 Key 并打印到终端，支持 `WEB_API_KEY` 环境变量和 `--api-key` 命令行参数配置固定 Key；前端添加登录页面（API Key 存入 localStorage，支持 Enter 快捷登录、退出登录、Token 过期自动跳转）；收紧 CORS 策略（默认仅同源，支持 `WEB_CORS_ORIGIN` 配置）；移除 WebSocket `CheckOrigin: true` 宽松校验；修复 4 处 JSON 注入漏洞（`PullModel`/`DeleteModel`/`GenerateChat`/`ShowModel` 中 `fmt.Sprintf` 拼接改为 `json.Marshal` 结构体序列化）；新增 `POST /api/auth/verify` 端点；`GET /api/health` 豁免认证供监控探针使用；**ollama.sh 脚本联动**：`start` 命令启动后显示 Web 管理界面地址和 API Key、`status` 命令显示 Web 容器运行状态、`health` 命令新增 Web 管理界面健康检查项、`help` 命令补充 Web 管理界面说明和环境变量文档；docker-compose 模板传递 `WEB_API_KEY`/`WEB_CORS_ORIGIN` 环境变量、healthcheck 改用免认证的 `/api/health` 端点；`.env` 模板新增 Web 管理界面配置段；**项目审查修复**：修复 `web/.gitignore` 误排除 `cmd/server/` 源码目录（`server` → `/server`）、修复 WebSocket 错误消息 2 处 JSON 注入（`fmt.Sprintf` → `json.Marshal`）、修复 CORS 默认模式反射任意 Origin（改为不设置 CORS 头让浏览器同源策略生效）、根目录 `.gitignore` 的 `.env`/`docker-compose.yaml` 加 `/` 前缀防递归误匹配、新增 `web/.dockerignore` 减小构建上下文、`.env` 模板补充 `OLLAMA_PROJECT_DIR` 变量、Web 宿主机映射端口改为 9981 |
 | v1.3.0 | 2026-03-13 | 新增 Web 管理界面（`web/` 目录）：基于 Go + 嵌入式 SPA 架构，提供仪表盘（服务状态、资源监控、模型统计）、服务控制（启动/停止/重启/版本更新）、模型管理（列表/拉取/删除，WebSocket 实时进度）、健康检查（6 项诊断）、实时日志流（WebSocket）、配置在线编辑、GPU 状态监控、清理管理；通过 docker-compose 与 Ollama 服务一起部署，端口 9981 |
