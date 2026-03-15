@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lynxlee/lynx-ollama-web/internal/config"
@@ -22,9 +24,14 @@ type OllamaService struct {
 
 	// Short-lived cache for API readiness to avoid redundant probes within
 	// the same polling cycle (multiple handlers call IsAPIReady concurrently).
-	apiReadyCache   bool
-	apiReadyCacheAt time.Time
+	apiReadyCache    bool
+	apiReadyCacheAt  time.Time
 	apiReadyCacheTTL time.Duration
+
+	// Translation cache: English description → Chinese translation.
+	// Persists in memory for the lifetime of the process — avoids redundant LLM calls
+	// when the user refreshes the model market or navigates back to it.
+	translateCache sync.Map // map[string]string
 }
 
 // NewOllamaService creates a new OllamaService.
@@ -361,53 +368,223 @@ func (s *OllamaService) SearchModels(query, category, sort string) (*model.Marke
 }
 
 // TranslateDescriptions translates the given model descriptions to Chinese using the local Ollama model.
-// Accepts a list of TranslateRequest items and returns the translated descriptions.
-// Uses the best available model (preferring currently running models for faster response).
+// Optimized strategy:
+//  1. Check in-memory cache first — return cached translations immediately.
+//  2. Collect uncached items and pack them into a single JSON payload.
+//  3. Call the LLM once with a batch translation prompt (JSON in → JSON out).
+//  4. Parse the returned JSON and populate results + cache.
+//
+// This reduces N individual LLM calls to at most 1 batch call per request.
 func (s *OllamaService) TranslateDescriptions(items []model.TranslateRequest) []model.TranslateResponse {
 	results := make([]model.TranslateResponse, len(items))
 	for i, item := range items {
 		results[i] = model.TranslateResponse{Name: item.Name, Description: item.Description}
 	}
 
-	if !s.IsAPIReady() || len(items) == 0 {
+	if len(items) == 0 {
+		return results
+	}
+
+	// Phase 1: Resolve from cache — collect indices of uncached items
+	var uncached []uncachedItem
+
+	for i, item := range items {
+		desc := item.Description
+		if desc == "" || len(desc) < 10 || containsChinese(desc) {
+			continue // Skip empty, too short, or already Chinese
+		}
+
+		// Check cache
+		if cached, ok := s.translateCache.Load(desc); ok {
+			results[i].Description = cached.(string)
+			continue
+		}
+		uncached = append(uncached, uncachedItem{index: i, name: item.Name, desc: desc})
+	}
+
+	// All translations found in cache — return immediately
+	if len(uncached) == 0 {
+		slog.Info("translation batch fully served from cache", "total", len(items))
+		return results
+	}
+
+	slog.Info("translation batch", "total", len(items), "cached", len(items)-len(uncached), "to_translate", len(uncached))
+
+	// Phase 2: Check API readiness and find translation model
+	if !s.IsAPIReady() {
 		return results
 	}
 
 	translationModel := s.findTranslationModel()
 	if translationModel == "" {
+		slog.Warn("no suitable translation model found")
 		return results
 	}
 
-	// Longer timeout: cold-start models may need time to load into VRAM
-	translateClient := &http.Client{Timeout: 120 * time.Second}
+	// Phase 3: Batch translate uncached items via single LLM call
+	translated := s.batchTranslate(translationModel, uncached)
+
+	// Phase 4: Populate results and cache
+	for _, uc := range uncached {
+		if t, ok := translated[uc.name]; ok && t != "" && t != uc.desc {
+			results[uc.index].Description = t
+			// Store in cache: key = original English description
+			s.translateCache.Store(uc.desc, t)
+		}
+	}
+
+	return results
+}
+
+// batchTranslate sends all uncached descriptions to the LLM in a single JSON-based request.
+// The prompt instructs the model to accept a JSON object (name→description) and return
+// a JSON object with the same keys but translated values.
+// Falls back to individual translations if batch JSON parsing fails.
+func (s *OllamaService) batchTranslate(modelName string, items []uncachedItem) map[string]string {
+	result := make(map[string]string)
+
+	// Build input JSON: {"model_name": "English description", ...}
+	inputMap := make(map[string]string, len(items))
+	for _, item := range items {
+		inputMap[item.name] = item.desc
+	}
+
+	inputJSON, err := json.Marshal(inputMap)
+	if err != nil {
+		slog.Error("failed to marshal translation input", "error", err)
+		return result
+	}
+
+	// Longer timeout: batch translation may take longer than single item
+	translateClient := &http.Client{Timeout: 180 * time.Second}
+
+	systemPrompt := `你是翻译助手。用户会给出一个 JSON 对象，其中每个键是模型名称，值是该模型的英文描述。
+请将所有值翻译为简洁流畅的中文，保持键不变，只输出翻译后的 JSON 对象。
+
+要求：
+1. 只输出 JSON，不要任何解释、前缀或 markdown 代码块标记
+2. 保持所有键（模型名称）完全不变
+3. 翻译要简洁准确，不超过原文长度
+4. 不要添加任何额外的键或内容`
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"model": modelName,
+		"messages": []map[string]string{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": string(inputJSON)},
+		},
+		"stream":  false,
+		"think":   false,
+		"options": map[string]interface{}{"temperature": 0.1, "num_predict": 4096},
+	})
+	if err != nil {
+		slog.Error("failed to marshal batch translation payload", "error", err)
+		return result
+	}
+
+	req, err := http.NewRequest(http.MethodPost, s.cfg.OllamaAPIURL+"/api/chat", strings.NewReader(string(payload)))
+	if err != nil {
+		return result
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := translateClient.Do(req)
+	if err != nil {
+		slog.Warn("batch translation request failed", "error", err)
+		return s.fallbackIndividualTranslate(translateClient, modelName, items)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("batch translation returned non-200", "status", resp.StatusCode)
+		return s.fallbackIndividualTranslate(translateClient, modelName, items)
+	}
+
+	var chatResp struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		slog.Warn("failed to decode batch translation response", "error", err)
+		return s.fallbackIndividualTranslate(translateClient, modelName, items)
+	}
+
+	content := strings.TrimSpace(chatResp.Message.Content)
+
+	// Clean up possible think tags
+	if idx := strings.Index(content, "</think>"); idx >= 0 {
+		content = strings.TrimSpace(content[idx+len("</think>"):])
+	}
+
+	// Strip markdown code block wrappers if present (```json ... ```)
+	content = stripMarkdownCodeBlock(content)
+
+	// Parse the JSON response
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		slog.Warn("failed to parse batch translation JSON, falling back to individual", "error", err, "content_preview", truncateStr(content, 200))
+		return s.fallbackIndividualTranslate(translateClient, modelName, items)
+	}
+
+	slog.Info("batch translation completed", "model", modelName, "items", len(items), "translated", len(result))
+	return result
+}
+
+// uncachedItem represents a translation item that was not found in cache.
+type uncachedItem struct {
+	index int
+	name  string
+	desc  string
+}
+
+// fallbackIndividualTranslate translates items one by one when batch translation fails.
+// This ensures graceful degradation — users still get translations even if the batch
+// JSON parsing fails (e.g. model outputs non-standard JSON).
+func (s *OllamaService) fallbackIndividualTranslate(client *http.Client, modelName string, items []uncachedItem) map[string]string {
+	slog.Info("falling back to individual translation", "items", len(items))
+	result := make(map[string]string, len(items))
 
 	consecutiveFailures := 0
-	maxConsecutiveFailures := 3 // Stop trying after 3 consecutive failures
+	maxConsecutiveFailures := 3
 
-	for i, item := range items {
+	for _, item := range items {
 		if consecutiveFailures >= maxConsecutiveFailures {
-			break // Model is likely unavailable, stop wasting time
+			break
 		}
-
-		desc := item.Description
-		if desc == "" || len(desc) < 10 {
-			continue
-		}
-		// Skip if already Chinese
-		if containsChinese(desc) {
-			continue
-		}
-
-		translated := s.ollamaTranslate(translateClient, translationModel, desc)
-		if translated != "" && translated != desc {
-			results[i].Description = translated
-			consecutiveFailures = 0 // Reset on success
+		translated := s.ollamaTranslate(client, modelName, item.desc)
+		if translated != "" && translated != item.desc {
+			result[item.name] = translated
+			consecutiveFailures = 0
 		} else {
 			consecutiveFailures++
 		}
 	}
 
-	return results
+	return result
+}
+
+// stripMarkdownCodeBlock removes ```json ... ``` or ``` ... ``` wrappers.
+func stripMarkdownCodeBlock(s string) string {
+	s = strings.TrimSpace(s)
+	// Handle ```json\n...\n```
+	if strings.HasPrefix(s, "```") {
+		// Find the end of the first line (skip ```json or ```)
+		if idx := strings.Index(s, "\n"); idx >= 0 {
+			s = s[idx+1:]
+		}
+		// Remove trailing ```
+		s = strings.TrimSuffix(s, "```")
+		s = strings.TrimSpace(s)
+	}
+	return s
+}
+
+// truncateStr truncates a string to maxLen characters for logging.
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // parseOllamaSearchHTML extracts model info from ollama.com search HTML using x-test-* attributes.
@@ -709,6 +886,7 @@ func (s *OllamaService) findTranslationModel() string {
 }
 
 // ollamaTranslate translates a single text from English to Chinese using the local Ollama model.
+// Used as fallback when batch translation fails.
 func (s *OllamaService) ollamaTranslate(client *http.Client, modelName, text string) string {
 	payload, err := json.Marshal(map[string]interface{}{
 		"model": modelName,
@@ -717,6 +895,7 @@ func (s *OllamaService) ollamaTranslate(client *http.Client, modelName, text str
 			{"role": "user", "content": text},
 		},
 		"stream":  false,
+		"think":   false,
 		"options": map[string]interface{}{"temperature": 0.1, "num_predict": 256},
 	})
 	if err != nil {

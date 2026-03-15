@@ -456,6 +456,7 @@ func (h *APIHandler) SearchMarketModels(w http.ResponseWriter, r *http.Request) 
 }
 
 // TranslateModelDescriptions translates model descriptions to Chinese using the local Ollama model.
+// With batch translation, the frontend sends all items at once and the backend makes a single LLM call.
 func (h *APIHandler) TranslateModelDescriptions(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Items []model.TranslateRequest `json:"items"`
@@ -469,8 +470,8 @@ func (h *APIHandler) TranslateModelDescriptions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Limit batch size to prevent abuse
-	maxBatch := 10
+	// Limit batch size to prevent abuse (model market typically has 50-80 models)
+	maxBatch := 100
 	if len(req.Items) > maxBatch {
 		req.Items = req.Items[:maxBatch]
 	}

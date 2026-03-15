@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.5.0-blue)
+![Version](https://img.shields.io/badge/version-v1.5.1-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -320,6 +320,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.5.1 | 2026-03-15 | 模型翻译效率大幅提升：**批量 JSON 翻译**——将所有模型描述打包为 JSON 对象通过一次 LLM 调用完成翻译（之前 N 条描述 = N 次串行调用），前端也从分批 5 条改为一次性发送全部；**翻译缓存机制**——新增 `sync.Map` 内存缓存（英文描述→中文翻译），首次翻译后缓存结果，刷新模型市场或重新搜索时直接读取缓存、不再调用大模型；**优雅降级**——批量 JSON 解析失败时自动回退为逐条翻译（`fallbackIndividualTranslate`），确保翻译可用性；翻译 prompt 重新设计为 JSON-in/JSON-out 格式，新增 `think:false` 禁用思维链、`stripMarkdownCodeBlock` 清理大模型返回的 markdown 代码块包裹；API Handler 批量上限从 10 条放宽至 100 条 |
 | v1.5.0 | 2026-03-15 | 容器健康检查全链路优化：`GetContainerInfo()` 从 6 次 `docker inspect` 子进程合并为**单次调用**（Go template 一次性提取所有字段），新增 5 秒短期缓存避免同一轮询周期内重复 fork；`IsAPIReady()` 增加结果缓存（5 秒 TTL）+ 复用 HTTP Client，消除 GetStatus 中的重复调用（从 2 次降为 1 次）；新增 `correctHealthStatus()` 统一健康状态修正逻辑——不仅修正 `starting→healthy`，还处理 `unhealthy` + API 可达→`healthy`、空健康值 + 容器运行中→`healthy` 等边界情况；`docker inspect` 返回值统一清洗（处理 `<no value>`/`<nil>` 等 Docker 边界输出）；Docker healthcheck `interval` 从 30s 缩短至 15s、Ollama `start_period` 默认值从 120s 降至 30s；容器操作（start/stop/restart/update/clean）后自动清除缓存确保即时刷新；前端 statusMap 扩展覆盖所有 Docker 容器状态（`created`/`paused`/`restarting`/`removing`/`dead`/`unknown` 等） |
 | v1.4.9 | 2026-03-15 | 翻译智能选模优化：`findTranslationModel` 重构为三级优先级选模策略——**优先使用当前运行中的模型**（已加载到 VRAM 中，响应最快），其次从已下载模型中选取适合翻译的模型（qwen/deepseek/llama 等），最后回退到任意可用模型；新增 `isTranslationCapableModel()` 和 `isPreferredTranslationModel()` 辅助函数判断模型翻译能力；翻译超时从 30s 提升到 120s（兼容冷启动加载模型场景）；后端翻译容错——连续 3 次翻译失败后自动停止（避免无谓等待），单条翻译失败不影响后续条目；前端翻译进度展示——新增实时翻译进度指示器（已翻译/总数），连续 3 批失败才停止（而非之前的 1 批失败即停），翻译完成后显示摘要提示（成功数/总数） |
 | v1.4.8 | 2026-03-15 | 模型市场全量分页加载：`SearchModels` 后端改为自动遍历 ollama.com 所有分页（`page=1` 到 `page=N`），直到页面返回 "No models found" 为止，一次性获取全部模型（安全上限 50 页）；搜索结果跨页自动去重；翻译解耦为独立 API——新增 `POST /api/models/search/translate` 端点，接收模型名+描述批量翻译（每批上限 10 条），翻译不再阻塞搜索请求；前端两阶段展示——搜索完成后立即渲染英文结果卡片，随后异步分批调用翻译 API 逐步替换描述为中文（带淡入动画），翻译失败不影响已展示的英文内容；网络容错——后续分页请求失败时返回已获取的结果而非报错 |

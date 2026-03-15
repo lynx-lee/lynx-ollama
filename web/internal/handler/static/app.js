@@ -481,90 +481,67 @@ async function searchMarketModels() {
     }
 }
 
-// translateMarketDescriptions translates model descriptions in batches and updates the UI progressively.
+// translateMarketDescriptions translates model descriptions in one batch call and updates the UI.
+// The backend handles caching (cached items return instantly) and batch LLM translation
+// (all uncached items are packed into a single JSON prompt → one LLM call).
 async function translateMarketDescriptions(models) {
     // Filter models that need translation (non-empty, non-Chinese descriptions)
     const toTranslate = models.filter(m => m.description && m.description.length >= 10 && !containsChineseChar(m.description));
     if (toTranslate.length === 0) return;
 
-    const batchSize = 5;
-    let translatedCount = 0;
-    let consecutiveFailures = 0;
-    const maxConsecutiveFailures = 3; // Stop after 3 consecutive batch failures
-
     // Show translation progress indicator
     const progressEl = document.createElement('div');
     progressEl.id = 'translateProgress';
     progressEl.style.cssText = 'color:var(--text-muted);font-size:12px;margin-bottom:8px;display:flex;align-items:center;gap:6px;';
-    progressEl.innerHTML = `<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span><span>正在翻译模型描述 (0/${toTranslate.length})...</span>`;
+    progressEl.innerHTML = `<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span><span>正在翻译 ${toTranslate.length} 条模型描述（批量翻译中）...</span>`;
     const marketGrid = document.querySelector('.market-grid');
     if (marketGrid && marketGrid.parentNode) {
         marketGrid.parentNode.insertBefore(progressEl, marketGrid);
     }
 
-    for (let i = 0; i < toTranslate.length; i += batchSize) {
-        if (consecutiveFailures >= maxConsecutiveFailures) {
-            console.warn('Translation stopped: too many consecutive failures');
-            break;
+    try {
+        // Send all items in one request — backend handles cache lookup + batch LLM call
+        const items = toTranslate.map(m => ({ name: m.name, description: m.description }));
+        const results = await api('/api/models/search/translate', {
+            method: 'POST',
+            body: JSON.stringify({ items }),
+        });
+
+        if (!results || !Array.isArray(results)) {
+            throw new Error('Invalid translation response');
         }
 
-        const batch = toTranslate.slice(i, i + batchSize).map(m => ({
-            name: m.name,
-            description: m.description,
-        }));
+        // Update the DOM for each translated description
+        let translatedCount = 0;
+        for (const r of results) {
+            if (!r.description) continue;
+            // Check if the description was actually translated (different from original)
+            const original = toTranslate.find(m => m.name === r.name);
+            if (original && r.description === original.description) continue;
 
-        try {
-            const results = await api('/api/models/search/translate', {
-                method: 'POST',
-                body: JSON.stringify({ items: batch }),
-            });
-
-            if (!results || !Array.isArray(results)) {
-                consecutiveFailures++;
-                continue;
+            const descEl = document.querySelector(`.market-card[data-model="${CSS.escape(r.name)}"] .market-card-desc`);
+            if (descEl) {
+                descEl.textContent = r.description;
+                descEl.classList.add('translated');
+                translatedCount++;
             }
+        }
 
-            let batchTranslated = 0;
-            // Update the DOM for each translated description
-            for (const r of results) {
-                if (!r.description || r.description === batch.find(b => b.name === r.name)?.description) continue;
-                // Find and update the description element in the market card
-                const descEl = document.querySelector(`.market-card[data-model="${CSS.escape(r.name)}"] .market-card-desc`);
-                if (descEl) {
-                    descEl.textContent = r.description;
-                    descEl.classList.add('translated');
-                    batchTranslated++;
-                }
-            }
-
-            translatedCount += batchTranslated;
-            if (batchTranslated > 0) {
-                consecutiveFailures = 0; // Reset on success
+        // Show completion summary
+        if (progressEl) {
+            if (translatedCount > 0) {
+                progressEl.innerHTML = `<span>✅ 已翻译 ${translatedCount}/${toTranslate.length} 条模型描述</span>`;
+                setTimeout(() => progressEl.remove(), 5000);
             } else {
-                consecutiveFailures++;
+                progressEl.innerHTML = `<span>⚠️ 翻译未成功，请确保有可用的本地大模型</span>`;
+                setTimeout(() => progressEl.remove(), 8000);
             }
-
-            // Update progress indicator
-            if (progressEl) {
-                const processed = Math.min(i + batchSize, toTranslate.length);
-                progressEl.querySelector('span:last-child').textContent =
-                    `正在翻译模型描述 (${processed}/${toTranslate.length})，已翻译 ${translatedCount} 条...`;
-            }
-        } catch (err) {
-            // Translation failure is non-critical — just keep English descriptions
-            console.warn('Translation batch failed:', err);
-            consecutiveFailures++;
-            // Don't break — try next batch unless too many consecutive failures
         }
-    }
-
-    // Remove progress indicator and show summary
-    if (progressEl) {
-        if (translatedCount > 0) {
-            progressEl.innerHTML = `<span>✅ 已翻译 ${translatedCount}/${toTranslate.length} 条模型描述</span>`;
-            setTimeout(() => progressEl.remove(), 5000);
-        } else {
-            progressEl.innerHTML = `<span>⚠️ 翻译未成功，请确保有可用的本地大模型</span>`;
+    } catch (err) {
+        // Translation failure is non-critical — just keep English descriptions
+        console.warn('Translation failed:', err);
+        if (progressEl) {
+            progressEl.innerHTML = `<span>⚠️ 翻译失败: ${escapeHtml(err.message || '请求超时')}</span>`;
             setTimeout(() => progressEl.remove(), 8000);
         }
     }
