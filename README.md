@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.4.0-blue)
+![Version](https://img.shields.io/badge/version-v1.4.1-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -257,7 +257,7 @@ ollama-web --api-key="my-secret-key"
 | Bearer Token | `Authorization: Bearer olw_xxx` |
 | Query 参数 | `?key=olw_xxx` |
 
-**豁免端点：** `GET /api/health`（供监控探针使用）
+**豁免端点：** `GET /api/health`（供监控探针使用）、`GET /api/version`（版本信息公开）
 
 **CORS 配置：**
 
@@ -275,7 +275,7 @@ WEB_CORS_ORIGIN="https://admin.example.com" ./ollama.sh start
 |------|------|------|
 | `POST /api/auth/verify` | 验证 API Key | ❌ 免认证 |
 | `GET /api/health` | 健康检查 | ❌ 免认证 |
-| `GET /api/version` | 版本信息 | ✅ |
+| `GET /api/version` | 版本信息 | ❌ 免认证 |
 | `GET /api/status` | 综合服务状态 | ✅ |
 | `POST /api/service/{start,stop,restart,update}` | 服务控制 | ✅ |
 | `GET /api/models` | 已下载模型列表 | ✅ |
@@ -318,6 +318,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.4.1 | 2026-03-15 | 修复 Web 版本显示"未知"：docker-compose 构建 Web 镜像时新增 `VERSION` build arg（通过 `WEB_VERSION` 环境变量传递，默认 v1.4.1），确保版本号正确注入二进制文件；`/api/version` 端点改为免认证（与 `/api/health` 同级），修复 `ollama.sh update` 在未配置 API Key 时因鉴权失败获取不到版本的问题；Shell 注入防护（`docker.go` 新增 `shellQuote()` 对所有路径参数转义）；`.env` 写入改为原子操作（先写 `.tmp` 再 `os.Rename`）+ value 净化防注入；`PullModel` 改用无超时专用 HTTP client 防止大模型下载被截断；`UpdateService` 等待循环增加 `ctx.Done()` 检查 |
 | v1.4.0 | 2026-03-15 | Web 管理界面安全加固：新增 API Key 认证中间件（所有 /api/* 端点强制校验，支持 Header/Bearer/Query 三种传递方式）；首次启动自动生成随机 Key 并打印到终端，支持 `WEB_API_KEY` 环境变量和 `--api-key` 命令行参数配置固定 Key；前端添加登录页面（API Key 存入 localStorage，支持 Enter 快捷登录、退出登录、Token 过期自动跳转）；收紧 CORS 策略（默认仅同源，支持 `WEB_CORS_ORIGIN` 配置）；移除 WebSocket `CheckOrigin: true` 宽松校验；修复 4 处 JSON 注入漏洞（`PullModel`/`DeleteModel`/`GenerateChat`/`ShowModel` 中 `fmt.Sprintf` 拼接改为 `json.Marshal` 结构体序列化）；新增 `POST /api/auth/verify` 端点；`GET /api/health` 豁免认证供监控探针使用；**ollama.sh 脚本联动**：`start` 命令启动后显示 Web 管理界面地址和 API Key、`status` 命令显示 Web 容器运行状态、`health` 命令新增 Web 管理界面健康检查项、`help` 命令补充 Web 管理界面说明和环境变量文档；docker-compose 模板传递 `WEB_API_KEY`/`WEB_CORS_ORIGIN` 环境变量、healthcheck 改用免认证的 `/api/health` 端点；`.env` 模板新增 Web 管理界面配置段；**项目审查修复**：修复 `web/.gitignore` 误排除 `cmd/server/` 源码目录（`server` → `/server`）、修复 WebSocket 错误消息 2 处 JSON 注入（`fmt.Sprintf` → `json.Marshal`）、修复 CORS 默认模式反射任意 Origin（改为不设置 CORS 头让浏览器同源策略生效）、根目录 `.gitignore` 的 `.env`/`docker-compose.yaml` 加 `/` 前缀防递归误匹配、新增 `web/.dockerignore` 减小构建上下文、`.env` 模板补充 `OLLAMA_PROJECT_DIR` 变量、Web 宿主机映射端口改为 9981 |
 | v1.3.0 | 2026-03-13 | 新增 Web 管理界面（`web/` 目录）：基于 Go + 嵌入式 SPA 架构，提供仪表盘（服务状态、资源监控、模型统计）、服务控制（启动/停止/重启/版本更新）、模型管理（列表/拉取/删除，WebSocket 实时进度）、健康检查（6 项诊断）、实时日志流（WebSocket）、配置在线编辑、GPU 状态监控、清理管理；通过 docker-compose 与 Ollama 服务一起部署，端口 9981 |
 | v1.2.3 | 2026-03-13 | 修复状态检测：当 Docker healthcheck 处于 `start_period` 报告 `starting` 时，`status`/`health` 命令主动检测 API 可达性，避免服务已就绪但显示 starting 的误报；修复容器时区：移除 `/etc/localtime` symlink 挂载（宿主机 symlink 在容器内可能解析异常导致时区显示为 "Asia"），改为直接挂载 `/usr/share/zoneinfo/${OLLAMA_TZ}` 到容器 `/etc/localtime`；添加 `ZONEINFO=/usr/share/zoneinfo` 环境变量确保 Go runtime 正确加载时区数据；TZ 改为可配置（`OLLAMA_TZ`） |

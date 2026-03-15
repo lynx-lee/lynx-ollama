@@ -49,7 +49,7 @@ DIM='\033[2m'
 NC='\033[0m' # No Color
 
 # 项目版本
-VERSION="v1.4.0"
+VERSION="v1.4.1"
 
 # 项目配置
 PROJECT_NAME="ollama"
@@ -1087,6 +1087,7 @@ do_update() {
 
     # ── 重新构建 Web 镜像并启动 ───────────────────────────────
     log_step "重新构建 Web 镜像并启动所有服务..."
+    export WEB_VERSION="${VERSION}"
     $COMPOSE_CMD up -d --build --force-recreate
 
     # ── 等待就绪并显示版本变化 ─────────────────────────────────

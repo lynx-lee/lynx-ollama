@@ -85,6 +85,8 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
+      args:
+        VERSION: ${WEB_VERSION:-v1.4.1}
     image: ollama-web:latest
     container_name: ollama-web
     networks:
