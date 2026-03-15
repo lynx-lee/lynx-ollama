@@ -445,7 +445,9 @@ OLLAMA_DEBUG=INFO
 OLLAMA_TZ=Asia/Shanghai
 
 # ── Web 管理界面 ──────────────────────────────────────────
-# Web 端口
+# Web 监听地址 (宿主机绑定 IP)
+WEB_LISTEN_ADDR=0.0.0.0
+# Web 端口 (宿主机映射端口)
 WEB_PORT=9981
 # API Key (留空则自动生成，启动时打印到终端)
 WEB_API_KEY=
@@ -2444,6 +2446,7 @@ OLLAMA_DEBUG=INFO
 OLLAMA_TZ=Asia/Shanghai
 
 # ── Web 管理界面 ──────────────────────────────────────────
+WEB_LISTEN_ADDR=0.0.0.0
 WEB_PORT=9981
 WEB_API_KEY=
 WEB_CORS_ORIGIN=
@@ -3186,8 +3189,9 @@ show_help() {
     echo "  首次访问需输入 API Key (启动时显示在终端，或通过环境变量配置)"
     echo ""
     echo "  环境变量:"
-    echo "    WEB_API_KEY         固定 API Key (未设置则自动生成)"
+    echo "    WEB_LISTEN_ADDR     宿主机绑定 IP (默认: 0.0.0.0)"
     echo "    WEB_PORT            Web 端口 (默认: 9981)"
+    echo "    WEB_API_KEY         固定 API Key (未设置则自动生成)"
     echo "    WEB_CORS_ORIGIN     CORS 允许源 (默认: 仅同源)"
     echo "    WEB_LOG_LEVEL       日志级别 (默认: info)"
     echo ""
