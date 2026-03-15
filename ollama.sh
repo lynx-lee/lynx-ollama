@@ -4,7 +4,7 @@
 # Ollama AI 服务部署脚本 (适配 NVIDIA DGX Spark / GB10)
 #
 # 作者: lynxlee
-# 版本: v1.4.0
+# 版本: v1.4.7
 #
 # 用法:
 #   ./ollama.sh [命令] [选项]
@@ -1189,8 +1189,10 @@ do_update() {
         local new_ollama_ver
         new_ollama_ver=$(curl -sf "${OLLAMA_API}/api/version" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','未知'))" 2>/dev/null || echo "未知")
 
-        # Web 版本直接从更新后的脚本 VERSION 变量获取
-        local new_web_ver="${VERSION}"
+        # Web 版本从更新后的脚本文件中提取（git pull 后文件已更新，但 bash 内存中的 VERSION 仍是旧值）
+        local new_web_ver
+        new_web_ver=$(grep -m1 '^VERSION=' "${PROJECT_DIR}/ollama.sh" 2>/dev/null | sed 's/VERSION="\(.*\)"/\1/' || echo "${VERSION}")
+        [ -z "$new_web_ver" ] && new_web_ver="${VERSION}"
 
         echo ""
         print_separator
