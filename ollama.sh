@@ -4,7 +4,7 @@
 # Ollama AI 服务部署脚本 (适配 NVIDIA DGX Spark / GB10)
 #
 # 作者: lynxlee
-# 版本: v1.6.2
+# 版本: 由 web/cmd/server/main.go 定义
 #
 # 用法:
 #   ./ollama.sh [命令] [选项]
@@ -48,8 +48,8 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m' # No Color
 
-# 项目版本
-VERSION="v1.6.2"
+# 项目版本（唯一真相源: web/cmd/server/main.go → var Version = "vX.Y.Z"）
+VERSION=$(grep -m1 'var Version' "${PROJECT_DIR}/web/cmd/server/main.go" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' || echo "dev")
 
 # 项目配置
 PROJECT_NAME="ollama"
@@ -1189,9 +1189,9 @@ do_update() {
         local new_ollama_ver
         new_ollama_ver=$(curl -sf "${OLLAMA_API}/api/version" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','未知'))" 2>/dev/null || echo "未知")
 
-        # Web 版本从更新后的脚本文件中提取（git pull 后文件已更新，但 bash 内存中的 VERSION 仍是旧值）
+        # Web 版本从更新后的 main.go 提取（git pull 后文件已更新，但 bash 内存中的 VERSION 仍是旧值）
         local new_web_ver
-        new_web_ver=$(grep -m1 '^VERSION=' "${PROJECT_DIR}/ollama.sh" 2>/dev/null | sed 's/VERSION="\(.*\)"/\1/' || echo "${VERSION}")
+        new_web_ver=$(grep -m1 'var Version' "${PROJECT_DIR}/web/cmd/server/main.go" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' || echo "${VERSION}")
         [ -z "$new_web_ver" ] && new_web_ver="${VERSION}"
 
         echo ""

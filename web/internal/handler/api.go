@@ -469,7 +469,8 @@ func (h *APIHandler) SearchMarketModels(w http.ResponseWriter, r *http.Request) 
 }
 
 // TranslateModelDescriptions translates model descriptions to Chinese using the local Ollama model.
-// With batch translation, the frontend sends all items at once and the backend makes a single LLM call.
+// Accepts a batch of items; if the batch exceeds maxBatchPerLLM, it is split into multiple
+// sequential LLM calls (each ≤ 100 items) so that all descriptions get translated.
 func (h *APIHandler) TranslateModelDescriptions(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Items []model.TranslateRequest `json:"items"`
@@ -483,14 +484,27 @@ func (h *APIHandler) TranslateModelDescriptions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Limit batch size to prevent abuse (model market typically has 50-80 models)
-	maxBatch := 100
-	if len(req.Items) > maxBatch {
-		req.Items = req.Items[:maxBatch]
+	// Hard ceiling to prevent abuse (well above the current ~215 models on ollama.com)
+	const maxTotal = 500
+	if len(req.Items) > maxTotal {
+		req.Items = req.Items[:maxTotal]
 	}
 
-	results := h.ollama.TranslateDescriptions(req.Items)
-	jsonResponse(w, results)
+	// Split into batches of 100 for the LLM (keeps prompt size manageable)
+	const batchSize = 100
+	allResults := make([]model.TranslateResponse, 0, len(req.Items))
+
+	for start := 0; start < len(req.Items); start += batchSize {
+		end := start + batchSize
+		if end > len(req.Items) {
+			end = len(req.Items)
+		}
+		batch := req.Items[start:end]
+		results := h.ollama.TranslateDescriptions(batch)
+		allResults = append(allResults, results...)
+	}
+
+	jsonResponse(w, allResults)
 }
 
 // ── Health & Diagnostics ────────────────────────────────────────────

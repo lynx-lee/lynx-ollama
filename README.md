@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.6.2-blue)
+![Version](https://img.shields.io/badge/version-v1.6.3-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -320,6 +320,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.6.3 | 2026-03-15 | **模型翻译全量覆盖 + 版本定义收敛**。1️⃣ **模型描述翻译支持全量覆盖**：后端 `TranslateModelDescriptions` 移除硬编码 `maxBatch=100` 截断限制，改为分批 100 循环调用 `TranslateDescriptions`（每批独立 LLM 调用），支持翻译 500+ 条模型描述；前端 `translateMarketDescriptions` 同步改为分批循环发送请求（每批 100 条），进度条实时显示「第 N/M 批」，单批失败不中断后续批次；2️⃣ **版本号定义收敛为单一真相源**：唯一版本定义位置 `web/cmd/server/main.go` → `var Version = "vX.Y.Z"`；`ollama.sh` 不再硬编码 `VERSION="v1.6.x"`，改为运行时从 `main.go` 自动提取（`grep -m1 'var Version'`）；`docker-compose.yaml.template` 默认值从 `v1.6.2` 改为 `latest`（`ollama.sh` 总是 `export WEB_VERSION`）；`build.sh` 和 `Dockerfile` 早已自动提取，无需改动。今后升级版本只需修改 `main.go` 一处 |
 | v1.6.2 | 2026-03-15 | **WebSocket 数据推送扩展 + UI 精简**。1️⃣ **Lite 模式新增 GPU 数据采集**：后端 `collectLiteStatus` 和 HTTP `GET /api/status/lite` 从 3 路并行查询扩展到 4 路（新增 `GetGPUInfo`），WebSocket lite 推送现在包含 GPU 状态数据；2️⃣ **GPU 页面实时刷新**：前端 GPU 页面不再依赖独立 HTTP 请求（`GET /api/gpu`），改为从 WebSocket 推送数据实时渲染（每 5 秒自动更新），切换到 GPU 页面立即显示缓存数据，离开 GPU 页面后停止 GPU 渲染（不再浪费 DOM 操作）；保留手动刷新按钮作为 HTTP fallback；3️⃣ **移除系统设置页面**：主题切换已集成到 Topbar 按钮组（v1.6.1），系统设置页面仅含主题切换功能已属冗余，移除侧边栏"🎨 系统设置"导航项、`page-settings` HTML 区域和 CSS 样式（~60 行） |
 | v1.6.1 | 2026-03-15 | **新增全局顶部导航栏（Topbar）**，参考 OpenClaw Client 设计语言。Topbar 包含：左侧 Ollama logo + 项目名称 + "管理面板"副标题；右侧 WebSocket 实时连接状态指示灯（🟢 已连接 / 🟡 连接中 / 🔴 未连接）、主题快速切换按钮组（☀️/🌙/🖥，支持浅色/深色/跟随系统）、项目版本号徽章 + Ollama 引擎版本号、退出登录按钮。原侧边栏精简为纯导航菜单 + 底部 API 状态指示灯，移除了 sidebar-header/sidebar-meta/版本号/退出按钮等冗余元素。整体布局从 `flex(horizontal)` 调整为 `flex(vertical: topbar + flex(horizontal: sidebar + content))`。小屏幕适配：768px 以下隐藏副标题、WebSocket 状态文字和版本号 |
 | v1.6.0 | 2026-03-15 | **前端通信架构升级：HTTP 轮询 → WebSocket 实时推送**。新增 `GET /api/ws/status` WebSocket 端点，后端通过 StatusHub（单一数据采集 goroutine + 多客户端广播模式）每 5 秒主动推送状态数据，替代前端 `setInterval` 10/30 秒周期性 HTTP 轮询；客户端支持发送 `subscribe`（切换 full/lite 模式）、`pause`/`resume`（Tab 隐藏时暂停推送）控制命令；WebSocket 断连时自动指数退避重连（1s→30s）；首次连接立即推送一次快照避免 5 秒等待；**显著降低前端内存缓存负载**——消除了 `setInterval` 定时器和冗余 HTTP 请求/响应对象堆积；后端共享数据采集避免每个客户端独立查询 Docker/Ollama。修复 `project_version` 显示为 `dev` 的问题：`build.sh` 和 `Dockerfile` 不再硬编码 `VERSION=dev` 默认值，改为自动从 `main.go` 源码中提取版本号（`grep var Version`），确保无论通过 `docker compose build`、`./build.sh` 还是 `docker build` 构建，版本号都与源码一致 |

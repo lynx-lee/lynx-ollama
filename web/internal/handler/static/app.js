@@ -570,9 +570,9 @@ async function searchMarketModels() {
     }
 }
 
-// translateMarketDescriptions translates model descriptions in one batch call and updates the UI.
-// The backend handles caching (cached items return instantly) and batch LLM translation
-// (all uncached items are packed into a single JSON prompt → one LLM call).
+// translateMarketDescriptions translates model descriptions in batches (100 per request).
+// The backend handles caching (cached items return instantly) and batch LLM translation.
+// If there are more than 100 items, we loop through batches so ALL models get translated.
 async function translateMarketDescriptions(models) {
     // Filter models that need translation (non-empty, non-Chinese descriptions)
     const toTranslate = models.filter(m => m.description && m.description.length >= 10 && !containsChineseChar(m.description));
@@ -582,44 +582,70 @@ async function translateMarketDescriptions(models) {
     const progressEl = document.createElement('div');
     progressEl.id = 'translateProgress';
     progressEl.style.cssText = 'color:var(--text-muted);font-size:12px;margin-bottom:8px;display:flex;align-items:center;gap:6px;';
-    progressEl.innerHTML = `<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span><span>正在翻译 ${toTranslate.length} 条模型描述（批量翻译中）...</span>`;
     const marketGrid = document.querySelector('.market-grid');
     if (marketGrid && marketGrid.parentNode) {
         marketGrid.parentNode.insertBefore(progressEl, marketGrid);
     }
 
+    const BATCH_SIZE = 100;
+    const totalBatches = Math.ceil(toTranslate.length / BATCH_SIZE);
+    let translatedCount = 0;
+    let failedBatches = 0;
+
     try {
-        // Send all items in one request — backend handles cache lookup + batch LLM call
-        const items = toTranslate.map(m => ({ name: m.name, description: m.description }));
-        const results = await api('/api/models/search/translate', {
-            method: 'POST',
-            body: JSON.stringify({ items }),
-        });
+        for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+            const start = batchIdx * BATCH_SIZE;
+            const end = Math.min(start + BATCH_SIZE, toTranslate.length);
+            const batch = toTranslate.slice(start, end);
 
-        if (!results || !Array.isArray(results)) {
-            throw new Error('Invalid translation response');
-        }
+            // Update progress
+            if (progressEl) {
+                if (totalBatches > 1) {
+                    progressEl.innerHTML = `<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span><span>正在翻译模型描述（第 ${batchIdx + 1}/${totalBatches} 批，共 ${toTranslate.length} 条）...</span>`;
+                } else {
+                    progressEl.innerHTML = `<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span><span>正在翻译 ${toTranslate.length} 条模型描述（批量翻译中）...</span>`;
+                }
+            }
 
-        // Update the DOM for each translated description
-        let translatedCount = 0;
-        for (const r of results) {
-            if (!r.description) continue;
-            // Check if the description was actually translated (different from original)
-            const original = toTranslate.find(m => m.name === r.name);
-            if (original && r.description === original.description) continue;
+            try {
+                const items = batch.map(m => ({ name: m.name, description: m.description }));
+                const results = await api('/api/models/search/translate', {
+                    method: 'POST',
+                    body: JSON.stringify({ items }),
+                });
 
-            const descEl = document.querySelector(`.market-card[data-model="${CSS.escape(r.name)}"] .market-card-desc`);
-            if (descEl) {
-                descEl.textContent = r.description;
-                descEl.classList.add('translated');
-                translatedCount++;
+                if (!results || !Array.isArray(results)) {
+                    failedBatches++;
+                    continue;
+                }
+
+                // Update the DOM for each translated description
+                for (const r of results) {
+                    if (!r.description) continue;
+                    const original = batch.find(m => m.name === r.name);
+                    if (original && r.description === original.description) continue;
+
+                    const descEl = document.querySelector(`.market-card[data-model="${CSS.escape(r.name)}"] .market-card-desc`);
+                    if (descEl) {
+                        descEl.textContent = r.description;
+                        descEl.classList.add('translated');
+                        translatedCount++;
+                    }
+                }
+            } catch (batchErr) {
+                console.warn(`Translation batch ${batchIdx + 1} failed:`, batchErr);
+                failedBatches++;
+                // Continue with next batch instead of aborting entirely
             }
         }
 
         // Show completion summary
         if (progressEl) {
             if (translatedCount > 0) {
-                progressEl.innerHTML = `<span>✅ 已翻译 ${translatedCount}/${toTranslate.length} 条模型描述</span>`;
+                const summary = failedBatches > 0
+                    ? `✅ 已翻译 ${translatedCount}/${toTranslate.length} 条模型描述（${failedBatches} 批失败）`
+                    : `✅ 已翻译 ${translatedCount}/${toTranslate.length} 条模型描述`;
+                progressEl.innerHTML = `<span>${summary}</span>`;
                 setTimeout(() => progressEl.remove(), 5000);
             } else {
                 progressEl.innerHTML = `<span>⚠️ 翻译未成功，请确保有可用的本地大模型</span>`;
