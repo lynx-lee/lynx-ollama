@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ollama 管理面板</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦙</text></svg>">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <!-- Auth Screen -->
+    <div id="authScreen" class="auth-overlay">
+        <div class="auth-card">
+            <div class="auth-logo">🦙</div>
+            <h2>Ollama 管理面板</h2>
+            <p class="auth-subtitle">请输入 API Key 以继续访问</p>
+            <div class="auth-form">
+                <input type="password" id="authKeyInput" placeholder="输入 API Key" autocomplete="off" />
+                <div class="auth-error" id="authError"></div>
+                <button class="btn btn-primary auth-btn" id="authBtn" onclick="verifyAuth()">🔓 验证登录</button>
+            </div>
+            <p class="auth-hint">API Key 在服务启动时显示在终端中，<br>或通过 <code>WEB_API_KEY</code> 环境变量配置。</p>
+        </div>
+    </div>
+
+    <div id="app" style="display:none">
+        <!-- Sidebar -->
+        <nav id="sidebar">
+            <div class="sidebar-header">
+                <span class="logo">🦙</span>
+                <h1>Ollama</h1>
+                <span class="version-badge" id="projectVersion">--</span>
+            </div>
+            <div class="sidebar-meta">
+                <span class="meta-label">Ollama</span>
+                <span class="meta-value" id="ollamaVersion">--</span>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item active" data-page="dashboard">
+                    <span class="nav-icon">📊</span>
+                    <span>仪表盘</span>
+                </li>
+                <li class="nav-item" data-page="models">
+                    <span class="nav-icon">🤖</span>
+                    <span>模型管理</span>
+                </li>
+                <li class="nav-item" data-page="health">
+                    <span class="nav-icon">🩺</span>
+                    <span>健康检查</span>
+                </li>
+                <li class="nav-item" data-page="logs">
+                    <span class="nav-icon">📋</span>
+                    <span>日志查看</span>
+                </li>
+                <li class="nav-item" data-page="config">
+                    <span class="nav-icon">⚙️</span>
+                    <span>配置管理</span>
+                </li>
+                <li class="nav-item" data-page="gpu">
+                    <span class="nav-icon">🎮</span>
+                    <span>GPU 状态</span>
+                </li>
+            </ul>
+            <div class="sidebar-footer">
+                <div class="status-indicator" id="apiStatus">
+                    <span class="dot"></span>
+                    <span>API 状态检测中...</span>
+                </div>
+                <button class="btn btn-sm sidebar-logout" onclick="logout()" title="退出登录">🔒 退出</button>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main id="content">
+            <!-- Dashboard Page -->
+            <div class="page active" id="page-dashboard">
+                <div class="page-header">
+                    <h2>仪表盘</h2>
+                    <div class="header-actions">
+                        <button class="btn btn-icon" onclick="refreshStatus()" title="刷新">🔄</button>
+                    </div>
+                </div>
+
+                <!-- Service Controls -->
+                <div class="card service-controls">
+                    <div class="card-header">
+                        <h3>🐳 服务控制</h3>
+                        <div class="service-status" id="serviceStatus">
+                            <span class="dot"></span>
+                            <span>检测中...</span>
+                        </div>
+                    </div>
+                    <div class="control-buttons">
+                        <button class="btn btn-success" onclick="controlService('start')">▶ 启动</button>
+                        <button class="btn btn-warning" onclick="controlService('restart')">🔄 重启</button>
+                        <button class="btn btn-danger" onclick="controlService('stop')">⏹ 停止</button>
+                        <button class="btn btn-primary" onclick="controlService('update')">⬆ 更新版本</button>
+                    </div>
+                </div>
+
+                <!-- Stats Grid -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">🤖</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="modelCount">--</span>
+                            <span class="stat-label">已下载模型</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⚡</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="runningCount">--</span>
+                            <span class="stat-label">运行中模型</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">💾</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="diskUsage">--</span>
+                            <span class="stat-label">磁盘使用</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🎮</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="gpuUsage">--</span>
+                            <span class="stat-label">GPU 显存</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Container & Resource Info -->
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-header"><h3>📦 容器信息</h3></div>
+                        <div class="info-list" id="containerInfo">
+                            <div class="info-item"><span class="info-label">状态</span><span class="info-value">--</span></div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3>📈 资源使用</h3></div>
+                        <div class="info-list" id="resourceInfo">
+                            <div class="info-item"><span class="info-label">CPU</span><span class="info-value">--</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Running Models -->
+                <div class="card">
+                    <div class="card-header"><h3>⚡ 运行中模型</h3></div>
+                    <div class="table-container">
+                        <table id="runningModelsTable">
+                            <thead>
+                                <tr><th>模型名称</th><th>VRAM 使用</th><th>过期时间</th></tr>
+                            </thead>
+                            <tbody><tr><td colspan="3" class="empty-state">加载中...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Models Page -->
+            <div class="page" id="page-models">
+                <div class="page-header">
+                    <h2>模型管理</h2>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="showPullDialog()">📥 拉取模型</button>
+                        <button class="btn btn-icon" onclick="loadModels()" title="刷新">🔄</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><h3>📦 已下载模型</h3></div>
+                    <div class="table-container">
+                        <table id="modelsTable">
+                            <thead>
+                                <tr><th>名称</th><th>大小</th><th>参数</th><th>量化</th><th>修改时间</th><th>操作</th></tr>
+                            </thead>
+                            <tbody><tr><td colspan="6" class="empty-state">加载中...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Health Page -->
+            <div class="page" id="page-health">
+                <div class="page-header">
+                    <h2>健康检查</h2>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="runHealthCheck()">🩺 运行检查</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="health-score" id="healthScore">
+                        <span class="score-value">--</span>
+                        <span class="score-label">健康评分</span>
+                    </div>
+                    <div class="health-checks" id="healthChecks">
+                        <div class="empty-state">点击"运行检查"开始健康诊断</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs Page -->
+            <div class="page" id="page-logs">
+                <div class="page-header">
+                    <h2>日志查看</h2>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" id="logStreamBtn" onclick="toggleLogStream()">▶ 实时日志</button>
+                        <button class="btn btn-icon" onclick="loadLogs()" title="刷新">🔄</button>
+                    </div>
+                </div>
+
+                <div class="card log-card">
+                    <pre class="log-output" id="logOutput">加载中...</pre>
+                </div>
+            </div>
+
+            <!-- Config Page -->
+            <div class="page" id="page-config">
+                <div class="page-header">
+                    <h2>配置管理</h2>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="saveConfig()">💾 保存配置</button>
+                        <button class="btn btn-warning" onclick="runOptimize()">⚡ 自动优化</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><h3>⚙️ 环境配置 (.env)</h3></div>
+                    <div class="config-form" id="configForm">
+                        <div class="empty-state">加载中...</div>
+                    </div>
+                </div>
+
+                <!-- Clean Section -->
+                <div class="card">
+                    <div class="card-header"><h3>🧹 清理管理</h3></div>
+                    <div class="clean-actions">
+                        <div class="clean-option">
+                            <h4>轻度清理</h4>
+                            <p>仅停止容器，保留镜像和数据</p>
+                            <button class="btn btn-warning" onclick="runClean('soft')">执行轻度清理</button>
+                        </div>
+                        <div class="clean-option">
+                            <h4>深度清理</h4>
+                            <p>停止容器 + 删除所有镜像</p>
+                            <button class="btn btn-danger" onclick="runClean('hard')">执行深度清理</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GPU Page -->
+            <div class="page" id="page-gpu">
+                <div class="page-header">
+                    <h2>GPU 状态</h2>
+                    <div class="header-actions">
+                        <button class="btn btn-icon" onclick="loadGPUInfo()" title="刷新">🔄</button>
+                    </div>
+                </div>
+
+                <div id="gpuCards" class="gpu-grid">
+                    <div class="empty-state">加载中...</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Pull Model Dialog -->
+    <div class="modal-overlay" id="pullDialog" style="display:none">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>📥 拉取模型</h3>
+                <button class="btn-close" onclick="closePullDialog()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>模型名称</label>
+                    <input type="text" id="pullModelName" placeholder="例如: qwen2.5:72b, llama3.1:70b" />
+                </div>
+                <div class="recommended-models">
+                    <h4>推荐模型</h4>
+                    <div class="model-chips">
+                        <span class="chip" onclick="setPullModel('qwen2.5:72b')">qwen2.5:72b</span>
+                        <span class="chip" onclick="setPullModel('qwen2.5-coder:32b')">qwen2.5-coder:32b</span>
+                        <span class="chip" onclick="setPullModel('llama3.1:70b')">llama3.1:70b</span>
+                        <span class="chip" onclick="setPullModel('deepseek-r1:70b')">deepseek-r1:70b</span>
+                        <span class="chip" onclick="setPullModel('nomic-embed-text')">nomic-embed-text</span>
+                    </div>
+                </div>
+                <div class="pull-progress" id="pullProgress" style="display:none">
+                    <div class="progress-bar"><div class="progress-fill" id="pullProgressFill"></div></div>
+                    <div class="progress-text" id="pullProgressText">准备中...</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closePullDialog()">取消</button>
+                <button class="btn btn-primary" id="pullBtn" onclick="startPull()">开始拉取</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <script src="/app.js"></script>
+</body>
+</html>

@@ -80,6 +80,46 @@ services:
         max-file: "5"
     restart: unless-stopped
 
+  # ── Web 管理界面 ──────────────────────────────────────────────
+  ollama-web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    image: ollama-web:latest
+    container_name: ollama-web
+    networks:
+      - ai-network
+    ports:
+      - "${WEB_LISTEN_ADDR:-0.0.0.0}:${WEB_PORT:-8080}:8080"
+    environment:
+      - TZ=${OLLAMA_TZ:-Asia/Shanghai}
+      - OLLAMA_API_URL=http://ollama:11434
+      - OLLAMA_PROJECT_DIR=/opt/ai/ollama
+      - OLLAMA_SCRIPT_PATH=/opt/ai/ollama/ollama.sh
+      - WEB_LISTEN_ADDR=0.0.0.0:8080
+      - WEB_LOG_LEVEL=${WEB_LOG_LEVEL:-info}
+    volumes:
+      # 挂载项目目录以访问 ollama.sh、.env、docker-compose.yaml
+      - ${OLLAMA_PROJECT_DIR:-/opt/ai/ollama}:/opt/ai/ollama
+      # 挂载 Docker socket 以管理容器
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - ollama
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/status || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
 networks:
   ai-network:
     driver: bridge

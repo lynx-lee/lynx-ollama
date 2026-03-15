@@ -1,5 +1,7 @@
 # Lynx-Ollama
 
+![Version](https://img.shields.io/badge/version-v1.4.0-blue)
+
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
 ## 硬件目标
@@ -14,11 +16,12 @@
 
 ## 核心特性
 
+- **Web 管理界面** — 基于 Go 的轻量级 Web UI，图形化管理 Ollama 服务启停、版本更新、模型管理、配置调优、健康诊断、GPU 监控、实时日志
 - **统一内存优化** — 自动识别 GPU/CPU 共享内存架构，最大化可用显存
 - **多核 CPU 并行调度** — 通过 `OLLAMA_NUM_PARALLEL` + `OLLAMA_MAX_QUEUE` 实现多路并发推理，每路请求自动利用全部 CPU 核心（llama.cpp OpenMP 线程池），`optimize` 命令综合 VRAM 和 CPU 核心数自动计算最优并行数
 - **智能硬件检测** — `optimize` 命令自动检测硬件并生成最佳 docker-compose 配置
 - **大模型就绪** — 默认 131K 上下文、8 路并行、4 模型常驻、q8_0 KV 缓存
-- **安全加固** — no-new-privileges、最小 capability、只读安全策略
+- **安全加固** — API Key 认证保护所有管理接口、CORS 来源限制、JSON 注入防护、no-new-privileges、最小 capability、只读安全策略
 - **全生命周期管理** — 部署 / 监控 / 备份 / 恢复 / 基准测试一站式管理
 
 ## 快速开始
@@ -33,13 +36,16 @@ git clone <repo-url> && cd lynx-ollama
 # 3. 根据硬件自动优化配置（可选）
 ./ollama.sh optimize
 
-# 4. 启动服务
+# 4. 启动服务（同时启动 Web 管理界面）
 ./ollama.sh start
 
-# 5. 拉取模型
+# 5. 访问 Web 管理界面
+# http://<server-ip>:8080
+
+# 6. 拉取模型
 ./ollama.sh pull qwen2.5:72b-instruct-q4_K_M
 
-# 6. 开始对话
+# 7. 开始对话
 ./ollama.sh run qwen2.5:72b-instruct-q4_K_M
 ```
 
@@ -225,6 +231,60 @@ Ollama 底层使用 `llama.cpp`，推理时通过 **OpenMP 线程池自动利用
 | `GET /api/ps` | 运行中的模型 |
 | `GET /api/version` | 版本信息 |
 
+## Web 管理界面
+
+### 安全认证
+
+Web 管理界面（端口 8080）的所有 API 端点均受 **API Key 认证** 保护。
+
+```bash
+# 方式 1: 自动生成 API Key（首次启动时在终端输出）
+./ollama.sh start
+# 输出: 🔑 API Key: olw_a1b2c3d4...
+
+# 方式 2: 通过环境变量指定固定 Key
+WEB_API_KEY="my-secret-key" ./ollama.sh start
+
+# 方式 3: 命令行参数
+ollama-web --api-key="my-secret-key"
+```
+
+**认证方式（API 调用时）：**
+
+| 方式 | 示例 |
+|------|------|
+| Header（推荐） | `X-API-Key: olw_xxx` |
+| Bearer Token | `Authorization: Bearer olw_xxx` |
+| Query 参数 | `?key=olw_xxx` |
+
+**豁免端点：** `GET /api/health`（供监控探针使用）
+
+**CORS 配置：**
+
+```bash
+# 默认: 仅同源访问
+# 允许所有来源（开发环境）:
+WEB_CORS_ORIGIN="*" ./ollama.sh start
+# 指定特定来源:
+WEB_CORS_ORIGIN="https://admin.example.com" ./ollama.sh start
+```
+
+### Web API 端点
+
+| 端点 | 说明 | 认证 |
+|------|------|------|
+| `POST /api/auth/verify` | 验证 API Key | ❌ 免认证 |
+| `GET /api/health` | 健康检查 | ❌ 免认证 |
+| `GET /api/version` | 版本信息 | ✅ |
+| `GET /api/status` | 综合服务状态 | ✅ |
+| `POST /api/service/{start,stop,restart,update}` | 服务控制 | ✅ |
+| `GET /api/models` | 已下载模型列表 | ✅ |
+| `POST /api/models/pull` | 拉取模型 | ✅ |
+| `DELETE /api/models/{name}` | 删除模型 | ✅ |
+| `GET,PUT /api/config` | 读取/更新配置 | ✅ |
+| `GET /api/gpu` | GPU 信息 | ✅ |
+| `GET /api/logs` | 服务日志 | ✅ |
+
 ## 数据目录
 
 | 路径 | 说明 |
@@ -258,6 +318,8 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.4.0 | 2026-03-15 | Web 管理界面安全加固：新增 API Key 认证中间件（所有 /api/* 端点强制校验，支持 Header/Bearer/Query 三种传递方式）；首次启动自动生成随机 Key 并打印到终端，支持 `WEB_API_KEY` 环境变量和 `--api-key` 命令行参数配置固定 Key；前端添加登录页面（API Key 存入 localStorage，支持 Enter 快捷登录、退出登录、Token 过期自动跳转）；收紧 CORS 策略（默认仅同源，支持 `WEB_CORS_ORIGIN` 配置）；移除 WebSocket `CheckOrigin: true` 宽松校验；修复 4 处 JSON 注入漏洞（`PullModel`/`DeleteModel`/`GenerateChat`/`ShowModel` 中 `fmt.Sprintf` 拼接改为 `json.Marshal` 结构体序列化）；新增 `POST /api/auth/verify` 端点；`GET /api/health` 豁免认证供监控探针使用 |
+| v1.3.0 | 2026-03-13 | 新增 Web 管理界面（`web/` 目录）：基于 Go + 嵌入式 SPA 架构，提供仪表盘（服务状态、资源监控、模型统计）、服务控制（启动/停止/重启/版本更新）、模型管理（列表/拉取/删除，WebSocket 实时进度）、健康检查（6 项诊断）、实时日志流（WebSocket）、配置在线编辑、GPU 状态监控、清理管理；通过 docker-compose 与 Ollama 服务一起部署，端口 8080 |
 | v1.2.3 | 2026-03-13 | 修复状态检测：当 Docker healthcheck 处于 `start_period` 报告 `starting` 时，`status`/`health` 命令主动检测 API 可达性，避免服务已就绪但显示 starting 的误报；修复容器时区：移除 `/etc/localtime` symlink 挂载（宿主机 symlink 在容器内可能解析异常导致时区显示为 "Asia"），改为直接挂载 `/usr/share/zoneinfo/${OLLAMA_TZ}` 到容器 `/etc/localtime`；添加 `ZONEINFO=/usr/share/zoneinfo` 环境变量确保 Go runtime 正确加载时区数据；TZ 改为可配置（`OLLAMA_TZ`） |
 | v1.2.2 | 2026-03-13 | 统一所有表格输出使用 Python `display_width()` 渲染：`print_banner()` ASCII art 居中对齐、`do_clean()` 清理操作提示框、`do_pull()` 推荐模型表格，全面消除中英文混排宽度不对齐问题 |
 | v1.2.1 | 2026-03-13 | 修复容器时区：增加 `/etc/timezone` 挂载确保 Go runtime 正确识别时区（Go `slog` 日志时间由 `time.Now()` Local 时区决定）；`optimize` 方案表格使用 Python `display_width()` 正确处理中英文混排宽度对齐 |

@@ -1,0 +1,109 @@
+package handler
+
+import (
+	"embed"
+	"io/fs"
+	"net/http"
+	"strings"
+
+	"github.com/lynxlee/lynx-ollama-web/internal/config"
+	"github.com/lynxlee/lynx-ollama-web/internal/service"
+)
+
+//go:embed static/*
+var staticFS embed.FS
+
+// NewRouter creates the HTTP router with all API endpoints.
+func NewRouter(ollamaSvc *service.OllamaService, dockerSvc *service.DockerService, systemSvc *service.SystemService, cfg *config.Config, version string) http.Handler {
+	mux := http.NewServeMux()
+
+	api := NewAPIHandler(ollamaSvc, dockerSvc, systemSvc, cfg, version)
+
+	// ── Auth ────────────────────────────────────────────────────────
+	mux.HandleFunc("POST /api/auth/verify", api.VerifyAPIKey)
+
+	// ── Version ────────────────────────────────────────────────────
+	mux.HandleFunc("GET /api/version", api.GetVersion)
+
+	// ── Service control ─────────────────────────────────────────────
+	mux.HandleFunc("GET /api/status", api.GetStatus)
+	mux.HandleFunc("POST /api/service/start", api.StartService)
+	mux.HandleFunc("POST /api/service/stop", api.StopService)
+	mux.HandleFunc("POST /api/service/restart", api.RestartService)
+	mux.HandleFunc("POST /api/service/update", api.UpdateService)
+
+	// ── Models ──────────────────────────────────────────────────────
+	mux.HandleFunc("GET /api/models", api.ListModels)
+	mux.HandleFunc("GET /api/models/running", api.ListRunningModels)
+	mux.HandleFunc("POST /api/models/pull", api.PullModel)
+	mux.HandleFunc("DELETE /api/models/{name...}", api.DeleteModel)
+	mux.HandleFunc("GET /api/models/{name...}/info", api.ShowModel)
+
+	// ── Health & Diagnostics ────────────────────────────────────────
+	mux.HandleFunc("GET /api/health", api.HealthCheck)
+	mux.HandleFunc("GET /api/gpu", api.GetGPUInfo)
+	mux.HandleFunc("GET /api/logs", api.GetLogs)
+
+	// ── Configuration ───────────────────────────────────────────────
+	mux.HandleFunc("GET /api/config", api.GetConfig)
+	mux.HandleFunc("PUT /api/config", api.UpdateConfig)
+	mux.HandleFunc("POST /api/optimize", api.Optimize)
+
+	// ── Clean ───────────────────────────────────────────────────────
+	mux.HandleFunc("POST /api/clean", api.Clean)
+
+	// ── WebSocket for logs streaming ────────────────────────────────
+	mux.HandleFunc("GET /api/ws/logs", api.StreamLogs)
+	mux.HandleFunc("GET /api/ws/pull", api.StreamPull)
+
+	// ── Static files (embedded SPA) ─────────────────────────────────
+	staticContent, _ := fs.Sub(staticFS, "static")
+	fileServer := http.FileServer(http.FS(staticContent))
+	mux.Handle("/", spaHandler(fileServer))
+
+	// Middleware chain: CORS → Auth → Router
+	return withCORS(cfg.CORSOrigin, apiKeyAuth(cfg.APIKey, mux))
+}
+
+// spaHandler serves index.html for all non-API, non-file routes (SPA routing).
+func spaHandler(fileServer http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Try to serve the actual file
+		fileServer.ServeHTTP(w, r)
+	})
+}
+
+// withCORS adds CORS headers. If allowedOrigin is empty, only same-origin is allowed.
+func withCORS(allowedOrigin string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+
+		if allowedOrigin == "*" {
+			// Development mode: allow all origins
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else if allowedOrigin != "" {
+			// Specific origin(s) configured
+			for _, allowed := range strings.Split(allowedOrigin, ",") {
+				if strings.TrimSpace(allowed) == origin {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Vary", "Origin")
+					break
+				}
+			}
+		} else if origin != "" {
+			// Default: same-origin only (reflect origin for same-host requests)
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

@@ -4,6 +4,7 @@
 # Ollama AI 服务部署脚本 (适配 NVIDIA DGX Spark / GB10)
 #
 # 作者: lynxlee
+# 版本: v1.4.0
 #
 # 用法:
 #   ./ollama.sh [命令] [选项]
@@ -46,6 +47,9 @@ MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m' # No Color
+
+# 项目版本
+VERSION="v1.4.0"
 
 # 项目配置
 PROJECT_NAME="ollama"
@@ -117,7 +121,7 @@ art = [
     '  ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝',
 ]
 
-subtitle = 'Ollama AI 服务管理工具  ·  DGX Spark Edition'
+subtitle = 'Ollama AI 服务管理工具  ·  DGX Spark Edition  ·  ${VERSION}'
 
 cyan = '\033[36m'
 nc = '\033[0m'
@@ -3095,6 +3099,7 @@ show_help() {
     echo "  restore [file]      恢复模型与配置"
     echo "  clean <mode>        清理 (--soft|--hard|--purge)"
     echo "  exec [cmd]          进入容器 (默认bash)"
+    echo "  version             显示脚本版本号"
     echo "  help                显示帮助信息"
     echo ""
     echo -e "${BOLD}示例:${NC}"
@@ -3207,6 +3212,9 @@ main() {
         search|find|browse)
             print_banner
             do_search "$@"
+            ;;
+        version|--version|-v|-V)
+            echo "Lynx-Ollama ${VERSION}"
             ;;
         help|--help|-h)
             show_help

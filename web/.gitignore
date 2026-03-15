@@ -1,0 +1,4 @@
+# Build artifacts
+server
+ollama-web
+ollama-web-*

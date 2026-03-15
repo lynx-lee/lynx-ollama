@@ -1,0 +1,170 @@
+package model
+
+import "time"
+
+// APIResponse is the standard API response wrapper.
+type APIResponse struct {
+	Success bool        `json:"success"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   string      `json:"error,omitempty"`
+}
+
+// ServiceStatus represents the overall Ollama service status.
+type ServiceStatus struct {
+	Container      ContainerInfo  `json:"container"`
+	Resources      ResourceUsage  `json:"resources"`
+	Models         []ModelInfo    `json:"models"`
+	RunningModels  []RunningModel `json:"running_models"`
+	Config         ServiceConfig  `json:"config"`
+	GPU            []GPUInfo      `json:"gpu"`
+	Disk           DiskUsage      `json:"disk"`
+	OllamaVersion  string         `json:"ollama_version"`
+	ProjectVersion string         `json:"project_version"`
+	APIReachable   bool           `json:"api_reachable"`
+}
+
+// ContainerInfo holds Docker container state.
+type ContainerInfo struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`    // running, exited, etc.
+	Health    string `json:"health"`    // healthy, starting, unhealthy
+	Image     string `json:"image"`
+	StartedAt string `json:"started_at"`
+	Uptime    string `json:"uptime"`
+	Ports     string `json:"ports"`
+}
+
+// ResourceUsage holds container resource metrics.
+type ResourceUsage struct {
+	CPUPercent    string `json:"cpu_percent"`
+	MemUsage      string `json:"mem_usage"`
+	MemPercent    string `json:"mem_percent"`
+	NetIO         string `json:"net_io"`
+	BlockIO       string `json:"block_io"`
+}
+
+// ModelInfo represents a downloaded model.
+type ModelInfo struct {
+	Name       string    `json:"name"`
+	Size       int64     `json:"size"`
+	SizeHuman  string    `json:"size_human"`
+	Digest     string    `json:"digest"`
+	ModifiedAt time.Time `json:"modified_at"`
+	Family     string    `json:"family,omitempty"`
+	Parameters string    `json:"parameters,omitempty"`
+	Quantization string  `json:"quantization,omitempty"`
+}
+
+// RunningModel represents a currently loaded model.
+type RunningModel struct {
+	Name       string    `json:"name"`
+	Size       int64     `json:"size"`
+	SizeHuman  string    `json:"size_human"`
+	Digest     string    `json:"digest"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	SizeVRAM   int64     `json:"size_vram"`
+	VRAMHuman  string    `json:"vram_human"`
+}
+
+// GPUInfo holds GPU hardware information.
+type GPUInfo struct {
+	Index       string `json:"index"`
+	Name        string `json:"name"`
+	MemTotal    string `json:"mem_total"`
+	MemUsed     string `json:"mem_used"`
+	MemFree     string `json:"mem_free"`
+	Utilization string `json:"utilization"`
+	Temperature string `json:"temperature"`
+	Power       string `json:"power"`
+	PowerLimit  string `json:"power_limit"`
+	Driver      string `json:"driver"`
+	CUDA        string `json:"cuda"`
+}
+
+// DiskUsage holds disk space information.
+type DiskUsage struct {
+	ModelDataSize string `json:"model_data_size"`
+	TotalSpace    string `json:"total_space"`
+	UsedSpace     string `json:"used_space"`
+	AvailSpace    string `json:"avail_space"`
+	UsePercent    string `json:"use_percent"`
+}
+
+// ServiceConfig holds the current Ollama configuration.
+type ServiceConfig struct {
+	BindAddress     string `json:"bind_address"`
+	Port            string `json:"port"`
+	Version         string `json:"version"`
+	DataDir         string `json:"data_dir"`
+	NumParallel     string `json:"num_parallel"`
+	MaxQueue        string `json:"max_queue"`
+	MaxLoadedModels string `json:"max_loaded_models"`
+	KeepAlive       string `json:"keep_alive"`
+	ContextLength   string `json:"context_length"`
+	KVCacheType     string `json:"kv_cache_type"`
+	FlashAttention  string `json:"flash_attention"`
+	Debug           string `json:"debug"`
+	CPUReservation  string `json:"cpu_reservation"`
+	CPULimit        string `json:"cpu_limit"`
+	MemReservation  string `json:"mem_reservation"`
+	MemLimit        string `json:"mem_limit"`
+	Timezone        string `json:"timezone"`
+}
+
+// HealthCheck represents a single health check item.
+type HealthCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"` // pass, fail, warn, skip
+	Message string `json:"message"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+// HealthReport is the overall health check result.
+type HealthReport struct {
+	Checks []HealthCheck `json:"checks"`
+	Passed int           `json:"passed"`
+	Total  int           `json:"total"`
+	Score  string        `json:"score"`
+}
+
+// PullProgress represents model pull/download progress.
+type PullProgress struct {
+	Status    string `json:"status"`
+	Digest    string `json:"digest,omitempty"`
+	Total     int64  `json:"total,omitempty"`
+	Completed int64  `json:"completed,omitempty"`
+	Percent   float64 `json:"percent,omitempty"`
+}
+
+// LogEntry represents a single log line.
+type LogEntry struct {
+	Timestamp string `json:"timestamp"`
+	Level     string `json:"level"`
+	Message   string `json:"message"`
+	Raw       string `json:"raw"`
+}
+
+// UpdateInfo holds version update information.
+type UpdateInfo struct {
+	OldVersion string `json:"old_version"`
+	NewVersion string `json:"new_version"`
+	ImageID    string `json:"image_id"`
+}
+
+// BenchmarkResult holds performance benchmark results.
+type BenchmarkResult struct {
+	TestName       string  `json:"test_name"`
+	Duration       string  `json:"duration"`
+	PromptSpeed    float64 `json:"prompt_speed,omitempty"`
+	GenerateSpeed  float64 `json:"generate_speed,omitempty"`
+	TotalTokens    int     `json:"total_tokens,omitempty"`
+	Throughput     float64 `json:"throughput,omitempty"`
+}
+
+// EnvVariable represents a single .env configuration variable.
+type EnvVariable struct {
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	Default     string `json:"default,omitempty"`
+	Description string `json:"description,omitempty"`
+}
