@@ -419,6 +419,9 @@ OLLAMA_BIND_ADDRESS=127.0.0.1
 OLLAMA_PORT=11434
 OLLAMA_VERSION=latest
 
+# 项目目录 (容器挂载的宿主机项目路径)
+OLLAMA_PROJECT_DIR=/opt/ai/ollama
+
 # 数据目录 (容器外路径)
 OLLAMA_DATA_DIR=/opt/ai/ollama/ollama_data
 
@@ -2419,6 +2422,9 @@ print(bot)
 OLLAMA_BIND_ADDRESS=127.0.0.1
 OLLAMA_PORT=11434
 OLLAMA_VERSION=latest
+
+# 项目目录 (容器挂载的宿主机项目路径)
+OLLAMA_PROJECT_DIR=/opt/ai/ollama
 
 # 数据目录 (容器外路径)
 OLLAMA_DATA_DIR=${DATA_DIR}

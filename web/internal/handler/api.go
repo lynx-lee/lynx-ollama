@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -573,7 +572,8 @@ func (h *APIHandler) StreamPull(w http.ResponseWriter, r *http.Request) {
 
 	reader, err := h.ollama.PullModel(req.Name)
 	if err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"error":"%s"}`, err.Error())))
+		errMsg, _ := json.Marshal(map[string]string{"error": err.Error()})
+		conn.WriteMessage(websocket.TextMessage, errMsg)
 		return
 	}
 	defer reader.Close()
@@ -601,7 +601,8 @@ func (h *APIHandler) StreamPull(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"error":"%s"}`, err.Error())))
+			errMsg, _ := json.Marshal(map[string]string{"error": err.Error()})
+			conn.WriteMessage(websocket.TextMessage, errMsg)
 			break
 		}
 	}

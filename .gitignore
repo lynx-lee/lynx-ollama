@@ -13,9 +13,9 @@
 .codebuddy/
 
 # Project specific
-.env
-docker-compose.yaml
-backups/
-logs/
+/.env
+/docker-compose.yaml
+/backups/
+/logs/
 *.bak
 *.bak.*

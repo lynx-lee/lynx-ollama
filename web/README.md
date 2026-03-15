@@ -52,7 +52,7 @@ Web 界面已集成到 `docker-compose.yaml.template` 中，随 Ollama 一起部
 # 在项目根目录
 ./ollama.sh init
 ./ollama.sh start
-# Web 界面自动启动在 http://<host>:8080
+# Web 界面自动启动在 http://<host>:9981 (端口可通过 .env 的 WEB_PORT 配置)
 ```
 
 ### 方式 2: 独立构建运行
@@ -83,27 +83,32 @@ docker run -d -p 9981:8080 \
 
 ## API 端点
 
-| 方法 | 路径 | 描述 |
-|------|------|------|
-| GET | `/api/status` | 获取综合状态 |
-| POST | `/api/service/start` | 启动服务 |
-| POST | `/api/service/stop` | 停止服务 |
-| POST | `/api/service/restart` | 重启服务 |
-| POST | `/api/service/update` | 更新版本 |
-| GET | `/api/models` | 模型列表 |
-| GET | `/api/models/running` | 运行中模型 |
-| POST | `/api/models/pull` | 拉取模型 |
-| DELETE | `/api/models/{name}` | 删除模型 |
-| GET | `/api/models/{name}/info` | 模型详情 |
-| GET | `/api/health` | 健康检查 |
-| GET | `/api/gpu` | GPU 信息 |
-| GET | `/api/logs` | 获取日志 |
-| GET | `/api/config` | 读取配置 |
-| PUT | `/api/config` | 更新配置 |
-| POST | `/api/optimize` | 自动优化 |
-| POST | `/api/clean` | 清理操作 |
-| WS | `/api/ws/logs` | 实时日志流 |
-| WS | `/api/ws/pull` | 模型拉取进度 |
+所有 `/api/*` 端点（除标注外）需携带 API Key 认证。
+
+| 方法 | 路径 | 描述 | 认证 |
+|------|------|------|------|
+| GET | `/api/health` | 健康检查 | 豁免 |
+| POST | `/api/auth/verify` | 验证 API Key | 豁免 |
+| GET | `/api/version` | 获取版本信息 | ✅ |
+| GET | `/api/status` | 获取综合状态 | ✅ |
+| POST | `/api/service/start` | 启动服务 | ✅ |
+| POST | `/api/service/stop` | 停止服务 | ✅ |
+| POST | `/api/service/restart` | 重启服务 | ✅ |
+| POST | `/api/service/update` | 更新版本 | ✅ |
+| GET | `/api/models` | 模型列表 | ✅ |
+| GET | `/api/models/running` | 运行中模型 | ✅ |
+| POST | `/api/models/pull` | 拉取模型 | ✅ |
+| DELETE | `/api/models/{name}` | 删除模型 | ✅ |
+| GET | `/api/models/{name}/info` | 模型详情 | ✅ |
+| POST | `/api/models/generate` | 生成对话 | ✅ |
+| GET | `/api/gpu` | GPU 信息 | ✅ |
+| GET | `/api/logs` | 获取日志 | ✅ |
+| GET | `/api/config` | 读取配置 | ✅ |
+| PUT | `/api/config` | 更新配置 | ✅ |
+| POST | `/api/optimize` | 自动优化 | ✅ |
+| POST | `/api/clean` | 清理操作 | ✅ |
+| WS | `/api/ws/logs` | 实时日志流 | ✅ |
+| WS | `/api/ws/pull` | 模型拉取进度 | ✅ |
 
 ## 配置
 
@@ -111,7 +116,9 @@ docker run -d -p 9981:8080 \
 
 | 环境变量 | 命令行 | 默认值 | 描述 |
 |----------|--------|--------|------|
-| `WEB_LISTEN_ADDR` | `--listen` | `0.0.0.0:8080` | 监听地址 |
+| `WEB_LISTEN_ADDR` | `--listen` | `0.0.0.0:8080` | 容器内监听地址 |
+| `WEB_API_KEY` | `--api-key` | 自动生成 | API Key（留空则首次启动自动生成） |
+| `WEB_CORS_ORIGIN` | `--cors-origin` | 仅同源 | CORS 允许源（`*`=所有，逗号分隔多个） |
 | `OLLAMA_API_URL` | `--ollama-url` | `http://localhost:11434` | Ollama API 地址 |
 | `OLLAMA_PROJECT_DIR` | `--project-dir` | `/opt/ai/ollama` | 项目目录 |
 | `OLLAMA_SCRIPT_PATH` | `--script` | `<project-dir>/ollama.sh` | 脚本路径 |

@@ -91,9 +91,8 @@ func withCORS(allowedOrigin string, next http.Handler) http.Handler {
 				}
 			}
 		} else if origin != "" {
-			// Default: same-origin only (reflect origin for same-host requests)
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
+			// Default: no CORS header → browser enforces same-origin policy
+			// Only allow same-origin requests (no Access-Control-Allow-Origin header set)
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
