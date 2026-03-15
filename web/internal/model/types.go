@@ -4,9 +4,9 @@ import "time"
 
 // APIResponse is the standard API response wrapper.
 type APIResponse struct {
-	Success bool        `json:"success"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
+	Success bool   `json:"success"`
+	Data    any    `json:"data,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // ServiceStatus represents the overall Ollama service status.

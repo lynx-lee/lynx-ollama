@@ -38,12 +38,17 @@ func (s *DockerService) runCommand(ctx context.Context, name string, args ...str
 	return strings.TrimSpace(string(out)), err
 }
 
-// runShell executes a shell command string.
+// runShell executes a shell command string with the working directory set to ProjectDir.
 func (s *DockerService) runShell(ctx context.Context, command string) (string, error) {
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
 	cmd.Dir = s.cfg.ProjectDir
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// shellQuote quotes a string for safe use in shell commands.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 // GetContainerInfo returns the Ollama container status.
@@ -109,22 +114,26 @@ func (s *DockerService) GetResourceUsage(ctx context.Context) (model.ResourceUsa
 
 // StartService starts the Ollama service.
 func (s *DockerService) StartService(ctx context.Context) (string, error) {
-	return s.runShell(ctx, fmt.Sprintf("cd %s && %s up -d 2>&1", s.cfg.ProjectDir, s.composeCmd))
+	dir := shellQuote(s.cfg.ProjectDir)
+	return s.runShell(ctx, fmt.Sprintf("cd %s && %s up -d 2>&1", dir, s.composeCmd))
 }
 
 // StopService stops the Ollama service.
 func (s *DockerService) StopService(ctx context.Context) (string, error) {
-	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down 2>&1", s.cfg.ProjectDir, s.composeCmd))
+	dir := shellQuote(s.cfg.ProjectDir)
+	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down 2>&1", dir, s.composeCmd))
 }
 
 // RestartService restarts the Ollama service with full recreation.
 func (s *DockerService) RestartService(ctx context.Context) (string, error) {
-	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down && %s up -d 2>&1", s.cfg.ProjectDir, s.composeCmd, s.composeCmd))
+	dir := shellQuote(s.cfg.ProjectDir)
+	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down && %s up -d 2>&1", dir, s.composeCmd, s.composeCmd))
 }
 
 // UpdateService pulls latest image and recreates container.
 func (s *DockerService) UpdateService(ctx context.Context) (string, error) {
-	return s.runShell(ctx, fmt.Sprintf("cd %s && docker pull ollama/ollama:latest && %s up -d --force-recreate 2>&1", s.cfg.ProjectDir, s.composeCmd))
+	dir := shellQuote(s.cfg.ProjectDir)
+	return s.runShell(ctx, fmt.Sprintf("cd %s && docker pull ollama/ollama:latest && %s up -d --force-recreate 2>&1", dir, s.composeCmd))
 }
 
 // GetLogs returns recent container logs.
@@ -132,7 +141,7 @@ func (s *DockerService) GetLogs(ctx context.Context, lines int) (string, error) 
 	if lines <= 0 {
 		lines = 200
 	}
-	return s.runShell(ctx, fmt.Sprintf("%s logs --tail=%d ollama 2>&1", s.composeCmd, lines))
+	return s.runShell(ctx, fmt.Sprintf("cd %s && %s logs --tail=%d ollama 2>&1", shellQuote(s.cfg.ProjectDir), s.composeCmd, lines))
 }
 
 // GetGPUInfo returns GPU information via nvidia-smi.
@@ -183,11 +192,13 @@ func (s *DockerService) GetDiskUsage(ctx context.Context) (model.DiskUsage, erro
 	disk := model.DiskUsage{}
 
 	// Model data size
-	out, _ := s.runShell(ctx, fmt.Sprintf("du -sh %s 2>/dev/null | awk '{print $1}'", s.cfg.ProjectDir+"/ollama_data"))
+	dataDir := shellQuote(s.cfg.ProjectDir + "/ollama_data")
+	out, _ := s.runShell(ctx, fmt.Sprintf("du -sh %s 2>/dev/null | awk '{print $1}'", dataDir))
 	disk.ModelDataSize = out
 
 	// Disk space
-	out, _ = s.runShell(ctx, fmt.Sprintf("df -h %s | tail -1 | awk '{print $2\"|\"$3\"|\"$4\"|\"$5}'", s.cfg.ProjectDir))
+	dir := shellQuote(s.cfg.ProjectDir)
+	out, _ = s.runShell(ctx, fmt.Sprintf("df -h %s | tail -1 | awk '{print $2\"|\"$3\"|\"$4\"|\"$5}'", dir))
 	parts := strings.Split(out, "|")
 	if len(parts) >= 4 {
 		disk.TotalSpace = parts[0]
@@ -201,12 +212,14 @@ func (s *DockerService) GetDiskUsage(ctx context.Context) (model.DiskUsage, erro
 
 // CleanSoft stops containers only.
 func (s *DockerService) CleanSoft(ctx context.Context) (string, error) {
-	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down --remove-orphans 2>&1", s.cfg.ProjectDir, s.composeCmd))
+	dir := shellQuote(s.cfg.ProjectDir)
+	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down --remove-orphans 2>&1", dir, s.composeCmd))
 }
 
 // CleanHard stops containers and removes images.
 func (s *DockerService) CleanHard(ctx context.Context) (string, error) {
-	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down --remove-orphans --rmi all 2>&1 && docker image prune -f 2>&1", s.cfg.ProjectDir, s.composeCmd))
+	dir := shellQuote(s.cfg.ProjectDir)
+	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down --remove-orphans --rmi all 2>&1 && docker image prune -f 2>&1", dir, s.composeCmd))
 }
 
 func formatDuration(d time.Duration) string {

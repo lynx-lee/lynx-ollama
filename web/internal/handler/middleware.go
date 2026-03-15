@@ -57,8 +57,7 @@ func apiKeyAuth(apiKey string, next http.Handler) http.Handler {
 // Supported methods (in priority order):
 //  1. Header: X-API-Key
 //  2. Header: Authorization Bearer <key>
-//  3. Query parameter: key
-//  4. WebSocket: Sec-WebSocket-Protocol (for WS connections that can't set headers)
+//  3. Query parameter: key (used by WebSocket connections that can't set headers)
 func extractAPIKey(r *http.Request) string {
 	// 1. X-API-Key header
 	if key := r.Header.Get("X-API-Key"); key != "" {

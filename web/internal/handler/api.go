@@ -245,8 +245,14 @@ func (h *APIHandler) UpdateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Wait for API ready
+	// Wait for API ready (respect context cancellation)
 	for i := 0; i < 60; i++ {
+		select {
+		case <-ctx.Done():
+			jsonError(w, http.StatusGatewayTimeout, "更新超时或请求已取消")
+			return
+		default:
+		}
 		if h.ollama.IsAPIReady() {
 			break
 		}
@@ -520,7 +526,8 @@ func (h *APIHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Stream logs using docker compose logs -f
-	cmd := createCommand(ctx, "bash", "-c", fmt.Sprintf("cd %s && docker compose logs -f --tail=100 2>&1 || docker-compose logs -f --tail=100 2>&1", h.cfg.ProjectDir))
+	dir := "'" + strings.ReplaceAll(h.cfg.ProjectDir, "'", "'\"'\"'") + "'"
+	cmd := createCommand(ctx, "bash", "-c", fmt.Sprintf("cd %s && docker compose logs -f --tail=100 2>&1 || docker-compose logs -f --tail=100 2>&1", dir))
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

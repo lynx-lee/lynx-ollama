@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -141,6 +140,7 @@ func (s *OllamaService) ListRunningModels() ([]model.RunningModel, error) {
 }
 
 // PullModel sends a pull request and returns a reader for streaming progress.
+// Uses a separate client without timeout since model downloads can take minutes/hours.
 func (s *OllamaService) PullModel(name string) (io.ReadCloser, error) {
 	payload, err := json.Marshal(map[string]interface{}{
 		"name":   name,
@@ -149,7 +149,9 @@ func (s *OllamaService) PullModel(name string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal pull request: %w", err)
 	}
-	resp, err := s.client.Post(
+	// No timeout for streaming downloads — models can be tens of GB.
+	pullClient := &http.Client{}
+	resp, err := pullClient.Post(
 		s.cfg.OllamaAPIURL+"/api/pull",
 		"application/json",
 		strings.NewReader(string(payload)),
@@ -256,9 +258,4 @@ func formatBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
-}
-
-func init() {
-	// Suppress unused import warning
-	_ = slog.Default
 }

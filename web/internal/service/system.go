@@ -107,6 +107,10 @@ func (s *SystemService) UpdateEnvConfig(key, value string) error {
 		return fmt.Errorf("invalid key format: %s", key)
 	}
 
+	// Sanitize value: strip newlines and carriage returns to prevent injection
+	value = strings.ReplaceAll(value, "\n", "")
+	value = strings.ReplaceAll(value, "\r", "")
+
 	data, err := os.ReadFile(envPath)
 	if err != nil {
 		return fmt.Errorf("failed to read .env: %w", err)
@@ -130,7 +134,16 @@ func (s *SystemService) UpdateEnvConfig(key, value string) error {
 		lines = append(lines, key+"="+value)
 	}
 
-	return os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644)
+	// Atomic write: write to temp file first, then rename
+	tmpPath := envPath + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+		return fmt.Errorf("failed to write temp .env: %w", err)
+	}
+	if err := os.Rename(tmpPath, envPath); err != nil {
+		os.Remove(tmpPath) // cleanup on failure
+		return fmt.Errorf("failed to rename .env: %w", err)
+	}
+	return nil
 }
 
 // RunHealthCheck performs comprehensive health checks.
