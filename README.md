@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.5.1-blue)
+![Version](https://img.shields.io/badge/version-v1.6.1-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -320,6 +320,8 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.6.1 | 2026-03-15 | **新增全局顶部导航栏（Topbar）**，参考 OpenClaw Client 设计语言。Topbar 包含：左侧 Ollama logo + 项目名称 + "管理面板"副标题；右侧 WebSocket 实时连接状态指示灯（🟢 已连接 / 🟡 连接中 / 🔴 未连接）、主题快速切换按钮组（☀️/🌙/🖥，支持浅色/深色/跟随系统）、项目版本号徽章 + Ollama 引擎版本号、退出登录按钮。原侧边栏精简为纯导航菜单 + 底部 API 状态指示灯，移除了 sidebar-header/sidebar-meta/版本号/退出按钮等冗余元素。整体布局从 `flex(horizontal)` 调整为 `flex(vertical: topbar + flex(horizontal: sidebar + content))`。小屏幕适配：768px 以下隐藏副标题、WebSocket 状态文字和版本号 |
+| v1.6.0 | 2026-03-15 | **前端通信架构升级：HTTP 轮询 → WebSocket 实时推送**。新增 `GET /api/ws/status` WebSocket 端点，后端通过 StatusHub（单一数据采集 goroutine + 多客户端广播模式）每 5 秒主动推送状态数据，替代前端 `setInterval` 10/30 秒周期性 HTTP 轮询；客户端支持发送 `subscribe`（切换 full/lite 模式）、`pause`/`resume`（Tab 隐藏时暂停推送）控制命令；WebSocket 断连时自动指数退避重连（1s→30s）；首次连接立即推送一次快照避免 5 秒等待；**显著降低前端内存缓存负载**——消除了 `setInterval` 定时器和冗余 HTTP 请求/响应对象堆积；后端共享数据采集避免每个客户端独立查询 Docker/Ollama。修复 `project_version` 显示为 `dev` 的问题：`build.sh` 和 `Dockerfile` 不再硬编码 `VERSION=dev` 默认值，改为自动从 `main.go` 源码中提取版本号（`grep var Version`），确保无论通过 `docker compose build`、`./build.sh` 还是 `docker build` 构建，版本号都与源码一致 |
 | v1.5.2 | 2026-03-15 | 新增**系统设置页面**及**外观切换**功能：支持浅色模式、深色模式和跟随系统三种外观主题；浅色模式下 Ollama 图标自动显示为黑色，深色模式下显示为白色（通过 CSS 变量 `--logo-invert` 控制 `filter: invert()`）；主题偏好保存在 `localStorage`，刷新页面后自动恢复；监听 `prefers-color-scheme` 媒体查询实时响应操作系统外观变化；浅色主题定义完整的 CSS 变量覆盖（背景、文字、边框、强调色、阴影等）；侧边栏新增 🎨 系统设置导航项 |
 | v1.5.1 | 2026-03-15 | 模型翻译效率大幅提升：**批量 JSON 翻译**——将所有模型描述打包为 JSON 对象通过一次 LLM 调用完成翻译（之前 N 条描述 = N 次串行调用），前端也从分批 5 条改为一次性发送全部；**翻译缓存机制**——新增 `sync.Map` 内存缓存（英文描述→中文翻译），首次翻译后缓存结果，刷新模型市场或重新搜索时直接读取缓存、不再调用大模型；**优雅降级**——批量 JSON 解析失败时自动回退为逐条翻译（`fallbackIndividualTranslate`），确保翻译可用性；翻译 prompt 重新设计为 JSON-in/JSON-out 格式，新增 `think:false` 禁用思维链、`stripMarkdownCodeBlock` 清理大模型返回的 markdown 代码块包裹；API Handler 批量上限从 10 条放宽至 100 条 |
 | v1.5.0 | 2026-03-15 | 容器健康检查全链路优化：`GetContainerInfo()` 从 6 次 `docker inspect` 子进程合并为**单次调用**（Go template 一次性提取所有字段），新增 5 秒短期缓存避免同一轮询周期内重复 fork；`IsAPIReady()` 增加结果缓存（5 秒 TTL）+ 复用 HTTP Client，消除 GetStatus 中的重复调用（从 2 次降为 1 次）；新增 `correctHealthStatus()` 统一健康状态修正逻辑——不仅修正 `starting→healthy`，还处理 `unhealthy` + API 可达→`healthy`、空健康值 + 容器运行中→`healthy` 等边界情况；`docker inspect` 返回值统一清洗（处理 `<no value>`/`<nil>` 等 Docker 边界输出）；Docker healthcheck `interval` 从 30s 缩短至 15s、Ollama `start_period` 默认值从 120s 降至 30s；容器操作（start/stop/restart/update/clean）后自动清除缓存确保即时刷新；前端 statusMap 扩展覆盖所有 Docker 容器状态（`created`/`paused`/`restarting`/`removing`/`dead`/`unknown` 等） |

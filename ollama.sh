@@ -4,7 +4,7 @@
 # Ollama AI 服务部署脚本 (适配 NVIDIA DGX Spark / GB10)
 #
 # 作者: lynxlee
-# 版本: v1.5.2
+# 版本: v1.6.1
 #
 # 用法:
 #   ./ollama.sh [命令] [选项]
@@ -49,7 +49,7 @@ DIM='\033[2m'
 NC='\033[0m' # No Color
 
 # 项目版本
-VERSION="v1.5.2"
+VERSION="v1.6.0"
 
 # 项目配置
 PROJECT_NAME="ollama"

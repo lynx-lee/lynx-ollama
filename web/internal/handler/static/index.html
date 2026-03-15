@@ -24,17 +24,37 @@
     </div>
 
     <div id="app" style="display:none">
+        <!-- Top Bar -->
+        <header id="topbar">
+            <div class="topbar-left">
+                <span class="topbar-logo"><img src="/ollama.png" alt="Ollama" class="topbar-logo-img"></span>
+                <span class="topbar-title">Ollama</span>
+                <span class="topbar-subtitle">管理面板</span>
+            </div>
+            <div class="topbar-right">
+                <div class="topbar-ws-status" id="topbarWsStatus" title="WebSocket 连接状态">
+                    <span class="topbar-ws-dot"></span>
+                    <span class="topbar-ws-text">连接中...</span>
+                </div>
+                <div class="topbar-divider"></div>
+                <div class="topbar-theme-btns" id="topbarThemeBtns">
+                    <button class="topbar-theme-btn" data-theme-value="light" onclick="setTheme('light')" title="浅色模式">☀️</button>
+                    <button class="topbar-theme-btn" data-theme-value="dark" onclick="setTheme('dark')" title="深色模式">🌙</button>
+                    <button class="topbar-theme-btn" data-theme-value="system" onclick="setTheme('system')" title="跟随系统">🖥</button>
+                </div>
+                <div class="topbar-divider"></div>
+                <div class="topbar-versions">
+                    <span class="topbar-version-badge" id="topbarProjectVersion" title="项目版本">--</span>
+                    <span class="topbar-version-engine" id="topbarOllamaVersion" title="Ollama 引擎版本">--</span>
+                </div>
+                <div class="topbar-divider"></div>
+                <button class="topbar-btn topbar-logout" onclick="logout()" title="退出登录">🔒</button>
+            </div>
+        </header>
+
+        <div id="appBody">
         <!-- Sidebar -->
         <nav id="sidebar">
-            <div class="sidebar-header">
-                <span class="logo"><img src="/ollama.png" alt="Ollama" class="sidebar-logo-img"></span>
-                <h1>Ollama</h1>
-                <span class="version-badge" id="projectVersion">--</span>
-            </div>
-            <div class="sidebar-meta">
-                <span class="meta-label">Ollama</span>
-                <span class="meta-value" id="ollamaVersion">--</span>
-            </div>
             <ul class="nav-menu">
                 <li class="nav-item active" data-page="dashboard">
                     <span class="nav-icon">📊</span>
@@ -70,7 +90,6 @@
                     <span class="dot"></span>
                     <span>API 状态检测中...</span>
                 </div>
-                <button class="btn btn-sm sidebar-logout" onclick="logout()" title="退出登录">🔒 退出</button>
             </div>
         </nav>
 
@@ -328,6 +347,7 @@
                 </div>
             </div>
         </main>
+        </div><!-- /appBody -->
     </div>
 
     <!-- Pull Model Dialog -->

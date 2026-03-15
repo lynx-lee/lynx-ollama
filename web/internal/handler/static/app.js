@@ -57,7 +57,7 @@ function showApp() {
 function logout() {
     clearApiKey();
     stopLogStream();
-    if (statusInterval) clearInterval(statusInterval);
+    disconnectStatusWs();
     document.getElementById('app').style.display = 'none';
     document.getElementById('authScreen').classList.remove('hidden');
     document.getElementById('authKeyInput').value = '';
@@ -89,7 +89,7 @@ function resolveTheme(pref) {
     return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
-// applyTheme sets the data-theme attribute on <html> and updates the settings UI.
+// applyTheme sets the data-theme attribute on <html> and updates all theme UIs.
 function applyTheme(pref) {
     const actual = resolveTheme(pref);
     document.documentElement.setAttribute('data-theme', actual);
@@ -97,6 +97,11 @@ function applyTheme(pref) {
     // Update settings panel active state (if rendered)
     document.querySelectorAll('#themeOptions .theme-option').forEach(opt => {
         opt.classList.toggle('active', opt.dataset.themeValue === pref);
+    });
+
+    // Update topbar theme buttons active state
+    document.querySelectorAll('#topbarThemeBtns .topbar-theme-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.themeValue === pref);
     });
 }
 
@@ -119,10 +124,12 @@ applyTheme(getThemePreference());
 // ── State ────────────────────────────────────────────────────────
 let logWs = null;
 let logStreaming = false;
-let statusInterval = null;
+let statusWs = null;                   // WebSocket for status streaming
+let statusWsReconnectTimer = null;     // reconnect timer
+let statusWsReconnectDelay = 1000;     // initial reconnect delay (ms)
 let currentStatus = null;
-let currentPage = 'dashboard';     // track which page is active
-let pageVisible = true;            // track browser tab visibility
+let currentPage = 'dashboard';         // track which page is active
+let pageVisible = true;                // track browser tab visibility
 
 // ── Navigation ──────────────────────────────────────────────────
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -140,8 +147,11 @@ function switchPage(page) {
 
     currentPage = page;
 
-    // Restart polling with interval suited to the new page
-    restartPolling();
+    // Notify WebSocket to switch between full/lite mode
+    sendStatusWsCommand({
+        type: 'subscribe',
+        mode: page === 'dashboard' ? 'full' : 'lite',
+    });
 
     // Load data for the page
     switch (page) {
@@ -159,14 +169,16 @@ function switchPage(page) {
 document.addEventListener('visibilitychange', () => {
     pageVisible = !document.hidden;
     if (pageVisible) {
-        // Tab became visible — resume polling immediately
-        restartPolling();
+        // Tab became visible — resume WebSocket data stream
+        sendStatusWsCommand({ type: 'resume' });
+        // Also request a fresh snapshot in correct mode
+        sendStatusWsCommand({
+            type: 'subscribe',
+            mode: currentPage === 'dashboard' ? 'full' : 'lite',
+        });
     } else {
-        // Tab hidden — pause polling to save resources
-        if (statusInterval) {
-            clearInterval(statusInterval);
-            statusInterval = null;
-        }
+        // Tab hidden — pause WebSocket data stream to save resources
+        sendStatusWsCommand({ type: 'pause' });
     }
 });
 
@@ -204,18 +216,16 @@ function showToast(message, type = 'info') {
 
 // ── Dashboard ───────────────────────────────────────────────────
 
-// refreshStatus: when on Dashboard, fetch full status; otherwise fetch lite.
+// refreshStatus: HTTP fallback — used for initial load or when WebSocket is not available.
+// In normal operation, status updates arrive via WebSocket push.
 async function refreshStatus() {
     try {
         if (currentPage === 'dashboard') {
-            // Full status — 7 parallel queries on backend
             const status = await api('/api/status');
             currentStatus = status;
             updateDashboard(status);
         } else {
-            // Lite status — only container + running models + version (3 queries)
             const lite = await api('/api/status/lite');
-            // Merge lite into currentStatus so sidebar badges stay updated
             if (currentStatus) {
                 currentStatus.container = lite.container;
                 currentStatus.running_models = lite.running_models;
@@ -225,32 +235,57 @@ async function refreshStatus() {
             } else {
                 currentStatus = lite;
             }
-            // Update only the sidebar version badges (lightweight)
-            updateSidebarBadges(currentStatus);
+            updateTopbarBadges(currentStatus);
         }
     } catch (err) {
-        // Only show toast on Dashboard to avoid noise on other pages
         if (currentPage === 'dashboard') {
             showToast('无法获取服务状态: ' + err.message, 'error');
         }
     }
 }
 
-// updateSidebarBadges updates just the version info in the sidebar (used by lite polling).
-function updateSidebarBadges(s) {
+// handleStatusWSMessage processes a status message from the WebSocket.
+function handleStatusWSMessage(msg) {
+    const status = msg.data;
+    if (!status) return;
+
+    if (msg.mode === 'full') {
+        currentStatus = status;
+        if (currentPage === 'dashboard') {
+            updateDashboard(status);
+        } else {
+            updateTopbarBadges(status);
+        }
+    } else {
+        // lite mode — merge into currentStatus
+        if (currentStatus) {
+            currentStatus.container = status.container;
+            currentStatus.running_models = status.running_models;
+            currentStatus.ollama_version = status.ollama_version;
+            currentStatus.api_reachable = status.api_reachable;
+            currentStatus.project_version = status.project_version;
+        } else {
+            currentStatus = status;
+        }
+        updateTopbarBadges(currentStatus);
+    }
+}
+
+// updateTopbarBadges updates the version info in the topbar (used by lite polling and WS).
+function updateTopbarBadges(s) {
     if (s.project_version) {
-        document.getElementById('projectVersion').textContent = s.project_version;
+        document.getElementById('topbarProjectVersion').textContent = s.project_version;
     }
     if (s.ollama_version) {
-        document.getElementById('ollamaVersion').textContent = s.ollama_version;
+        document.getElementById('topbarOllamaVersion').textContent = s.ollama_version;
     }
 }
 
 function updateDashboard(s) {
-    // Project version (sidebar badge)
-    document.getElementById('projectVersion').textContent = s.project_version || '--';
-    // Ollama engine version (sidebar meta)
-    document.getElementById('ollamaVersion').textContent = s.ollama_version || '--';
+    // Project version (topbar badge)
+    document.getElementById('topbarProjectVersion').textContent = s.project_version || '--';
+    // Ollama engine version (topbar)
+    document.getElementById('topbarOllamaVersion').textContent = s.ollama_version || '--';
 
     // API Status
     const apiStatus = document.getElementById('apiStatus');
@@ -1006,28 +1041,115 @@ function formatTime(isoStr) {
     }
 }
 
-// ── Auto-refresh (smart polling) ────────────────────────────────
-// Dashboard visible:  full /api/status every 10s
-// Other pages:        lite /api/status/lite every 30s
-// Tab hidden:         polling paused entirely
+// ── Status WebSocket (replaces polling) ─────────────────────────
+// A single WebSocket connection replaces all setInterval-based HTTP polling.
+// The server pushes status data every 5s; the client controls full/lite mode.
 
-const POLL_INTERVAL_DASHBOARD = 10000;  // 10s — full status on dashboard
-const POLL_INTERVAL_BACKGROUND = 30000; // 30s — lite status when off-dashboard
+const STATUS_WS_RECONNECT_MIN = 1000;   // 1s  initial delay
+const STATUS_WS_RECONNECT_MAX = 30000;  // 30s max delay
 
-function startAutoRefresh() {
-    refreshStatus();                      // immediate first fetch
-    restartPolling();
+// updateWsStatusIndicator updates the topbar WebSocket connection status.
+function updateWsStatusIndicator(state) {
+    const el = document.getElementById('topbarWsStatus');
+    if (!el) return;
+    const textEl = el.querySelector('.topbar-ws-text');
+    el.className = 'topbar-ws-status ' + state;
+    switch (state) {
+        case 'connected':
+            textEl.textContent = '已连接';
+            break;
+        case 'disconnected':
+            textEl.textContent = '未连接';
+            break;
+        case 'connecting':
+            textEl.textContent = '连接中...';
+            break;
+    }
 }
 
-function restartPolling() {
-    if (statusInterval) {
-        clearInterval(statusInterval);
-        statusInterval = null;
+function connectStatusWs() {
+    if (statusWs && (statusWs.readyState === WebSocket.OPEN || statusWs.readyState === WebSocket.CONNECTING)) {
+        return; // already connected or connecting
     }
-    if (!pageVisible) return;             // don't start if tab is hidden
 
-    const interval = (currentPage === 'dashboard') ? POLL_INTERVAL_DASHBOARD : POLL_INTERVAL_BACKGROUND;
-    statusInterval = setInterval(refreshStatus, interval);
+    updateWsStatusIndicator('connecting');
+
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${wsProtocol}//${location.host}/api/ws/status?key=${encodeURIComponent(getApiKey())}`;
+
+    statusWs = new WebSocket(url);
+
+    statusWs.onopen = () => {
+        statusWsReconnectDelay = STATUS_WS_RECONNECT_MIN; // reset backoff
+        updateWsStatusIndicator('connected');
+        // Tell server which mode we need
+        sendStatusWsCommand({
+            type: 'subscribe',
+            mode: currentPage === 'dashboard' ? 'full' : 'lite',
+        });
+        // If tab is hidden, immediately pause
+        if (!pageVisible) {
+            sendStatusWsCommand({ type: 'pause' });
+        }
+    };
+
+    statusWs.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'status') {
+                handleStatusWSMessage(msg);
+            }
+        } catch (e) {
+            console.warn('Status WS parse error:', e);
+        }
+    };
+
+    statusWs.onclose = () => {
+        statusWs = null;
+        updateWsStatusIndicator('disconnected');
+        scheduleStatusWsReconnect();
+    };
+
+    statusWs.onerror = () => {
+        // onclose will fire after onerror; reconnect is handled there.
+    };
+}
+
+function disconnectStatusWs() {
+    if (statusWsReconnectTimer) {
+        clearTimeout(statusWsReconnectTimer);
+        statusWsReconnectTimer = null;
+    }
+    if (statusWs) {
+        statusWs.close();
+        statusWs = null;
+    }
+    updateWsStatusIndicator('disconnected');
+}
+
+function scheduleStatusWsReconnect() {
+    if (statusWsReconnectTimer) return;
+    statusWsReconnectTimer = setTimeout(() => {
+        statusWsReconnectTimer = null;
+        // Only reconnect if user is still logged in (api key exists)
+        if (getApiKey()) {
+            connectStatusWs();
+        }
+    }, statusWsReconnectDelay);
+    // Exponential backoff
+    statusWsReconnectDelay = Math.min(statusWsReconnectDelay * 2, STATUS_WS_RECONNECT_MAX);
+}
+
+// sendStatusWsCommand sends a JSON command to the status WebSocket.
+function sendStatusWsCommand(cmd) {
+    if (statusWs && statusWs.readyState === WebSocket.OPEN) {
+        statusWs.send(JSON.stringify(cmd));
+    }
+}
+
+function startAutoRefresh() {
+    refreshStatus();         // immediate HTTP fetch for first paint
+    connectStatusWs();       // then switch to WebSocket for subsequent updates
 }
 
 // ── Init ────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -26,16 +27,20 @@ var upgrader = websocket.Upgrader{
 
 // APIHandler holds all API endpoint handlers.
 type APIHandler struct {
-	ollama  *service.OllamaService
-	docker  *service.DockerService
-	system  *service.SystemService
-	cfg     *config.Config
-	version string
+	ollama    *service.OllamaService
+	docker    *service.DockerService
+	system    *service.SystemService
+	cfg       *config.Config
+	version   string
+	statusHub *StatusHub
 }
 
 // NewAPIHandler creates a new APIHandler.
 func NewAPIHandler(ollama *service.OllamaService, docker *service.DockerService, system *service.SystemService, cfg *config.Config, version string) *APIHandler {
-	return &APIHandler{ollama: ollama, docker: docker, system: system, cfg: cfg, version: version}
+	h := &APIHandler{ollama: ollama, docker: docker, system: system, cfg: cfg, version: version}
+	h.statusHub = NewStatusHub(h)
+	h.statusHub.Start()
+	return h
 }
 
 func jsonResponse(w http.ResponseWriter, data interface{}) {
@@ -735,5 +740,369 @@ func (h *APIHandler) StreamPull(w http.ResponseWriter, r *http.Request) {
 			conn.WriteMessage(websocket.TextMessage, errMsg)
 			break
 		}
+	}
+}
+
+// ── Status WebSocket Hub ────────────────────────────────────────
+// StatusHub manages multiple WebSocket connections for status streaming.
+// A single data-collection goroutine serves all connected clients, avoiding
+// redundant Docker/Ollama queries per client.
+
+// statusClient represents a single WebSocket client connected to the status hub.
+type statusClient struct {
+	conn   *websocket.Conn
+	mode   string // "full" or "lite"
+	paused bool
+	mu     sync.Mutex
+}
+
+// StatusHub manages all status WebSocket clients and a shared ticker.
+type StatusHub struct {
+	handler *APIHandler
+	clients map[*statusClient]struct{}
+	mu      sync.RWMutex
+	done    chan struct{}
+	once    sync.Once
+}
+
+// NewStatusHub creates a new StatusHub.
+func NewStatusHub(h *APIHandler) *StatusHub {
+	return &StatusHub{
+		handler: h,
+		clients: make(map[*statusClient]struct{}),
+		done:    make(chan struct{}),
+	}
+}
+
+// Start begins the shared data-collection ticker. Called once.
+func (hub *StatusHub) Start() {
+	hub.once.Do(func() {
+		go hub.run()
+	})
+}
+
+// run is the main loop that collects data and pushes to all clients.
+func (hub *StatusHub) run() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-hub.done:
+			return
+		case <-ticker.C:
+			hub.broadcast()
+		}
+	}
+}
+
+// broadcast collects status and sends to each connected client.
+func (hub *StatusHub) broadcast() {
+	hub.mu.RLock()
+	if len(hub.clients) == 0 {
+		hub.mu.RUnlock()
+		return
+	}
+
+	// Determine if any client needs full status
+	needsFull := false
+	needsLite := false
+	for c := range hub.clients {
+		c.mu.Lock()
+		if c.paused {
+			c.mu.Unlock()
+			continue
+		}
+		if c.mode == "full" {
+			needsFull = true
+		} else {
+			needsLite = true
+		}
+		c.mu.Unlock()
+	}
+	hub.mu.RUnlock()
+
+	if !needsFull && !needsLite {
+		return
+	}
+
+	// Collect data once
+	var fullData []byte
+	var liteData []byte
+
+	if needsFull {
+		status := hub.collectFullStatus()
+		msg := statusWSMessage{Type: "status", Mode: "full", Data: status}
+		fullData, _ = json.Marshal(msg)
+	}
+
+	if needsLite && !needsFull {
+		status := hub.collectLiteStatus()
+		msg := statusWSMessage{Type: "status", Mode: "lite", Data: status}
+		liteData, _ = json.Marshal(msg)
+	} else if needsLite && needsFull {
+		// If we already collected full status, also prepare lite for lite clients
+		status := hub.collectLiteStatus()
+		msg := statusWSMessage{Type: "status", Mode: "lite", Data: status}
+		liteData, _ = json.Marshal(msg)
+	}
+
+	// Send to each client
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	for c := range hub.clients {
+		c.mu.Lock()
+		if c.paused {
+			c.mu.Unlock()
+			continue
+		}
+		mode := c.mode
+		c.mu.Unlock()
+
+		var payload []byte
+		if mode == "full" {
+			payload = fullData
+		} else {
+			payload = liteData
+		}
+		if payload == nil {
+			continue
+		}
+
+		if err := c.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+			slog.Debug("status ws write error, removing client", "error", err)
+			go hub.remove(c)
+		}
+	}
+}
+
+// collectFullStatus collects the full status (same as GetStatus handler).
+func (hub *StatusHub) collectFullStatus() model.ServiceStatus {
+	h := hub.handler
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	status := model.ServiceStatus{}
+
+	ch := make(chan collectResult, 7)
+	go func() {
+		info, err := h.docker.GetContainerInfo(ctx)
+		ch <- collectResult{"container", info, err}
+	}()
+	go func() {
+		usage, err := h.docker.GetResourceUsage(ctx)
+		ch <- collectResult{"resources", usage, err}
+	}()
+	go func() {
+		models, err := h.ollama.ListModels()
+		ch <- collectResult{"models", models, err}
+	}()
+	go func() {
+		running, err := h.ollama.ListRunningModels()
+		ch <- collectResult{"running", running, err}
+	}()
+	go func() {
+		gpus, err := h.docker.GetGPUInfo(ctx)
+		ch <- collectResult{"gpu", gpus, err}
+	}()
+	go func() {
+		disk, err := h.docker.GetDiskUsage(ctx)
+		ch <- collectResult{"disk", disk, err}
+	}()
+	go func() {
+		version, err := h.ollama.GetVersion()
+		ch <- collectResult{"version", version, err}
+	}()
+
+	for i := 0; i < 7; i++ {
+		r := <-ch
+		switch r.key {
+		case "container":
+			status.Container = r.val.(model.ContainerInfo)
+		case "resources":
+			status.Resources = r.val.(model.ResourceUsage)
+		case "models":
+			if r.val != nil {
+				status.Models = r.val.([]model.ModelInfo)
+			}
+		case "running":
+			if r.val != nil {
+				status.RunningModels = r.val.([]model.RunningModel)
+			}
+		case "gpu":
+			if r.val != nil {
+				status.GPU = r.val.([]model.GPUInfo)
+			}
+		case "disk":
+			status.Disk = r.val.(model.DiskUsage)
+		case "version":
+			if r.val != nil {
+				status.OllamaVersion = r.val.(string)
+			}
+		}
+	}
+
+	apiReady := h.ollama.IsAPIReady()
+	status.APIReachable = apiReady
+	h.correctHealthStatus(&status.Container, apiReady)
+	status.ProjectVersion = h.version
+
+	if vars, err := h.system.ReadEnvConfig(); err == nil {
+		cfgMap := make(map[string]string)
+		for _, v := range vars {
+			cfgMap[v.Key] = v.Value
+		}
+		status.Config = model.ServiceConfig{
+			BindAddress:     cfgMap["OLLAMA_BIND_ADDRESS"],
+			Port:            cfgMap["OLLAMA_PORT"],
+			Version:         cfgMap["OLLAMA_VERSION"],
+			DataDir:         cfgMap["OLLAMA_DATA_DIR"],
+			NumParallel:     cfgMap["OLLAMA_NUM_PARALLEL"],
+			MaxQueue:        cfgMap["OLLAMA_MAX_QUEUE"],
+			MaxLoadedModels: cfgMap["OLLAMA_MAX_LOADED_MODELS"],
+			KeepAlive:       cfgMap["OLLAMA_KEEP_ALIVE"],
+			ContextLength:   cfgMap["OLLAMA_CONTEXT_LENGTH"],
+			KVCacheType:     cfgMap["OLLAMA_KV_CACHE_TYPE"],
+			FlashAttention:  cfgMap["OLLAMA_FLASH_ATTENTION"],
+			Debug:           cfgMap["OLLAMA_DEBUG"],
+			CPUReservation:  cfgMap["OLLAMA_CPU_RESERVATION"],
+			CPULimit:        cfgMap["OLLAMA_CPU_LIMIT"],
+			MemReservation:  cfgMap["OLLAMA_MEM_RESERVATION"],
+			MemLimit:        cfgMap["OLLAMA_MEM_LIMIT"],
+			Timezone:        cfgMap["OLLAMA_TZ"],
+		}
+	}
+
+	return status
+}
+
+// collectLiteStatus collects lightweight status (same as GetStatusLite handler).
+func (hub *StatusHub) collectLiteStatus() model.ServiceStatus {
+	h := hub.handler
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	status := model.ServiceStatus{}
+
+	ch := make(chan collectResult, 3)
+	go func() {
+		info, err := h.docker.GetContainerInfo(ctx)
+		ch <- collectResult{"container", info, err}
+	}()
+	go func() {
+		running, err := h.ollama.ListRunningModels()
+		ch <- collectResult{"running", running, err}
+	}()
+	go func() {
+		version, err := h.ollama.GetVersion()
+		ch <- collectResult{"version", version, err}
+	}()
+
+	for i := 0; i < 3; i++ {
+		r := <-ch
+		switch r.key {
+		case "container":
+			status.Container = r.val.(model.ContainerInfo)
+		case "running":
+			if r.val != nil {
+				status.RunningModels = r.val.([]model.RunningModel)
+			}
+		case "version":
+			if r.val != nil {
+				status.OllamaVersion = r.val.(string)
+			}
+		}
+	}
+
+	apiReady := h.ollama.IsAPIReady()
+	status.APIReachable = apiReady
+	h.correctHealthStatus(&status.Container, apiReady)
+	status.ProjectVersion = h.version
+
+	return status
+}
+
+func (hub *StatusHub) add(c *statusClient) {
+	hub.mu.Lock()
+	hub.clients[c] = struct{}{}
+	hub.mu.Unlock()
+}
+
+func (hub *StatusHub) remove(c *statusClient) {
+	hub.mu.Lock()
+	delete(hub.clients, c)
+	hub.mu.Unlock()
+	c.conn.Close()
+}
+
+// statusWSMessage is the envelope for status WebSocket messages.
+type statusWSMessage struct {
+	Type string      `json:"type"` // "status"
+	Mode string      `json:"mode"` // "full" or "lite"
+	Data interface{} `json:"data"`
+}
+
+// statusWSCommand is a client→server control message.
+type statusWSCommand struct {
+	Type string `json:"type"` // "subscribe", "pause", "resume"
+	Mode string `json:"mode"` // "full" or "lite" (for subscribe)
+}
+
+// StreamStatus handles WebSocket connections for real-time status streaming.
+// Protocol:
+//   - Client connects, default mode = "lite", not paused
+//   - Client sends: {"type":"subscribe","mode":"full"} to switch to full status
+//   - Client sends: {"type":"pause"} to pause receiving data
+//   - Client sends: {"type":"resume"} to resume
+//   - Server pushes: {"type":"status","mode":"full|lite","data":{...}} every 5s
+func (h *APIHandler) StreamStatus(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Error("status websocket upgrade failed", "error", err)
+		return
+	}
+
+	client := &statusClient{
+		conn: conn,
+		mode: "lite",
+	}
+
+	h.statusHub.add(client)
+	defer h.statusHub.remove(client)
+
+	// Send an immediate status snapshot so client doesn't wait 5s
+	go func() {
+		liteStatus := h.statusHub.collectLiteStatus()
+		msg := statusWSMessage{Type: "status", Mode: "lite", Data: liteStatus}
+		data, _ := json.Marshal(msg)
+		client.mu.Lock()
+		client.conn.WriteMessage(websocket.TextMessage, data)
+		client.mu.Unlock()
+	}()
+
+	// Read client commands until disconnect
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			return // Client disconnected
+		}
+
+		var cmd statusWSCommand
+		if err := json.Unmarshal(msg, &cmd); err != nil {
+			continue
+		}
+
+		client.mu.Lock()
+		switch cmd.Type {
+		case "subscribe":
+			if cmd.Mode == "full" || cmd.Mode == "lite" {
+				client.mode = cmd.Mode
+			}
+		case "pause":
+			client.paused = true
+		case "resume":
+			client.paused = false
+		}
+		client.mu.Unlock()
 	}
 }

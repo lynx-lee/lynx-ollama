@@ -1,7 +1,5 @@
 FROM golang:1.23-alpine AS builder
 
-ARG VERSION=dev
-
 WORKDIR /build
 
 # Install dependencies
@@ -14,8 +12,12 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build binary with version info
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.Version=${VERSION}" -o ollama-web ./cmd/server/
+# Extract version from main.go as fallback; allow override via build arg
+ARG VERSION=""
+RUN if [ -z "$VERSION" ]; then \
+      VERSION=$(grep -m1 'var Version' cmd/server/main.go | sed 's/.*"\(.*\)".*/\1/'); \
+    fi && \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.Version=${VERSION}" -o ollama-web ./cmd/server/
 
 # ── Runtime ──────────────────────────────────────────────────────
 FROM alpine:3.20

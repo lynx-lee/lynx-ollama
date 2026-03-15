@@ -8,7 +8,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="${1:-dev}"
+# Extract default version from main.go (e.g. var Version = "v1.5.2")
+DEFAULT_VERSION=$(grep -m1 'var Version' cmd/server/main.go 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' || echo "dev")
+VERSION="${1:-${DEFAULT_VERSION}}"
 BINARY_NAME="ollama-web"
 LDFLAGS="-s -w -X main.Version=${VERSION}"
 
