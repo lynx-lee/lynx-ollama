@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.4.9-blue)
+![Version](https://img.shields.io/badge/version-v1.5.0-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -320,6 +320,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.5.0 | 2026-03-15 | 容器健康检查全链路优化：`GetContainerInfo()` 从 6 次 `docker inspect` 子进程合并为**单次调用**（Go template 一次性提取所有字段），新增 5 秒短期缓存避免同一轮询周期内重复 fork；`IsAPIReady()` 增加结果缓存（5 秒 TTL）+ 复用 HTTP Client，消除 GetStatus 中的重复调用（从 2 次降为 1 次）；新增 `correctHealthStatus()` 统一健康状态修正逻辑——不仅修正 `starting→healthy`，还处理 `unhealthy` + API 可达→`healthy`、空健康值 + 容器运行中→`healthy` 等边界情况；`docker inspect` 返回值统一清洗（处理 `<no value>`/`<nil>` 等 Docker 边界输出）；Docker healthcheck `interval` 从 30s 缩短至 15s、Ollama `start_period` 默认值从 120s 降至 30s；容器操作（start/stop/restart/update/clean）后自动清除缓存确保即时刷新；前端 statusMap 扩展覆盖所有 Docker 容器状态（`created`/`paused`/`restarting`/`removing`/`dead`/`unknown` 等） |
 | v1.4.9 | 2026-03-15 | 翻译智能选模优化：`findTranslationModel` 重构为三级优先级选模策略——**优先使用当前运行中的模型**（已加载到 VRAM 中，响应最快），其次从已下载模型中选取适合翻译的模型（qwen/deepseek/llama 等），最后回退到任意可用模型；新增 `isTranslationCapableModel()` 和 `isPreferredTranslationModel()` 辅助函数判断模型翻译能力；翻译超时从 30s 提升到 120s（兼容冷启动加载模型场景）；后端翻译容错——连续 3 次翻译失败后自动停止（避免无谓等待），单条翻译失败不影响后续条目；前端翻译进度展示——新增实时翻译进度指示器（已翻译/总数），连续 3 批失败才停止（而非之前的 1 批失败即停），翻译完成后显示摘要提示（成功数/总数） |
 | v1.4.8 | 2026-03-15 | 模型市场全量分页加载：`SearchModels` 后端改为自动遍历 ollama.com 所有分页（`page=1` 到 `page=N`），直到页面返回 "No models found" 为止，一次性获取全部模型（安全上限 50 页）；搜索结果跨页自动去重；翻译解耦为独立 API——新增 `POST /api/models/search/translate` 端点，接收模型名+描述批量翻译（每批上限 10 条），翻译不再阻塞搜索请求；前端两阶段展示——搜索完成后立即渲染英文结果卡片，随后异步分批调用翻译 API 逐步替换描述为中文（带淡入动画），翻译失败不影响已展示的英文内容；网络容错——后续分页请求失败时返回已获取的结果而非报错 |
 | v1.4.7 | 2026-03-15 | GPU 统一内存架构适配：后端 `GetGPUInfo` 通过 GPU 名称关键词（GB10/GH200/Grace）和 `[N/A]` 内存值检测统一内存，自动从 `/proc/meminfo` 读取系统总内存替代显存显示；前端 Dashboard GPU 卡片和 GPU 详情页适配统一内存（显示「统一内存架构」标签，无进度条）；健康检查显示「统一内存: X GiB」替代「显存: [N/A] MiB」；CUDA 版本提取修复（`sed` 替代 `awk` 避免尾部管道符）；模型管理分类展示——云端模型（`:cloud`）与本地模型分组显示，带数量统计和总大小汇总；新增「模型市场」Tab 页——搜索 Ollama 官网模型（`GET /api/models/search`），解析 HTML `x-test-*` 属性提取模型名称/描述/参数规格/标签/下载量/更新时间，支持按类型（vision/tools/thinking/embedding/code/cloud）和排序（热门/最新）筛选，卡片式展示搜索结果，一键拉取模型；后端自动检测本地翻译模型（优先 qwen3:8b），将英文模型描述翻译为中文 |

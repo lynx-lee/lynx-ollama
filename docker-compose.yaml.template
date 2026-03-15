@@ -69,10 +69,10 @@ services:
       - SETGID
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:11434/ || exit 1"]
-      interval: 30s
+      interval: 15s
       timeout: 5s
       retries: 3
-      start_period: ${OLLAMA_START_PERIOD:-120s}
+      start_period: ${OLLAMA_START_PERIOD:-30s}
     logging:
       driver: json-file
       options:
@@ -86,7 +86,7 @@ services:
       context: ./web
       dockerfile: Dockerfile
       args:
-        VERSION: ${WEB_VERSION:-v1.4.9}
+        VERSION: ${WEB_VERSION:-v1.5.0}
     image: ollama-web:latest
     container_name: ollama-web
     networks:
@@ -113,7 +113,7 @@ services:
       - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"]
-      interval: 30s
+      interval: 15s
       timeout: 5s
       retries: 3
       start_period: 10s

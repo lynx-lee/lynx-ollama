@@ -16,6 +16,12 @@ import (
 type DockerService struct {
 	cfg        *config.Config
 	composeCmd string
+
+	// Short-lived cache for container info to avoid repeated docker inspect forks.
+	// Multiple API handlers may request container info within the same polling cycle.
+	containerCache    *model.ContainerInfo
+	containerCacheAt  time.Time
+	containerCacheTTL time.Duration
 }
 
 // NewDockerService creates a new DockerService.
@@ -27,7 +33,11 @@ func NewDockerService(cfg *config.Config) *DockerService {
 			composeCmd = "docker-compose"
 		}
 	}
-	return &DockerService{cfg: cfg, composeCmd: composeCmd}
+	return &DockerService{
+		cfg:               cfg,
+		composeCmd:        composeCmd,
+		containerCacheTTL: 5 * time.Second,
+	}
 }
 
 // runCommand executes a shell command and returns output.
@@ -51,44 +61,86 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
+// normalizeDockerValue cleans up docker inspect output values.
+// Handles "<no value>" and empty strings by returning "".
+func normalizeDockerValue(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "<no value>" || s == "<nil>" {
+		return ""
+	}
+	return s
+}
+
+// InvalidateContainerCache clears the container info cache.
+// Call this after operations that change container state (start/stop/restart).
+func (s *DockerService) InvalidateContainerCache() {
+	s.containerCache = nil
+}
+
 // GetContainerInfo returns the Ollama container status.
+// Uses a single `docker inspect` call with a combined Go template to extract all
+// fields at once (instead of 6 separate subprocess calls). Results are cached for
+// a short TTL to avoid repeated forks within the same polling cycle.
 func (s *DockerService) GetContainerInfo(ctx context.Context) (model.ContainerInfo, error) {
+	// Return cached result if still fresh
+	if s.containerCache != nil && time.Since(s.containerCacheAt) < s.containerCacheTTL {
+		return *s.containerCache, nil
+	}
+
 	info := model.ContainerInfo{}
 
-	// Container ID
-	out, err := s.runCommand(ctx, "docker", "inspect", "--format", "{{.Id}}", "ollama")
+	// Single docker inspect call with all fields in one Go template.
+	// Fields are separated by "|" for easy parsing.
+	// Using "index" function to safely access Health.Status even if Health is nil.
+	const inspectTemplate = `{{.Id}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}{{end}}|{{.Config.Image}}|{{.State.StartedAt}}|{{range $p, $conf := .NetworkSettings.Ports}}{{$p}} -> {{range $conf}}{{.HostIp}}:{{.HostPort}}{{end}} {{end}}`
+
+	out, err := s.runCommand(ctx, "docker", "inspect", "--format", inspectTemplate, "ollama")
 	if err != nil {
 		info.Status = "not_found"
+		// Cache the not_found result too (but with shorter TTL)
+		s.containerCache = &info
+		s.containerCacheAt = time.Now()
 		return info, nil
 	}
-	if len(out) > 12 {
-		info.ID = out[:12]
+
+	parts := strings.SplitN(out, "|", 6)
+	if len(parts) < 6 {
+		// Fallback: if parsing fails, mark as unknown
+		info.Status = "unknown"
+		slog.Warn("unexpected docker inspect output", "output", out, "parts", len(parts))
+		return info, nil
+	}
+
+	// Container ID (truncate to 12 chars)
+	id := normalizeDockerValue(parts[0])
+	if len(id) > 12 {
+		info.ID = id[:12]
 	} else {
-		info.ID = out
+		info.ID = id
 	}
 
 	// Status
-	out, _ = s.runCommand(ctx, "docker", "inspect", "--format", "{{.State.Status}}", "ollama")
-	info.Status = out
+	info.Status = normalizeDockerValue(parts[1])
 
-	// Health
-	out, _ = s.runCommand(ctx, "docker", "inspect", "--format", "{{.State.Health.Status}}", "ollama")
-	info.Health = out
+	// Health (may be empty if container has no healthcheck configured)
+	info.Health = normalizeDockerValue(parts[2])
 
 	// Image
-	out, _ = s.runCommand(ctx, "docker", "inspect", "--format", "{{.Config.Image}}", "ollama")
-	info.Image = out
+	info.Image = normalizeDockerValue(parts[3])
 
-	// Started at
-	out, _ = s.runCommand(ctx, "docker", "inspect", "--format", "{{.State.StartedAt}}", "ollama")
-	info.StartedAt = out
-	if t, err := time.Parse(time.RFC3339Nano, out); err == nil {
+	// Started at + Uptime
+	startedAt := normalizeDockerValue(parts[4])
+	info.StartedAt = startedAt
+	if t, err := time.Parse(time.RFC3339Nano, startedAt); err == nil {
 		info.Uptime = formatDuration(time.Since(t))
 	}
 
 	// Ports
-	out, _ = s.runCommand(ctx, "docker", "inspect", "--format", `{{range $p, $conf := .NetworkSettings.Ports}}{{$p}} -> {{range $conf}}{{.HostIp}}:{{.HostPort}}{{end}} {{end}}`, "ollama")
-	info.Ports = out
+	info.Ports = normalizeDockerValue(parts[5])
+
+	// Cache the result
+	s.containerCache = &info
+	s.containerCacheAt = time.Now()
 
 	return info, nil
 }
@@ -114,26 +166,38 @@ func (s *DockerService) GetResourceUsage(ctx context.Context) (model.ResourceUsa
 
 // StartService starts the Ollama service.
 func (s *DockerService) StartService(ctx context.Context) (string, error) {
+	s.InvalidateContainerCache()
 	dir := shellQuote(s.cfg.ProjectDir)
-	return s.runShell(ctx, fmt.Sprintf("cd %s && %s up -d 2>&1", dir, s.composeCmd))
+	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && %s up -d 2>&1", dir, s.composeCmd))
+	s.InvalidateContainerCache()
+	return out, err
 }
 
 // StopService stops the Ollama service.
 func (s *DockerService) StopService(ctx context.Context) (string, error) {
+	s.InvalidateContainerCache()
 	dir := shellQuote(s.cfg.ProjectDir)
-	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down 2>&1", dir, s.composeCmd))
+	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && %s down 2>&1", dir, s.composeCmd))
+	s.InvalidateContainerCache()
+	return out, err
 }
 
 // RestartService restarts the Ollama service with full recreation.
 func (s *DockerService) RestartService(ctx context.Context) (string, error) {
+	s.InvalidateContainerCache()
 	dir := shellQuote(s.cfg.ProjectDir)
-	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down && %s up -d 2>&1", dir, s.composeCmd, s.composeCmd))
+	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && %s down && %s up -d 2>&1", dir, s.composeCmd, s.composeCmd))
+	s.InvalidateContainerCache()
+	return out, err
 }
 
 // UpdateService pulls latest image and recreates container.
 func (s *DockerService) UpdateService(ctx context.Context) (string, error) {
+	s.InvalidateContainerCache()
 	dir := shellQuote(s.cfg.ProjectDir)
-	return s.runShell(ctx, fmt.Sprintf("cd %s && docker pull ollama/ollama:latest && %s up -d --force-recreate 2>&1", dir, s.composeCmd))
+	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && docker pull ollama/ollama:latest && %s up -d --force-recreate 2>&1", dir, s.composeCmd))
+	s.InvalidateContainerCache()
+	return out, err
 }
 
 // GetLogs returns recent container logs.
@@ -292,14 +356,20 @@ func (s *DockerService) GetDiskUsage(ctx context.Context) (model.DiskUsage, erro
 
 // CleanSoft stops containers only.
 func (s *DockerService) CleanSoft(ctx context.Context) (string, error) {
+	s.InvalidateContainerCache()
 	dir := shellQuote(s.cfg.ProjectDir)
-	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down --remove-orphans 2>&1", dir, s.composeCmd))
+	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && %s down --remove-orphans 2>&1", dir, s.composeCmd))
+	s.InvalidateContainerCache()
+	return out, err
 }
 
 // CleanHard stops containers and removes images.
 func (s *DockerService) CleanHard(ctx context.Context) (string, error) {
+	s.InvalidateContainerCache()
 	dir := shellQuote(s.cfg.ProjectDir)
-	return s.runShell(ctx, fmt.Sprintf("cd %s && %s down --remove-orphans --rmi all 2>&1 && docker image prune -f 2>&1", dir, s.composeCmd))
+	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && %s down --remove-orphans --rmi all 2>&1 && docker image prune -f 2>&1", dir, s.composeCmd))
+	s.InvalidateContainerCache()
+	return out, err
 }
 
 func formatDuration(d time.Duration) string {

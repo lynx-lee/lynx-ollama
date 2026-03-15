@@ -101,9 +101,6 @@ func (h *APIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		info, err := h.docker.GetContainerInfo(ctx)
-		if info.Health == "starting" && h.ollama.IsAPIReady() {
-			info.Health = "healthy"
-		}
 		ch <- collectResult{"container", info, err}
 	}()
 	go func() {
@@ -159,7 +156,16 @@ func (h *APIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	status.APIReachable = h.ollama.IsAPIReady()
+	// Single IsAPIReady call (cached internally, avoids redundant probes)
+	apiReady := h.ollama.IsAPIReady()
+	status.APIReachable = apiReady
+
+	// Correct health status based on actual API reachability:
+	// - Docker may report "starting" during start_period even if API is already up
+	// - Docker may report "unhealthy" due to transient probe failures
+	// - Health may be empty if container was started without healthcheck config
+	h.correctHealthStatus(&status.Container, apiReady)
+
 	status.ProjectVersion = h.version
 
 	// Read config
@@ -206,9 +212,6 @@ func (h *APIHandler) GetStatusLite(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		info, err := h.docker.GetContainerInfo(ctx)
-		if info.Health == "starting" && h.ollama.IsAPIReady() {
-			info.Health = "healthy"
-		}
 		ch <- collectResult{"container", info, err}
 	}()
 	go func() {
@@ -236,10 +239,37 @@ func (h *APIHandler) GetStatusLite(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	status.APIReachable = h.ollama.IsAPIReady()
+	// Single IsAPIReady call (cached internally)
+	apiReady := h.ollama.IsAPIReady()
+	status.APIReachable = apiReady
+	h.correctHealthStatus(&status.Container, apiReady)
+
 	status.ProjectVersion = h.version
 
 	jsonResponse(w, status)
+}
+
+// correctHealthStatus adjusts the container health status based on actual API reachability.
+// Docker's health check has inherent delays (interval, start_period, retries), so we use
+// a direct API probe to provide more accurate real-time status:
+//   - "starting" + API reachable → "healthy" (API is up before Docker finishes start_period)
+//   - "unhealthy" + API reachable → "healthy" (Docker probe may fail transiently)
+//   - empty health + container running + API reachable → "healthy" (no healthcheck configured)
+func (h *APIHandler) correctHealthStatus(info *model.ContainerInfo, apiReady bool) {
+	if !apiReady {
+		return // If API is truly down, trust Docker's status
+	}
+
+	switch info.Health {
+	case "starting", "unhealthy":
+		// API is actually reachable — override Docker's stale/inaccurate status
+		info.Health = "healthy"
+	case "":
+		// No healthcheck configured (e.g. manual docker run without compose)
+		if info.Status == "running" {
+			info.Health = "healthy"
+		}
+	}
 }
 
 // ── Service Control ─────────────────────────────────────────────────

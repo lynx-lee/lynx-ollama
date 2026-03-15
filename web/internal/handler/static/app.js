@@ -218,14 +218,20 @@ function updateDashboard(s) {
     const svcStatus = document.getElementById('serviceStatus');
     const health = s.container.health || s.container.status || 'unknown';
     const statusMap = {
-        healthy: { cls: 'healthy', text: '运行中 (healthy)' },
-        starting: { cls: 'starting', text: '启动中...' },
-        unhealthy: { cls: 'unhealthy', text: '异常' },
-        running: { cls: 'healthy', text: '运行中' },
-        exited: { cls: 'stopped', text: '已停止' },
-        not_found: { cls: 'stopped', text: '未创建' },
+        healthy:   { cls: 'healthy',   text: '运行中 (healthy)' },
+        starting:  { cls: 'starting',  text: '启动中...' },
+        unhealthy: { cls: 'unhealthy', text: '异常 (unhealthy)' },
+        running:   { cls: 'healthy',   text: '运行中' },
+        exited:    { cls: 'stopped',   text: '已停止' },
+        not_found: { cls: 'stopped',   text: '未创建' },
+        unknown:   { cls: 'stopped',   text: '未知' },
+        created:   { cls: 'starting',  text: '已创建' },
+        paused:    { cls: 'starting',  text: '已暂停' },
+        restarting:{ cls: 'starting',  text: '重启中...' },
+        removing:  { cls: 'stopped',   text: '移除中...' },
+        dead:      { cls: 'stopped',   text: '已终止' },
     };
-    const st = statusMap[health] || { cls: 'stopped', text: health };
+    const st = statusMap[health] || { cls: 'stopped', text: health || '未知' };
     svcStatus.className = `service-status ${st.cls}`;
     svcStatus.querySelector('span:last-child').textContent = st.text;
 

@@ -68,7 +68,7 @@ func (s *SystemService) ReadEnvConfig() ([]model.EnvVariable, error) {
 		"OLLAMA_CPU_LIMIT":         "10.0",
 		"OLLAMA_MEM_RESERVATION":   "16G",
 		"OLLAMA_MEM_LIMIT":         "120G",
-		"OLLAMA_START_PERIOD":      "120s",
+		"OLLAMA_START_PERIOD":      "30s",
 		"OLLAMA_DEBUG":             "INFO",
 		"OLLAMA_TZ":                "Asia/Shanghai",
 		"OLLAMA_FLASH_ATTENTION":   "1",
@@ -197,9 +197,20 @@ func (s *SystemService) RunHealthCheck(ctx context.Context, ollamaSvc *OllamaSer
 	// 4. Container health check
 	check = model.HealthCheck{Name: "容器健康检查"}
 	health := containerInfo.Health
-	if health == "starting" && ollamaSvc.IsAPIReady() {
-		health = "healthy"
+	apiReady := ollamaSvc.IsAPIReady()
+
+	// Correct health status based on actual API reachability (same logic as API handler)
+	if apiReady {
+		switch health {
+		case "starting", "unhealthy":
+			health = "healthy"
+		case "":
+			if containerInfo.Status == "running" {
+				health = "healthy"
+			}
+		}
 	}
+
 	switch health {
 	case "healthy":
 		check.Status = "pass"
@@ -207,6 +218,14 @@ func (s *SystemService) RunHealthCheck(ctx context.Context, ollamaSvc *OllamaSer
 	case "starting":
 		check.Status = "warn"
 		check.Message = "启动中"
+	case "unhealthy":
+		check.Status = "fail"
+		check.Message = "异常 (unhealthy)"
+		check.Detail = "Docker 健康检查失败，但这可能是暂时性的"
+	case "":
+		check.Status = "warn"
+		check.Message = "未配置健康检查"
+		check.Detail = "容器未使用 Docker Compose 启动或缺少 healthcheck 配置"
 	default:
 		check.Status = "fail"
 		check.Message = health

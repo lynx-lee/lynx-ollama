@@ -16,6 +16,15 @@ import (
 type OllamaService struct {
 	cfg    *config.Config
 	client *http.Client
+
+	// Fast HTTP client for API readiness probes (short timeout, connection reuse).
+	probeClient *http.Client
+
+	// Short-lived cache for API readiness to avoid redundant probes within
+	// the same polling cycle (multiple handlers call IsAPIReady concurrently).
+	apiReadyCache   bool
+	apiReadyCacheAt time.Time
+	apiReadyCacheTTL time.Duration
 }
 
 // NewOllamaService creates a new OllamaService.
@@ -25,18 +34,34 @@ func NewOllamaService(cfg *config.Config) *OllamaService {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		probeClient: &http.Client{
+			Timeout: 3 * time.Second,
+		},
+		apiReadyCacheTTL: 5 * time.Second,
 	}
 }
 
 // IsAPIReady checks if the Ollama API is reachable.
+// Results are cached for a short TTL to avoid redundant probes when called
+// multiple times within the same polling cycle.
 func (s *OllamaService) IsAPIReady() bool {
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(s.cfg.OllamaAPIURL)
+	// Return cached result if still fresh
+	if time.Since(s.apiReadyCacheAt) < s.apiReadyCacheTTL {
+		return s.apiReadyCache
+	}
+
+	resp, err := s.probeClient.Get(s.cfg.OllamaAPIURL)
 	if err != nil {
+		s.apiReadyCache = false
+		s.apiReadyCacheAt = time.Now()
 		return false
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+
+	ready := resp.StatusCode == http.StatusOK
+	s.apiReadyCache = ready
+	s.apiReadyCacheAt = time.Now()
+	return ready
 }
 
 // GetVersion returns the Ollama version.
