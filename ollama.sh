@@ -443,6 +443,16 @@ OLLAMA_DEBUG=INFO
 
 # 容器时区 (影响日志时间戳)
 OLLAMA_TZ=Asia/Shanghai
+
+# ── Web 管理界面 ──────────────────────────────────────────
+# Web 端口
+WEB_PORT=9981
+# API Key (留空则自动生成，启动时打印到终端)
+WEB_API_KEY=
+# CORS 允许源 (留空=仅同源, *=所有, 或指定: https://a.com,https://b.com)
+WEB_CORS_ORIGIN=
+# 日志级别
+WEB_LOG_LEVEL=info
 ENV_EOF
         log_success ".env 配置文件已生成"
     fi
@@ -501,6 +511,25 @@ do_start() {
             echo -e "    生成接口:     ${CYAN}${OLLAMA_API}/api/generate${NC}"
             echo -e "    对话接口:     ${CYAN}${OLLAMA_API}/api/chat${NC}"
             echo ""
+
+            # Web 管理界面信息
+            local web_port="${WEB_PORT:-9981}"
+            local web_addr="${WEB_LISTEN_ADDR:-0.0.0.0}"
+            echo -e "  ${BOLD}🌐 Web 管理界面:${NC}"
+            echo -e "    地址:         ${CYAN}http://localhost:${web_port}${NC}"
+            # 显示 API Key（从环境变量或容器中获取）
+            local web_api_key="${WEB_API_KEY:-}"
+            if [ -z "$web_api_key" ]; then
+                # 尝试从运行中的容器获取自动生成的 Key
+                web_api_key=$(docker logs ollama-web 2>&1 | grep -oP '(?<=API Key: )\S+' | tail -1 || true)
+            fi
+            if [ -n "$web_api_key" ]; then
+                echo -e "    API Key:      ${YELLOW}${web_api_key}${NC}"
+            else
+                echo -e "    API Key:      ${DIM}(容器启动后查看: docker logs ollama-web | grep 'API Key')${NC}"
+            fi
+            echo ""
+
             echo -e "  ${BOLD}常用操作:${NC}"
             echo -e "    查看日志:     ${CYAN}./ollama.sh logs${NC}"
             echo -e "    拉取模型:     ${CYAN}./ollama.sh pull <model_name>${NC}"
@@ -962,6 +991,32 @@ for i, line in enumerate(lines):
         echo -e "    ${RED}✗ 数据目录不存在: ${DATA_DIR}${NC}"
     fi
     echo ""
+
+    # Web 管理界面状态
+    local web_container
+    web_container=$(docker ps -q --filter "name=ollama-web" 2>/dev/null)
+    if [ -n "$web_container" ]; then
+        local web_port="${WEB_PORT:-9981}"
+        local web_status
+        web_status=$(docker inspect --format='{{.State.Status}}' ollama-web 2>/dev/null || echo "unknown")
+        local web_health
+        web_health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}' ollama-web 2>/dev/null || echo "N/A")
+        # 主动检测 API
+        if [ "$web_health" = "starting" ] && curl -sf "http://localhost:${web_port}/api/health" --connect-timeout 3 >/dev/null 2>&1; then
+            web_health="healthy"
+        fi
+        local web_icon="⚪"
+        case "$web_health" in
+            healthy)   web_icon="${GREEN}●${NC}" ;;
+            starting)  web_icon="${YELLOW}●${NC}" ;;
+            unhealthy) web_icon="${RED}●${NC}" ;;
+        esac
+        echo -e "  ${BOLD}🌐 Web 管理界面${NC}"
+        echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
+        echo -e "    状态:   ${web_icon} ${web_status} (health: ${web_health})"
+        echo -e "    地址:   ${CYAN}http://localhost:${web_port}${NC}"
+        echo ""
+    fi
 }
 
 # 查看日志
@@ -1999,6 +2054,24 @@ print(f'{ec / (ed / 1e9):.1f}')
         all_healthy=false
     fi
 
+    # 11. Web 管理界面
+    total_checks=$((total_checks + 1))
+    local web_port="${WEB_PORT:-9981}"
+    local web_container
+    web_container=$(docker ps -q --filter "name=ollama-web" 2>/dev/null)
+    if [ -n "$web_container" ]; then
+        local web_health
+        web_health=$(curl -sf "http://localhost:${web_port}/api/health" --connect-timeout 3 2>/dev/null)
+        if [ -n "$web_health" ]; then
+            echo -e "  ✅ Web 管理界面       运行中 (端口: ${web_port})"
+            passed_checks=$((passed_checks + 1))
+        else
+            echo -e "  ⚠️  Web 管理界面       容器运行中但 API 不可达 (端口: ${web_port})"
+        fi
+    else
+        echo -e "  ⚠️  Web 管理界面       未运行 (docker logs ollama-web 查看详情)"
+    fi
+
     # 总结
     echo ""
     print_separator
@@ -2369,6 +2442,12 @@ OLLAMA_DEBUG=INFO
 
 # 容器时区 (影响日志时间戳)
 OLLAMA_TZ=Asia/Shanghai
+
+# ── Web 管理界面 ──────────────────────────────────────────
+WEB_PORT=9981
+WEB_API_KEY=
+WEB_CORS_ORIGIN=
+WEB_LOG_LEVEL=info
 ENV_EOF
         log_success ".env 配置文件已生成"
     else
@@ -3101,6 +3180,16 @@ show_help() {
     echo "  exec [cmd]          进入容器 (默认bash)"
     echo "  version             显示脚本版本号"
     echo "  help                显示帮助信息"
+    echo ""
+    echo -e "${BOLD}Web 管理界面:${NC}"
+    echo "  启动服务后自动运行在端口 ${CYAN}9981${NC} (通过 docker-compose 部署)"
+    echo "  首次访问需输入 API Key (启动时显示在终端，或通过环境变量配置)"
+    echo ""
+    echo "  环境变量:"
+    echo "    WEB_API_KEY         固定 API Key (未设置则自动生成)"
+    echo "    WEB_PORT            Web 端口 (默认: 9981)"
+    echo "    WEB_CORS_ORIGIN     CORS 允许源 (默认: 仅同源)"
+    echo "    WEB_LOG_LEVEL       日志级别 (默认: info)"
     echo ""
     echo -e "${BOLD}示例:${NC}"
     echo -e "  ${DIM}# 首次部署${NC}"

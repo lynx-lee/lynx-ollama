@@ -74,7 +74,7 @@ bash build.sh v1.0.0 linux-arm64
 ```bash
 cd web
 bash build.sh v1.0.0 docker
-docker run -d -p 8080:8080 \
+docker run -d -p 9981:8080 \
   -v /opt/ai/ollama:/opt/ai/ollama \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e OLLAMA_API_URL=http://ollama:11434 \

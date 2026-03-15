@@ -90,7 +90,7 @@ services:
     networks:
       - ai-network
     ports:
-      - "${WEB_LISTEN_ADDR:-0.0.0.0}:${WEB_PORT:-8080}:8080"
+      - "${WEB_LISTEN_ADDR:-0.0.0.0}:${WEB_PORT:-9981}:8080"
     environment:
       - TZ=${OLLAMA_TZ:-Asia/Shanghai}
       - OLLAMA_API_URL=http://ollama:11434
@@ -98,6 +98,8 @@ services:
       - OLLAMA_SCRIPT_PATH=/opt/ai/ollama/ollama.sh
       - WEB_LISTEN_ADDR=0.0.0.0:8080
       - WEB_LOG_LEVEL=${WEB_LOG_LEVEL:-info}
+      - WEB_API_KEY=${WEB_API_KEY:-}
+      - WEB_CORS_ORIGIN=${WEB_CORS_ORIGIN:-}
     volumes:
       # 挂载项目目录以访问 ollama.sh、.env、docker-compose.yaml
       - ${OLLAMA_PROJECT_DIR:-/opt/ai/ollama}:/opt/ai/ollama
@@ -108,7 +110,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/status || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
