@@ -449,8 +449,8 @@ OLLAMA_DEBUG=INFO
 OLLAMA_TZ=Asia/Shanghai
 
 # ── Web 管理界面 ──────────────────────────────────────────
-# Web 监听地址 (宿主机绑定 IP)
-WEB_LISTEN_ADDR=0.0.0.0
+# Web 宿主机绑定 IP (仅 IP，不含端口; 0.0.0.0 = 所有网卡)
+WEB_BIND_IP=0.0.0.0
 # Web 端口 (宿主机映射端口)
 WEB_PORT=9981
 # API Key (留空则自动生成，启动时打印到终端)
@@ -520,7 +520,7 @@ do_start() {
 
             # Web 管理界面信息
             local web_port="${WEB_PORT:-9981}"
-            local web_addr="${WEB_LISTEN_ADDR:-0.0.0.0}"
+            local web_addr="${WEB_BIND_IP:-0.0.0.0}"
             echo -e "  ${BOLD}🌐 Web 管理界面:${NC}"
             echo -e "    地址:         ${CYAN}http://localhost:${web_port}${NC}"
             # 显示 API Key（从环境变量或容器中获取）
@@ -2596,7 +2596,7 @@ OLLAMA_DEBUG=INFO
 OLLAMA_TZ=Asia/Shanghai
 
 # ── Web 管理界面 ──────────────────────────────────────────
-WEB_LISTEN_ADDR=0.0.0.0
+WEB_BIND_IP=0.0.0.0
 WEB_PORT=9981
 WEB_API_KEY=
 WEB_CORS_ORIGIN=
@@ -3339,7 +3339,7 @@ show_help() {
     echo "  首次访问需输入 API Key (启动时显示在终端，或通过环境变量配置)"
     echo ""
     echo "  环境变量:"
-    echo "    WEB_LISTEN_ADDR     宿主机绑定 IP (默认: 0.0.0.0)"
+    echo "    WEB_BIND_IP         宿主机绑定 IP (默认: 0.0.0.0)"
     echo "    WEB_PORT            Web 端口 (默认: 9981)"
     echo "    WEB_API_KEY         固定 API Key (未设置则自动生成)"
     echo "    WEB_CORS_ORIGIN     CORS 允许源 (默认: 仅同源)"

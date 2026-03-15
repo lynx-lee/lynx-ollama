@@ -92,12 +92,13 @@ services:
     networks:
       - ai-network
     ports:
-      - "${WEB_LISTEN_ADDR:-0.0.0.0}:${WEB_PORT:-9981}:8080"
+      - "${WEB_BIND_IP:-0.0.0.0}:${WEB_PORT:-9981}:8080"
     environment:
       - TZ=${OLLAMA_TZ:-Asia/Shanghai}
       - OLLAMA_API_URL=http://ollama:11434
       - OLLAMA_PROJECT_DIR=/opt/ai/ollama
       - OLLAMA_SCRIPT_PATH=/opt/ai/ollama/ollama.sh
+      # 容器内监听地址（固定值，不从 .env 读取，避免与端口映射的 WEB_BIND_IP 混淆）
       - WEB_LISTEN_ADDR=0.0.0.0:8080
       - WEB_LOG_LEVEL=${WEB_LOG_LEVEL:-info}
       - WEB_API_KEY=${WEB_API_KEY}

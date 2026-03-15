@@ -191,11 +191,13 @@ func (s *DockerService) RestartService(ctx context.Context) (string, error) {
 	return out, err
 }
 
-// UpdateService pulls latest image and recreates container.
+// UpdateService pulls latest ollama image and recreates the ollama container only.
+// We explicitly target the "ollama" service to avoid recreating the web container
+// (which would kill the process serving this very request).
 func (s *DockerService) UpdateService(ctx context.Context) (string, error) {
 	s.InvalidateContainerCache()
 	dir := shellQuote(s.cfg.ProjectDir)
-	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && docker pull ollama/ollama:latest && %s up -d --force-recreate 2>&1", dir, s.composeCmd))
+	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && docker pull ollama/ollama:latest && %s up -d --force-recreate ollama 2>&1", dir, s.composeCmd))
 	s.InvalidateContainerCache()
 	return out, err
 }
