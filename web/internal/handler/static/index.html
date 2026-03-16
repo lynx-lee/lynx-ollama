@@ -115,10 +115,10 @@
                         <button class="btn btn-danger" onclick="controlService('stop')">⏹ 停止</button>
                         <button class="btn btn-primary" onclick="controlService('update')">⬆ 更新版本</button>
                     </div>
-                    <!-- Update progress bar (hidden by default) -->
-                    <div id="updateProgress" class="update-progress" style="display:none;">
-                        <div class="progress-bar"><div class="progress-fill" id="updateProgressFill"></div></div>
-                        <div class="progress-text" id="updateProgressText">准备中...</div>
+                    <!-- Service progress bar (hidden by default, shared by start/stop/restart/update) -->
+                    <div id="serviceProgress" class="update-progress" style="display:none;">
+                        <div class="progress-bar"><div class="progress-fill" id="serviceProgressFill"></div></div>
+                        <div class="progress-text" id="serviceProgressText">准备中...</div>
                     </div>
                 </div>
 

@@ -869,6 +869,124 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// StreamServiceControl streams service control (start/stop/restart) progress via WebSocket.
+// The action is specified in the "action" query parameter.
+func (h *APIHandler) StreamServiceControl(w http.ResponseWriter, r *http.Request) {
+	action := r.URL.Query().Get("action")
+	if action != "start" && action != "stop" && action != "restart" {
+		http.Error(w, "invalid action, must be start/stop/restart", http.StatusBadRequest)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Error("websocket upgrade failed", "error", err)
+		return
+	}
+	defer conn.Close()
+
+	timeout := 120 * time.Second
+	if action == "stop" {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	// Monitor client disconnect
+	go func() {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				cancel()
+				return
+			}
+		}
+	}()
+
+	actionNames := map[string]string{"start": "启动", "stop": "停止", "restart": "重启"}
+	actionName := actionNames[action]
+
+	// Phase 1: Starting operation
+	conn.WriteJSON(map[string]interface{}{
+		"phase":  "operating",
+		"action": action,
+		"status": fmt.Sprintf("正在%s Ollama 服务...", actionName),
+	})
+
+	// Execute the streaming service method
+	lineFn := func(line string) {
+		conn.WriteJSON(map[string]interface{}{
+			"phase":  "operating",
+			"action": action,
+			"status": line,
+		})
+	}
+
+	var opErr error
+	switch action {
+	case "start":
+		opErr = h.docker.StartServiceStream(ctx, lineFn)
+	case "stop":
+		opErr = h.docker.StopServiceStream(ctx, lineFn)
+	case "restart":
+		opErr = h.docker.RestartServiceStream(ctx, lineFn)
+	}
+
+	if opErr != nil {
+		conn.WriteJSON(map[string]interface{}{
+			"phase":  "error",
+			"action": action,
+			"status": "error",
+			"error":  opErr.Error(),
+		})
+		return
+	}
+
+	// Phase 2: For start/restart, wait for Ollama API to be ready
+	if action == "start" || action == "restart" {
+		conn.WriteJSON(map[string]interface{}{
+			"phase":  "waiting",
+			"action": action,
+			"status": "等待 Ollama API 就绪...",
+		})
+
+		ready := false
+		for i := 0; i < 60; i++ {
+			select {
+			case <-ctx.Done():
+				conn.WriteJSON(map[string]interface{}{
+					"phase":  "error",
+					"action": action,
+					"error":  fmt.Sprintf("%s超时或请求已取消", actionName),
+				})
+				return
+			default:
+			}
+			if h.ollama.IsAPIReady() {
+				ready = true
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+
+		if !ready {
+			conn.WriteJSON(map[string]interface{}{
+				"phase":  "error",
+				"action": action,
+				"error":  "Ollama API 未能在超时时间内就绪",
+			})
+			return
+		}
+	}
+
+	// Phase 3: Done
+	conn.WriteJSON(map[string]interface{}{
+		"phase":   "done",
+		"action":  action,
+		"status":  "success",
+		"message": fmt.Sprintf("Ollama 服务%s成功", actionName),
+	})
+}
+
 // ── Status WebSocket Hub ────────────────────────────────────────
 // StatusHub manages multiple WebSocket connections for status streaming.
 // A single data-collection goroutine serves all connected clients, avoiding

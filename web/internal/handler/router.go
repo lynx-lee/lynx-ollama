@@ -59,6 +59,7 @@ func NewRouter(ollamaSvc *service.OllamaService, dockerSvc *service.DockerServic
 	mux.HandleFunc("GET /api/ws/logs", api.StreamLogs)
 	mux.HandleFunc("GET /api/ws/pull", api.StreamPull)
 	mux.HandleFunc("GET /api/ws/update", api.StreamUpdate)
+	mux.HandleFunc("GET /api/ws/service", api.StreamServiceControl)
 	mux.HandleFunc("GET /api/ws/status", api.StreamStatus)
 
 	// ── Static files (embedded SPA) ─────────────────────────────────

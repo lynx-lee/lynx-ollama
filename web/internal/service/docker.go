@@ -165,31 +165,105 @@ func (s *DockerService) GetResourceUsage(ctx context.Context) (model.ResourceUsa
 	return usage, nil
 }
 
-// StartService starts the Ollama service.
+// StartService starts the Ollama container only (not the web container).
 func (s *DockerService) StartService(ctx context.Context) (string, error) {
 	s.InvalidateContainerCache()
-	dir := shellQuote(s.cfg.ProjectDir)
-	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && %s up -d 2>&1", dir, s.composeCmd))
+	out, err := s.runCommand(ctx, "docker", "start", "ollama")
 	s.InvalidateContainerCache()
 	return out, err
 }
 
-// StopService stops the Ollama service.
+// StopService stops the Ollama container only (not the web container).
 func (s *DockerService) StopService(ctx context.Context) (string, error) {
 	s.InvalidateContainerCache()
-	dir := shellQuote(s.cfg.ProjectDir)
-	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && %s down 2>&1", dir, s.composeCmd))
+	out, err := s.runCommand(ctx, "docker", "stop", "ollama")
 	s.InvalidateContainerCache()
 	return out, err
 }
 
-// RestartService restarts the Ollama service with full recreation.
+// RestartService restarts the Ollama container only (not the web container).
 func (s *DockerService) RestartService(ctx context.Context) (string, error) {
 	s.InvalidateContainerCache()
-	dir := shellQuote(s.cfg.ProjectDir)
-	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && %s down && %s up -d 2>&1", dir, s.composeCmd, s.composeCmd))
+	out, err := s.runCommand(ctx, "docker", "restart", "ollama")
 	s.InvalidateContainerCache()
 	return out, err
+}
+
+// StartServiceStream starts the Ollama container with streaming progress via lineFn callback.
+func (s *DockerService) StartServiceStream(ctx context.Context, lineFn func(line string)) error {
+	s.InvalidateContainerCache()
+	defer s.InvalidateContainerCache()
+
+	// Check if container exists first
+	lineFn("检查 Ollama 容器状态...")
+	status, _ := s.runCommand(ctx, "docker", "inspect", "--format", "{{.State.Status}}", "ollama")
+	status = strings.TrimSpace(status)
+
+	if status == "running" {
+		lineFn("Ollama 服务已在运行中")
+		return nil
+	}
+
+	lineFn("正在启动 Ollama 容器...")
+	out, err := s.runCommand(ctx, "docker", "start", "ollama")
+	if err != nil {
+		return fmt.Errorf("启动失败: %s - %w", out, err)
+	}
+	lineFn("容器启动命令已执行")
+
+	return nil
+}
+
+// StopServiceStream stops the Ollama container with streaming progress via lineFn callback.
+func (s *DockerService) StopServiceStream(ctx context.Context, lineFn func(line string)) error {
+	s.InvalidateContainerCache()
+	defer s.InvalidateContainerCache()
+
+	lineFn("检查 Ollama 容器状态...")
+	status, _ := s.runCommand(ctx, "docker", "inspect", "--format", "{{.State.Status}}", "ollama")
+	status = strings.TrimSpace(status)
+
+	if status != "running" {
+		lineFn("Ollama 服务未在运行")
+		return nil
+	}
+
+	lineFn("正在停止 Ollama 容器...")
+	out, err := s.runCommand(ctx, "docker", "stop", "ollama")
+	if err != nil {
+		return fmt.Errorf("停止失败: %s - %w", out, err)
+	}
+	lineFn("容器已停止")
+
+	return nil
+}
+
+// RestartServiceStream restarts the Ollama container with streaming progress via lineFn callback.
+func (s *DockerService) RestartServiceStream(ctx context.Context, lineFn func(line string)) error {
+	s.InvalidateContainerCache()
+	defer s.InvalidateContainerCache()
+
+	lineFn("检查 Ollama 容器状态...")
+	status, _ := s.runCommand(ctx, "docker", "inspect", "--format", "{{.State.Status}}", "ollama")
+	status = strings.TrimSpace(status)
+
+	if status == "running" {
+		lineFn("正在停止 Ollama 容器...")
+		out, err := s.runCommand(ctx, "docker", "stop", "ollama")
+		if err != nil {
+			return fmt.Errorf("停止失败: %s - %w", out, err)
+		}
+		lineFn("容器已停止")
+	}
+
+	lineFn("正在启动 Ollama 容器...")
+	out, err := s.runCommand(ctx, "docker", "start", "ollama")
+	if err != nil {
+		return fmt.Errorf("启动失败: %s - %w", out, err)
+	}
+	lineFn("容器启动命令已执行")
+
+	return nil
 }
 
 // CheckImageUpdate checks whether the remote ollama image has a newer version

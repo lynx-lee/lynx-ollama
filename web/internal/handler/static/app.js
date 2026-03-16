@@ -395,33 +395,94 @@ async function controlService(action) {
 
     if (action === 'stop' && !confirm('确定要停止 Ollama 服务吗？')) return;
 
-    showToast(`正在${name}服务...`, 'info');
-
-    // Disable all control buttons
-    document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = true);
-
-    try {
-        const data = await api(`/api/service/${action}`, { method: 'POST' });
-        showToast(`服务${name}成功`, 'success');
-
-        // Refresh status after a delay
-        setTimeout(refreshStatus, 2000);
-    } catch (err) {
-        showToast(`${name}失败: ${err.message}`, 'error');
-    } finally {
-        document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = false);
-    }
+    return startStreamServiceControl(action, name);
 }
 
-// ── Stream Update via WebSocket ─────────────────────────────────
-function startStreamUpdate() {
-    const progressEl = document.getElementById('updateProgress');
-    const progressFill = document.getElementById('updateProgressFill');
-    const progressText = document.getElementById('updateProgressText');
+// ── Stream Service Control via WebSocket ────────────────────────
+function startStreamServiceControl(action, actionName) {
+    const progressEl = document.getElementById('serviceProgress');
+    const progressFill = document.getElementById('serviceProgressFill');
+    const progressText = document.getElementById('serviceProgressText');
 
     // Show progress area & disable buttons
     progressEl.style.display = 'block';
     progressFill.style.width = '0%';
+    progressFill.style.background = ''; // reset to default
+    progressText.textContent = `正在${actionName} Ollama 服务...`;
+    document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = true);
+
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${wsProtocol}//${location.host}/api/ws/service?action=${action}&key=${encodeURIComponent(getApiKey())}`);
+
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+
+            if (data.error) {
+                progressFill.style.width = '100%';
+                progressFill.style.background = 'var(--accent-red, #ef4444)';
+                progressText.textContent = `❌ ${actionName}失败: ${data.error}`;
+                showToast(`${actionName}失败: ${data.error}`, 'error');
+                finishServiceControl(ws);
+                return;
+            }
+
+            switch (data.phase) {
+                case 'operating':
+                    progressFill.style.width = '40%';
+                    progressText.textContent = '⚙️ ' + data.status;
+                    break;
+
+                case 'waiting':
+                    progressFill.style.width = '75%';
+                    progressText.textContent = '⏳ ' + data.status;
+                    break;
+
+                case 'done':
+                    progressFill.style.width = '100%';
+                    progressFill.style.background = 'var(--accent-green, #22c55e)';
+                    progressText.textContent = `✅ ${data.message}`;
+                    showToast(data.message, 'success');
+                    setTimeout(refreshStatus, 2000);
+                    finishServiceControl(ws);
+                    return;
+            }
+        } catch (e) {
+            progressText.textContent = event.data;
+        }
+    };
+
+    ws.onerror = () => {
+        showToast('WebSocket 连接失败，请重试', 'error');
+        progressText.textContent = '❌ 连接失败';
+        finishServiceControl(ws);
+    };
+
+    ws.onclose = () => {
+        document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = false);
+    };
+}
+
+function finishServiceControl(ws) {
+    document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = false);
+    // Auto-hide progress bar after 5 seconds
+    setTimeout(() => {
+        const el = document.getElementById('serviceProgress');
+        if (el) el.style.display = 'none';
+    }, 5000);
+    if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+}
+
+// ── Stream Update via WebSocket ─────────────────────────────────
+function startStreamUpdate() {
+    const progressEl = document.getElementById('serviceProgress');
+    const progressFill = document.getElementById('serviceProgressFill');
+    const progressText = document.getElementById('serviceProgressText');
+
+    // Show progress area & disable buttons
+    progressEl.style.display = 'block';
+    progressFill.style.width = '0%';
+    progressFill.style.background = ''; // reset to default
     progressText.textContent = '正在检查更新...';
     document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = true);
 
@@ -508,7 +569,7 @@ function finishUpdate(ws) {
     document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = false);
     // Auto-hide progress bar after 8 seconds
     setTimeout(() => {
-        const el = document.getElementById('updateProgress');
+        const el = document.getElementById('serviceProgress');
         if (el) el.style.display = 'none';
     }, 8000);
     if (ws && ws.readyState === WebSocket.OPEN) ws.close();
