@@ -765,6 +765,110 @@ func (h *APIHandler) StreamPull(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// StreamUpdate streams Ollama update progress (docker pull + recreate) via WebSocket.
+func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Error("websocket upgrade failed", "error", err)
+		return
+	}
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(r.Context(), 600*time.Second)
+	defer cancel()
+
+	// Monitor client disconnect
+	go func() {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				cancel()
+				return
+			}
+		}
+	}()
+
+	// Phase 0: Get old version before update
+	oldVersion, _ := h.ollama.GetVersion()
+
+	// Phase 1: Check if update is available by comparing image digests
+	conn.WriteJSON(map[string]interface{}{
+		"phase":  "checking",
+		"status": "正在检查更新...",
+	})
+
+	needsUpdate, _, _, checkErr := h.docker.CheckImageUpdate(ctx)
+	if checkErr != nil {
+		slog.Warn("check image update failed, proceeding anyway", "error", checkErr)
+		needsUpdate = true // on error, proceed with pull to be safe
+	}
+
+	if !needsUpdate {
+		newVersion, _ := h.ollama.GetVersion()
+		conn.WriteJSON(map[string]interface{}{
+			"phase":       "up_to_date",
+			"status":      "success",
+			"message":     "当前版本已是最新",
+			"old_version": oldVersion,
+			"new_version": newVersion,
+		})
+		return
+	}
+
+	// Phase 2: Stream docker pull progress
+	conn.WriteJSON(map[string]interface{}{
+		"phase":  "pulling",
+		"status": "开始拉取最新镜像...",
+	})
+
+	pullErr := h.docker.UpdateServiceStream(ctx, func(line string) {
+		conn.WriteJSON(map[string]interface{}{
+			"phase":  "pulling",
+			"status": line,
+		})
+	})
+
+	if pullErr != nil {
+		conn.WriteJSON(map[string]interface{}{
+			"phase":  "error",
+			"status": "error",
+			"error":  pullErr.Error(),
+		})
+		return
+	}
+
+	// Phase 3: Wait for Ollama API to be ready
+	conn.WriteJSON(map[string]interface{}{
+		"phase":  "waiting",
+		"status": "等待 Ollama 服务就绪...",
+	})
+
+	for i := 0; i < 60; i++ {
+		select {
+		case <-ctx.Done():
+			conn.WriteJSON(map[string]interface{}{
+				"phase": "error",
+				"error": "更新超时或请求已取消",
+			})
+			return
+		default:
+		}
+		if h.ollama.IsAPIReady() {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	// Phase 4: Done
+	newVersion, _ := h.ollama.GetVersion()
+	conn.WriteJSON(map[string]interface{}{
+		"phase":       "done",
+		"status":      "success",
+		"message":     "更新完成",
+		"old_version": oldVersion,
+		"new_version": newVersion,
+	})
+}
+
 // ── Status WebSocket Hub ────────────────────────────────────────
 // StatusHub manages multiple WebSocket connections for status streaming.
 // A single data-collection goroutine serves all connected clients, avoiding

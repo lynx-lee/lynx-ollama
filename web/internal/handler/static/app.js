@@ -388,7 +388,11 @@ async function controlService(action) {
     const actionNames = { start: '启动', stop: '停止', restart: '重启', update: '更新' };
     const name = actionNames[action] || action;
 
-    if (action === 'update' && !confirm('确定要更新 Ollama 到最新版本吗？这将拉取最新镜像并重建容器。')) return;
+    if (action === 'update') {
+        if (!confirm('确定要更新 Ollama 到最新版本吗？这将拉取最新镜像并重建容器。')) return;
+        return startStreamUpdate();
+    }
+
     if (action === 'stop' && !confirm('确定要停止 Ollama 服务吗？')) return;
 
     showToast(`正在${name}服务...`, 'info');
@@ -400,10 +404,6 @@ async function controlService(action) {
         const data = await api(`/api/service/${action}`, { method: 'POST' });
         showToast(`服务${name}成功`, 'success');
 
-        if (action === 'update' && data.old_version && data.new_version) {
-            showToast(`版本更新: ${data.old_version} → ${data.new_version}`, 'success');
-        }
-
         // Refresh status after a delay
         setTimeout(refreshStatus, 2000);
     } catch (err) {
@@ -411,6 +411,107 @@ async function controlService(action) {
     } finally {
         document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = false);
     }
+}
+
+// ── Stream Update via WebSocket ─────────────────────────────────
+function startStreamUpdate() {
+    const progressEl = document.getElementById('updateProgress');
+    const progressFill = document.getElementById('updateProgressFill');
+    const progressText = document.getElementById('updateProgressText');
+
+    // Show progress area & disable buttons
+    progressEl.style.display = 'block';
+    progressFill.style.width = '0%';
+    progressText.textContent = '正在检查更新...';
+    document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = true);
+
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${wsProtocol}//${location.host}/api/ws/update?key=${encodeURIComponent(getApiKey())}`);
+
+    // Track pull layer progress for percentage calculation
+    let pullLines = 0;
+
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+
+            if (data.error) {
+                progressFill.style.width = '0%';
+                progressText.textContent = `❌ 错误: ${data.error}`;
+                showToast(`更新失败: ${data.error}`, 'error');
+                finishUpdate(ws);
+                return;
+            }
+
+            switch (data.phase) {
+                case 'checking':
+                    progressFill.style.width = '5%';
+                    progressText.textContent = '🔍 ' + data.status;
+                    break;
+
+                case 'up_to_date':
+                    progressFill.style.width = '100%';
+                    progressFill.style.background = 'var(--accent-green, #22c55e)';
+                    const ver = data.new_version ? ` (${data.new_version})` : '';
+                    progressText.textContent = `✅ ${data.message}${ver}`;
+                    showToast(`${data.message}${ver}`, 'success');
+                    finishUpdate(ws);
+                    return;
+
+                case 'pulling':
+                    pullLines++;
+                    // docker pull outputs ~10-30 lines per layer; use indeterminate progress
+                    const pullPercent = Math.min(10 + pullLines * 2, 85);
+                    progressFill.style.width = pullPercent + '%';
+                    progressFill.style.background = ''; // reset to default blue
+                    // Show the last meaningful status from docker pull
+                    const statusLine = data.status || '拉取中...';
+                    progressText.textContent = '📦 ' + statusLine;
+                    break;
+
+                case 'waiting':
+                    progressFill.style.width = '90%';
+                    progressText.textContent = '⏳ ' + data.status;
+                    break;
+
+                case 'done':
+                    progressFill.style.width = '100%';
+                    progressFill.style.background = 'var(--accent-green, #22c55e)';
+                    if (data.old_version && data.new_version && data.old_version !== data.new_version) {
+                        progressText.textContent = `✅ 更新完成: ${data.old_version} → ${data.new_version}`;
+                        showToast(`版本更新: ${data.old_version} → ${data.new_version}`, 'success');
+                    } else {
+                        progressText.textContent = `✅ ${data.message || '更新完成'}`;
+                        showToast('更新完成', 'success');
+                    }
+                    setTimeout(refreshStatus, 2000);
+                    finishUpdate(ws);
+                    return;
+            }
+        } catch (e) {
+            progressText.textContent = event.data;
+        }
+    };
+
+    ws.onerror = () => {
+        showToast('WebSocket 连接失败，请重试', 'error');
+        progressText.textContent = '❌ 连接失败';
+        finishUpdate(ws);
+    };
+
+    ws.onclose = () => {
+        document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = false);
+    };
+}
+
+function finishUpdate(ws) {
+    document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = false);
+    // Auto-hide progress bar after 8 seconds
+    setTimeout(() => {
+        const el = document.getElementById('updateProgress');
+        if (el) el.style.display = 'none';
+    }, 8000);
+    if (ws && ws.readyState === WebSocket.OPEN) ws.close();
 }
 
 // ── Models Page ─────────────────────────────────────────────────

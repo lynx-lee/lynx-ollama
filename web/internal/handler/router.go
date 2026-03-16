@@ -58,6 +58,7 @@ func NewRouter(ollamaSvc *service.OllamaService, dockerSvc *service.DockerServic
 	// ── WebSocket for logs streaming ────────────────────────────────
 	mux.HandleFunc("GET /api/ws/logs", api.StreamLogs)
 	mux.HandleFunc("GET /api/ws/pull", api.StreamPull)
+	mux.HandleFunc("GET /api/ws/update", api.StreamUpdate)
 	mux.HandleFunc("GET /api/ws/status", api.StreamStatus)
 
 	// ── Static files (embedded SPA) ─────────────────────────────────

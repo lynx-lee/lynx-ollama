@@ -671,6 +671,13 @@ tbody tr:hover { background: var(--bg-hover); }
 .chip:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
 
 /* ── Progress Bar ─────────────────────────────────────────────── */
+.update-progress {
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--bg-primary);
+    border-radius: var(--radius-sm);
+}
+
 .progress-bar {
     height: 6px;
     background: var(--bg-primary);

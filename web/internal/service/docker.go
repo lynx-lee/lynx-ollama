@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
@@ -191,9 +192,90 @@ func (s *DockerService) RestartService(ctx context.Context) (string, error) {
 	return out, err
 }
 
-// UpdateService pulls latest ollama image and recreates the ollama container only.
-// We explicitly target the "ollama" service to avoid recreating the web container
-// (which would kill the process serving this very request).
+// CheckImageUpdate checks whether the remote ollama image has a newer version
+// by comparing the local digest with the remote manifest digest.
+// Returns (needsUpdate bool, localDigest string, remoteDigest string, err error).
+func (s *DockerService) CheckImageUpdate(ctx context.Context) (bool, string, string, error) {
+	// Get local image digest
+	localDigest, err := s.runCommand(ctx, "docker", "image", "inspect",
+		"--format", "{{index .RepoDigests 0}}", "ollama/ollama:latest")
+	if err != nil {
+		// Image not pulled yet → definitely needs update
+		return true, "", "", nil
+	}
+	// Extract digest part after @
+	if idx := strings.Index(localDigest, "@"); idx >= 0 {
+		localDigest = localDigest[idx+1:]
+	}
+
+	// Use docker manifest inspect to get remote digest (docker ≥ 20.10)
+	remoteOut, err := s.runCommand(ctx, "docker", "manifest", "inspect",
+		"--verbose", "ollama/ollama:latest")
+	if err != nil {
+		// manifest inspect not supported or network error → cannot determine, proceed with update
+		slog.Warn("cannot check remote manifest, proceeding with pull", "error", err)
+		return true, localDigest, "", nil
+	}
+
+	// The remote manifest output contains the digest; do a simple comparison
+	// by checking if our local digest appears in the remote manifest output
+	if localDigest != "" && strings.Contains(remoteOut, localDigest) {
+		return false, localDigest, localDigest, nil
+	}
+
+	return true, localDigest, "new", nil
+}
+
+// UpdateServiceStream pulls the latest ollama image with streaming output,
+// sending each line of docker pull progress to the provided lineFn callback.
+// After pull completes, it recreates the ollama container.
+func (s *DockerService) UpdateServiceStream(ctx context.Context, lineFn func(line string)) error {
+	s.InvalidateContainerCache()
+	defer s.InvalidateContainerCache()
+
+	// Phase 1: docker pull with streaming output
+	cmd := exec.CommandContext(ctx, "docker", "pull", "ollama/ollama:latest")
+	cmd.Dir = s.cfg.ProjectDir
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("创建管道失败: %w", err)
+	}
+	cmd.Stderr = cmd.Stdout // merge stderr into stdout
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动 docker pull 失败: %w", err)
+	}
+
+	// Stream each line
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		lineFn(scanner.Text())
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("docker pull 失败: %w", err)
+	}
+
+	// Phase 2: recreate ollama container
+	lineFn("正在重建 Ollama 容器...")
+	out, err := s.recreateOllama(ctx)
+	if err != nil {
+		return fmt.Errorf("重建容器失败: %s - %w", out, err)
+	}
+	lineFn("容器重建完成")
+
+	return nil
+}
+
+// recreateOllama force-recreates only the ollama service container,
+// avoiding recreation of the web container (which serves this request).
+func (s *DockerService) recreateOllama(ctx context.Context) (string, error) {
+	dir := shellQuote(s.cfg.ProjectDir)
+	return s.runShell(ctx, fmt.Sprintf("cd %s && %s up -d --force-recreate ollama 2>&1", dir, s.composeCmd))
+}
+
+// UpdateService is a non-streaming version kept for backward compatibility.
 func (s *DockerService) UpdateService(ctx context.Context) (string, error) {
 	s.InvalidateContainerCache()
 	dir := shellQuote(s.cfg.ProjectDir)
@@ -201,6 +283,7 @@ func (s *DockerService) UpdateService(ctx context.Context) (string, error) {
 	s.InvalidateContainerCache()
 	return out, err
 }
+
 
 // GetLogs returns recent container logs.
 // Uses "docker logs" directly instead of "docker compose logs" to avoid
