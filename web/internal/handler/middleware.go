@@ -22,8 +22,8 @@ func apiKeyAuth(apiKey string, next http.Handler) http.Handler {
 			return
 		}
 
-		// Exempt endpoints: health check (for monitoring probes) and version info
-		if path == "/api/health" || path == "/api/version" {
+		// Exempt endpoints: ping/health (for monitoring probes) and version info
+		if path == "/api/ping" || path == "/api/health" || path == "/api/version" {
 			next.ServeHTTP(w, r)
 			return
 		}

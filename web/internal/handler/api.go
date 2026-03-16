@@ -508,6 +508,14 @@ func (h *APIHandler) TranslateModelDescriptions(w http.ResponseWriter, r *http.R
 
 // ── Health & Diagnostics ────────────────────────────────────────────
 
+// Ping is a lightweight liveness probe that returns 200 without any external calls.
+// Used by Docker healthcheck to avoid unnecessary requests to Ollama/Docker.
+func (h *APIHandler) Ping(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
 // HealthCheck performs comprehensive health checks.
 func (h *APIHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)

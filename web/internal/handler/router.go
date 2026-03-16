@@ -43,6 +43,7 @@ func NewRouter(ollamaSvc *service.OllamaService, dockerSvc *service.DockerServic
 	mux.HandleFunc("GET /api/models/{name}/info", api.ShowModel)
 
 	// ── Health & Diagnostics ────────────────────────────────────────
+	mux.HandleFunc("GET /api/ping", api.Ping)
 	mux.HandleFunc("GET /api/health", api.HealthCheck)
 	mux.HandleFunc("GET /api/gpu", api.GetGPUInfo)
 	mux.HandleFunc("GET /api/logs", api.GetLogs)
