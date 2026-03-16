@@ -1060,6 +1060,7 @@ do_update() {
     # 变更追踪标志
     local ollama_changed=false
     local web_changed=false
+    local compose_changed=false
 
     # ── 获取当前版本 ──────────────────────────────────────────
     local current_ollama_ver="未知"
@@ -1124,6 +1125,7 @@ do_update() {
             local backup_file="${DOCKER_COMPOSE_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
             cp "${DOCKER_COMPOSE_FILE}" "${backup_file}"
             generate_compose_from_template
+            compose_changed=true
             log_success "docker-compose.yaml 已从模板重新生成（旧文件备份: ${backup_file}）"
         fi
     fi
@@ -1162,13 +1164,21 @@ do_update() {
     fi
 
     # ── 根据变更情况决定是否重建 ──────────────────────────────
-    if [ "$ollama_changed" = true ] || [ "$web_changed" = true ]; then
+    if [ "$ollama_changed" = true ] || [ "$web_changed" = true ] || [ "$compose_changed" = true ]; then
         # 有变更，按需重建
         local compose_args="-d"
 
         if [ "$web_changed" = true ]; then
             log_step "Web 代码有变更，重新构建 Web 镜像..."
             compose_args="-d --build"
+        fi
+
+        # compose 配置变更需要 force-recreate 使新配置（healthcheck 等）生效
+        if [ "$compose_changed" = true ] && [ "$compose_args" = "-d" ]; then
+            log_step "docker-compose.yaml 有变更，重建容器以应用新配置..."
+            compose_args="-d --force-recreate"
+        elif [ "$compose_changed" = true ]; then
+            compose_args="${compose_args} --force-recreate"
         fi
 
         if [ "$ollama_changed" = true ] && [ "$web_changed" = true ]; then
