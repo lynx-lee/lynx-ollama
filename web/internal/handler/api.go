@@ -39,7 +39,6 @@ type APIHandler struct {
 func NewAPIHandler(ollama *service.OllamaService, docker *service.DockerService, system *service.SystemService, cfg *config.Config, version string) *APIHandler {
 	h := &APIHandler{ollama: ollama, docker: docker, system: system, cfg: cfg, version: version}
 	h.statusHub = NewStatusHub(h)
-	h.statusHub.Start()
 	return h
 }
 
@@ -1001,12 +1000,15 @@ type statusClient struct {
 }
 
 // StatusHub manages all status WebSocket clients and a shared ticker.
+// The background polling goroutine starts only when there are active
+// (non-paused) clients and stops automatically when the last client
+// disconnects or pauses, avoiding unnecessary queries to Ollama/Docker.
 type StatusHub struct {
 	handler *APIHandler
 	clients map[*statusClient]struct{}
 	mu      sync.RWMutex
-	done    chan struct{}
-	once    sync.Once
+	running bool         // whether the polling goroutine is active
+	done    chan struct{} // signal to stop the polling goroutine
 }
 
 // NewStatusHub creates a new StatusHub.
@@ -1014,15 +1016,50 @@ func NewStatusHub(h *APIHandler) *StatusHub {
 	return &StatusHub{
 		handler: h,
 		clients: make(map[*statusClient]struct{}),
-		done:    make(chan struct{}),
 	}
 }
 
-// Start begins the shared data-collection ticker. Called once.
-func (hub *StatusHub) Start() {
-	hub.once.Do(func() {
-		go hub.run()
-	})
+// hasActiveClients returns true if any client is connected and not paused.
+// Caller must hold at least hub.mu.RLock.
+func (hub *StatusHub) hasActiveClients() bool {
+	for c := range hub.clients {
+		c.mu.Lock()
+		paused := c.paused
+		c.mu.Unlock()
+		if !paused {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureRunning starts the polling goroutine if not already running and
+// there are active clients. Must be called with hub.mu held (write lock).
+func (hub *StatusHub) ensureRunning() {
+	if hub.running {
+		return
+	}
+	if !hub.hasActiveClients() {
+		return
+	}
+	hub.done = make(chan struct{})
+	hub.running = true
+	slog.Info("StatusHub: polling started (clients connected)")
+	go hub.run()
+}
+
+// ensureStopped stops the polling goroutine if there are no active clients.
+// Must be called with hub.mu held (write lock).
+func (hub *StatusHub) ensureStopped() {
+	if !hub.running {
+		return
+	}
+	if hub.hasActiveClients() {
+		return
+	}
+	close(hub.done)
+	hub.running = false
+	slog.Info("StatusHub: polling stopped (no active clients)")
 }
 
 // run is the main loop that collects data and pushes to all clients.
@@ -1278,14 +1315,28 @@ func (hub *StatusHub) collectLiteStatus() model.ServiceStatus {
 func (hub *StatusHub) add(c *statusClient) {
 	hub.mu.Lock()
 	hub.clients[c] = struct{}{}
+	hub.ensureRunning()
 	hub.mu.Unlock()
 }
 
 func (hub *StatusHub) remove(c *statusClient) {
 	hub.mu.Lock()
 	delete(hub.clients, c)
+	hub.ensureStopped()
 	hub.mu.Unlock()
 	c.conn.Close()
+}
+
+// onClientStateChange should be called when a client's paused state changes.
+// It checks whether the polling goroutine needs to start or stop.
+func (hub *StatusHub) onClientStateChange() {
+	hub.mu.Lock()
+	if hub.hasActiveClients() {
+		hub.ensureRunning()
+	} else {
+		hub.ensureStopped()
+	}
+	hub.mu.Unlock()
 }
 
 // statusWSMessage is the envelope for status WebSocket messages.
@@ -1353,8 +1404,14 @@ func (h *APIHandler) StreamStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		case "pause":
 			client.paused = true
+			client.mu.Unlock()
+			h.statusHub.onClientStateChange()
+			continue
 		case "resume":
 			client.paused = false
+			client.mu.Unlock()
+			h.statusHub.onClientStateChange()
+			continue
 		}
 		client.mu.Unlock()
 	}
