@@ -1135,6 +1135,20 @@ do_update() {
         log_info "Ollama 镜像已是最新，无变更"
     fi
 
+    # ── 检查运行中 Web 容器版本是否与源码一致 ──────────────────
+    # 即使 git pull 无变更，容器可能是用旧代码构建的（例如上次改了代码但没重建容器）
+    if [ "$web_changed" = false ]; then
+        local web_port="${WEB_PORT:-9981}"
+        local running_web_ver=""
+        running_web_ver=$(curl -sf "http://localhost:${web_port}/api/version" --connect-timeout 3 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('project_version',''))" 2>/dev/null || echo "")
+
+        if [ -n "$running_web_ver" ] && [ "$running_web_ver" != "${VERSION}" ]; then
+            web_changed=true
+            log_info "检测到 Web 容器版本不一致: 运行中 ${running_web_ver} ≠ 源码 ${VERSION}，需要重建"
+        fi
+    fi
+
     # ── 根据变更情况决定是否重建 ──────────────────────────────
     if [ "$ollama_changed" = true ] || [ "$web_changed" = true ]; then
         # 有变更，按需重建
