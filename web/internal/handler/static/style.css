@@ -789,6 +789,32 @@ tbody tr:hover { background: var(--bg-hover); }
     font-size: 11px;
 }
 
+/* ── Model Search & Sortable Table ────────────────────────────── */
+.model-search-bar {
+    margin-bottom: 12px;
+}
+
+.model-search-bar input {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.model-search-bar input:focus { outline: none; border-color: var(--accent-blue); }
+
+.sortable-th {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    transition: color var(--transition);
+}
+
+.sortable-th:hover { color: var(--accent-blue); }
+
 /* ── Model Tab Bar ────────────────────────────────────────────── */
 .tab-bar {
     display: flex;

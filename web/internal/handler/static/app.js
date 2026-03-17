@@ -576,78 +576,127 @@ function finishUpdate(ws) {
 }
 
 // ── Models Page ─────────────────────────────────────────────────
+// 模型列表状态
+let _allModels = [];
+let _modelSearch = '';
+let _modelSort = { key: 'name', dir: 'asc' };
+
+function filterAndSortModels(models) {
+    let filtered = models;
+    if (_modelSearch) {
+        const q = _modelSearch.toLowerCase();
+        filtered = models.filter(m => (m.name || '').toLowerCase().includes(q) || (m.family || '').toLowerCase().includes(q));
+    }
+    const { key, dir } = _modelSort;
+    filtered.sort((a, b) => {
+        let va, vb;
+        if (key === 'name') { va = (a.name || '').toLowerCase(); vb = (b.name || '').toLowerCase(); }
+        else if (key === 'size') { va = a.size || 0; vb = b.size || 0; }
+        else if (key === 'modified_at') { va = new Date(a.modified_at || 0).getTime(); vb = new Date(b.modified_at || 0).getTime(); }
+        else { va = a[key] || ''; vb = b[key] || ''; }
+        if (va < vb) return dir === 'asc' ? -1 : 1;
+        if (va > vb) return dir === 'asc' ? 1 : -1;
+        return 0;
+    });
+    return filtered;
+}
+
+function sortIcon(key) {
+    if (_modelSort.key !== key) return ' ⇅';
+    return _modelSort.dir === 'asc' ? ' ↑' : ' ↓';
+}
+
+function toggleModelSort(key) {
+    if (_modelSort.key === key) {
+        _modelSort.dir = _modelSort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+        _modelSort.key = key;
+        _modelSort.dir = 'asc';
+    }
+    renderModels();
+}
+
+function onModelSearchInput(e) {
+    _modelSearch = e.target.value;
+    renderModels();
+}
+
+function renderModels() {
+    const container = document.getElementById('modelsContainer');
+    if (!_allModels || _allModels.length === 0) {
+        container.innerHTML = '<div class="card"><div class="empty-state">暂无模型，点击"拉取模型"下载</div></div>';
+        return;
+    }
+
+    const cloudModels = filterAndSortModels(_allModels.filter(m => m.name && m.name.includes(':cloud')));
+    const localModels = filterAndSortModels(_allModels.filter(m => !m.name || !m.name.includes(':cloud')));
+    const sortableHdr = (label, key) => `<th class="sortable-th" onclick="toggleModelSort('${key}')">${label}${sortIcon(key)}</th>`;
+
+    let html = `<div class="model-search-bar"><input type="text" placeholder="搜索模型名称..." value="${escapeAttr(_modelSearch)}" oninput="onModelSearchInput(event)" /></div>`;
+
+    if (cloudModels.length > 0) {
+        html += `
+            <div class="card">
+                <div class="card-header"><h3>☁️ 云端模型 (${cloudModels.length})</h3></div>
+                <div class="table-container">
+                    <table>
+                        <thead><tr>${sortableHdr('名称','name')}${sortableHdr('大小','size')}${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
+                        <tbody>${cloudModels.map(m => `
+                            <tr>
+                                <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || '云端推理'}</span></td>
+                                <td>${m.size_human}</td>
+                                <td>${formatTime(m.modified_at)}</td>
+                                <td>
+                                    <button class="btn btn-sm" onclick="showModelInfo('${escapeAttr(m.name)}')" title="详情">📋</button>
+                                    <button class="btn btn-sm btn-danger" onclick="deleteModel('${escapeAttr(m.name)}')" title="删除">🗑</button>
+                                </td>
+                            </tr>
+                        `).join('')}</tbody>
+                    </table>
+                </div>
+            </div>`;
+    }
+
+    if (localModels.length > 0) {
+        html += `
+            <div class="card">
+                <div class="card-header"><h3>💻 本地模型 (${localModels.length})</h3></div>
+                <div class="table-container">
+                    <table>
+                        <thead><tr>${sortableHdr('名称','name')}${sortableHdr('大小','size')}<th>参数</th><th>量化</th>${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
+                        <tbody>${localModels.map(m => `
+                            <tr>
+                                <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || ''}</span></td>
+                                <td>${m.size_human}</td>
+                                <td>${m.parameters || '--'}</td>
+                                <td>${m.quantization || '--'}</td>
+                                <td>${formatTime(m.modified_at)}</td>
+                                <td>
+                                    <button class="btn btn-sm" onclick="showModelInfo('${escapeAttr(m.name)}')" title="详情">📋</button>
+                                    <button class="btn btn-sm btn-danger" onclick="deleteModel('${escapeAttr(m.name)}')" title="删除">🗑</button>
+                                </td>
+                            </tr>
+                        `).join('')}</tbody>
+                    </table>
+                </div>
+            </div>`;
+    }
+
+    if (cloudModels.length === 0 && localModels.length === 0 && _modelSearch) {
+        html += '<div class="card"><div class="empty-state">未找到匹配的模型</div></div>';
+    }
+
+    const totalSize = _allModels.reduce((sum, m) => sum + (m.size || 0), 0);
+    const totalSizeHuman = totalSize >= 1073741824 ? `${(totalSize / 1073741824).toFixed(1)} GiB` : `${(totalSize / 1048576).toFixed(1)} MiB`;
+    html += `<div style="text-align:right;color:var(--text-muted);font-size:12px;margin-top:4px">共 ${_allModels.length} 个模型，总计 ${totalSizeHuman}</div>`;
+
+    container.innerHTML = html;
+}
+
 async function loadModels() {
     try {
-        const models = await api('/api/models');
-        const container = document.getElementById('modelsContainer');
-
-        if (!models || models.length === 0) {
-            container.innerHTML = '<div class="card"><div class="empty-state">暂无模型，点击"拉取模型"下载</div></div>';
-            return;
-        }
-
-        // Split into cloud and local models
-        const cloudModels = models.filter(m => m.name && m.name.includes(':cloud'));
-        const localModels = models.filter(m => !m.name || !m.name.includes(':cloud'));
-
-        let html = '';
-
-        // Cloud models section
-        if (cloudModels.length > 0) {
-            html += `
-                <div class="card">
-                    <div class="card-header"><h3>☁️ 云端模型 (${cloudModels.length})</h3></div>
-                    <div class="table-container">
-                        <table>
-                            <thead><tr><th>名称</th><th>大小</th><th>修改时间</th><th>操作</th></tr></thead>
-                            <tbody>${cloudModels.map(m => `
-                                <tr>
-                                    <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || '云端推理'}</span></td>
-                                    <td>${m.size_human}</td>
-                                    <td>${formatTime(m.modified_at)}</td>
-                                    <td>
-                                        <button class="btn btn-sm" onclick="showModelInfo('${escapeAttr(m.name)}')" title="详情">📋</button>
-                                        <button class="btn btn-sm btn-danger" onclick="deleteModel('${escapeAttr(m.name)}')" title="删除">🗑</button>
-                                    </td>
-                                </tr>
-                            `).join('')}</tbody>
-                        </table>
-                    </div>
-                </div>`;
-        }
-
-        // Local models section
-        if (localModels.length > 0) {
-            html += `
-                <div class="card">
-                    <div class="card-header"><h3>💻 本地模型 (${localModels.length})</h3></div>
-                    <div class="table-container">
-                        <table>
-                            <thead><tr><th>名称</th><th>大小</th><th>参数</th><th>量化</th><th>修改时间</th><th>操作</th></tr></thead>
-                            <tbody>${localModels.map(m => `
-                                <tr>
-                                    <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || ''}</span></td>
-                                    <td>${m.size_human}</td>
-                                    <td>${m.parameters || '--'}</td>
-                                    <td>${m.quantization || '--'}</td>
-                                    <td>${formatTime(m.modified_at)}</td>
-                                    <td>
-                                        <button class="btn btn-sm" onclick="showModelInfo('${escapeAttr(m.name)}')" title="详情">📋</button>
-                                        <button class="btn btn-sm btn-danger" onclick="deleteModel('${escapeAttr(m.name)}')" title="删除">🗑</button>
-                                    </td>
-                                </tr>
-                            `).join('')}</tbody>
-                        </table>
-                    </div>
-                </div>`;
-        }
-
-        // Summary
-        const totalSize = models.reduce((sum, m) => sum + (m.size || 0), 0);
-        const totalSizeHuman = totalSize >= 1073741824 ? `${(totalSize / 1073741824).toFixed(1)} GiB` : `${(totalSize / 1048576).toFixed(1)} MiB`;
-        html += `<div style="text-align:right;color:var(--text-muted);font-size:12px;margin-top:4px">共 ${models.length} 个模型，总计 ${totalSizeHuman}</div>`;
-
-        container.innerHTML = html;
+        _allModels = await api('/api/models') || [];
+        renderModels();
     } catch (err) {
         showToast('加载模型列表失败: ' + err.message, 'error');
     }
