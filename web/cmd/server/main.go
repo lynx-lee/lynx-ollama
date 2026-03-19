@@ -67,6 +67,13 @@ func main() {
 	dockerSvc := service.NewDockerService(cfg)
 	systemSvc := service.NewSystemService(cfg)
 
+	// Initialize GPU monitor service
+	gpuMonitor := service.NewGPUMonitorService(cfg, dockerSvc, ollamaSvc, &service.GPUMonitorConfig{
+		CheckInterval:   30 * time.Second,
+		RestartCooldown: 5 * time.Minute,
+		MaxRestarts:     3,
+	})
+
 	// Setup HTTP router
 	mux := handler.NewRouter(ollamaSvc, dockerSvc, systemSvc, cfg, Version)
 
@@ -82,6 +89,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Start GPU monitor in background
+	go gpuMonitor.Start()
+
 	go func() {
 		slog.Info("starting web server", "addr", cfg.ListenAddr, "ollama_url", cfg.OllamaAPIURL, "version", Version)
 		fmt.Printf("\n  🌐 Ollama Web 管理界面: http://%s  (%s)\n", cfg.ListenAddr, Version)
@@ -94,6 +104,9 @@ func main() {
 
 	<-ctx.Done()
 	slog.Info("shutting down server...")
+
+	// Stop GPU monitor
+	gpuMonitor.Stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
