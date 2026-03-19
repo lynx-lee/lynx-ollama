@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.7.4-blue)
+![Version](https://img.shields.io/badge/version-v1.7.5-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -320,6 +320,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.7.5 | 2026-03-19 | **GPU 自动监控与重启**。新增 GPU 监控服务（`GPUMonitorService`），每 30 秒检测 GPU 状态，当检测到 GPU 不可用（统一内存架构未初始化、显存信息为 [N/A]、无 GPU 等）时自动重启 Ollama 容器；智能重启策略：冷却时间 5 分钟、每小时最多重启 3 次，防止无限重启循环；支持统一内存架构（GB10/GH200/Grace Hopper）和普通 GPU；Web 服务启动时自动启动监控，优雅关闭时自动停止 |
 | v1.7.4 | 2026-03-16 | **已下载模型列表搜索与排序**。模型管理页「已下载模型」tab 新增搜索框（按名称/family 实时过滤）和可排序表头（点击名称/大小/修改时间列切换升降序），云端和本地模型表格共享同一套搜索排序状态 |
 | v1.7.3 | 2026-03-16 | **Web healthcheck 轻量化 + update 自动同步模板**。1️⃣ `ollama-web` 容器的 Docker healthcheck 从 `/api/health`（每次调用 `IsAPIReady` + `GetVersion` 向 Ollama 发送 `GET /` + `GET /api/version`）改为新增的 `/api/ping` 端点（仅返回 `{"status":"ok"}`，零外部调用），彻底消除无客户端时 Web 容器 healthcheck 产生的 Ollama API 请求；2️⃣ `ollama.sh update` 新增模板同步：`git pull` 后自动检测 `docker-compose.yaml.template` 是否与当前 `docker-compose.yaml` 不一致，有变更时自动备份旧文件并从模板重新生成，确保 healthcheck 等配置变更随代码更新自动生效 |
 | v1.7.2 | 2026-03-16 | **StatusHub 按需轮询优化**。当没有任何 Web 客户端连接（或所有客户端都切换到后台标签页暂停）时，后端 StatusHub 自动停止对 Ollama/Docker 的定时轮询（`GET /`、`GET /api/version` 等），减少无意义的网络请求和日志输出；当有新客户端连接或从暂停恢复时自动重新启动轮询。核心改动：`StatusHub` 从 `sync.Once` 一次性启动改为动态启停——`add()` 时检测并启动、`remove()` 时检测并停止、客户端 `pause`/`resume` 时触发 `onClientStateChange()` 重新评估；`NewAPIHandler` 中移除 `statusHub.Start()` 调用 |
