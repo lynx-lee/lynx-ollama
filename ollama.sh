@@ -1260,6 +1260,55 @@ do_update() {
     fi
 }
 
+# 强制构建 Web 镜像
+do_build() {
+    log_info "强制构建 Web 管理界面..."
+    
+    cd "${PROJECT_DIR}"
+    
+    # 检查 web 目录是否存在
+    if [ ! -d "${PROJECT_DIR}/web" ]; then
+        log_error "web 目录不存在: ${PROJECT_DIR}/web"
+        exit 1
+    fi
+    
+    # 显示当前版本
+    log_info "当前版本: ${VERSION}"
+    
+    # 构建参数
+    local build_args="--build"
+    
+    # 检查是否需要强制重新创建容器
+    local force_recreate=""
+    if [ "${1:-}" = "--recreate" ] || [ "${1:-}" = "-r" ]; then
+        force_recreate="--force-recreate"
+        log_info "将强制重新创建容器"
+    fi
+    
+    # 执行构建
+    log_step "构建 Web 镜像..."
+    export WEB_VERSION="${VERSION}"
+    
+    if [ -n "$force_recreate" ]; then
+        $COMPOSE_CMD up -d --build --force-recreate ollama-web
+    else
+        $COMPOSE_CMD up -d --build ollama-web
+    fi
+    
+    if [ $? -eq 0 ]; then
+        echo ""
+        print_separator
+        log_success "Web 镜像构建完成！"
+        echo ""
+        echo -e "  ${BOLD}版本:${NC} ${VERSION}"
+        echo -e "  ${BOLD}访问:${NC} http://localhost:${WEB_PORT:-9981}"
+        echo ""
+    else
+        log_error "Web 镜像构建失败"
+        exit 1
+    fi
+}
+
 # 清理
 do_clean() {
     local mode="${1:-}"
@@ -3367,6 +3416,7 @@ show_help() {
     echo "  restore [file]      恢复模型与配置"
     echo "  clean <mode>        清理 (--soft|--hard|--purge)"
     echo "  exec [cmd]          进入容器 (默认bash)"
+    echo "  build [--recreate]  强制构建 Web 镜像"
     echo "  version             显示脚本版本号"
     echo "  help                显示帮助信息"
     echo ""
@@ -3443,6 +3493,10 @@ main() {
         clean)
             print_banner
             do_clean "$@"
+            ;;
+        build)
+            print_banner
+            do_build "$@"
             ;;
         init)
             check_requirements
