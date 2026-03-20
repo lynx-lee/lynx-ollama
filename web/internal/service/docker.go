@@ -374,9 +374,10 @@ func (s *DockerService) GetLogs(ctx context.Context, lines int) (string, error) 
 // The web container does not have GPU device access, so we exec into the ollama
 // container which has the NVIDIA runtime configured.
 func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error) {
+	// Query GPU basic info
 	out, err := s.runCommand(ctx, "docker", "exec", "ollama",
 		"nvidia-smi",
-		"--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw,power.limit,driver_version",
+		"--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw,power.limit,driver_version,persistence_mode,pci.bus_id,display_active,ecc.errors.uncorrected.volatile,fan.speed,pstate,compute_mode,mig.mode.current",
 		"--format=csv,noheader,nounits")
 	if err != nil {
 		slog.Warn("nvidia-smi failed", "error", err)
@@ -390,7 +391,7 @@ func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error)
 			continue
 		}
 		parts := strings.Split(line, ", ")
-		if len(parts) < 10 {
+		if len(parts) < 18 {
 			continue
 		}
 
@@ -404,17 +405,25 @@ func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error)
 		isUnified := isUnifiedMemoryGPU(gpuName) || memTotal == "[N/A]"
 
 		gpu := model.GPUInfo{
-			Index:        strings.TrimSpace(parts[0]),
-			Name:         gpuName,
-			MemTotal:     memTotal + " MiB",
-			MemUsed:      memUsed + " MiB",
-			MemFree:      memFree + " MiB",
-			Utilization:  strings.TrimSpace(parts[5]) + "%",
-			Temperature:  strings.TrimSpace(parts[6]) + "°C",
-			Power:        strings.TrimSpace(parts[7]) + "W",
-			PowerLimit:   strings.TrimSpace(parts[8]) + "W",
-			Driver:       strings.TrimSpace(parts[9]),
-			IsUnifiedMem: isUnified,
+			Index:           strings.TrimSpace(parts[0]),
+			Name:            gpuName,
+			MemTotal:        memTotal + " MiB",
+			MemUsed:         memUsed + " MiB",
+			MemFree:         memFree + " MiB",
+			Utilization:     strings.TrimSpace(parts[5]) + "%",
+			Temperature:     strings.TrimSpace(parts[6]) + "°C",
+			Power:           strings.TrimSpace(parts[7]) + "W",
+			PowerLimit:      strings.TrimSpace(parts[8]) + "W",
+			Driver:          strings.TrimSpace(parts[9]),
+			IsUnifiedMem:    isUnified,
+			PersistenceMode: strings.TrimSpace(parts[10]),
+			BusID:          strings.TrimSpace(parts[11]),
+			DispActive:     strings.TrimSpace(parts[12]),
+			VolatileECC:    strings.TrimSpace(parts[13]),
+			FanSpeed:       strings.TrimSpace(parts[14]),
+			PerfState:      strings.TrimSpace(parts[15]),
+			ComputeMode:    strings.TrimSpace(parts[16]),
+			MIGMode:        strings.TrimSpace(parts[17]),
 		}
 
 		if isUnified {
@@ -455,7 +464,49 @@ func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error)
 		gpus[i].CUDA = strings.TrimSpace(cudaOut)
 	}
 
+	// Get GPU processes for each GPU
+	for i := range gpus {
+		processes := s.getGPUProcesses(ctx, gpus[i].Index)
+		gpus[i].Processes = processes
+	}
+
 	return gpus, nil
+}
+
+// getGPUProcesses returns the list of processes using a specific GPU.
+func (s *DockerService) getGPUProcesses(ctx context.Context, gpuIndex string) []model.GPUProcess {
+	out, err := s.runCommand(ctx, "docker", "exec", "ollama",
+		"nvidia-smi",
+		"--query-compute-apps=pid,process_name,used_memory",
+		"--format=csv,noheader,nounits",
+		"-i", gpuIndex)
+	if err != nil {
+		return nil
+	}
+
+	var processes []model.GPUProcess
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "No running processes found" {
+			continue
+		}
+		parts := strings.Split(line, ", ")
+		if len(parts) < 3 {
+			continue
+		}
+
+		pid := 0
+		fmt.Sscanf(strings.TrimSpace(parts[0]), "%d", &pid)
+
+		process := model.GPUProcess{
+			PID:      pid,
+			Name:     strings.TrimSpace(parts[1]),
+			MemUsage: strings.TrimSpace(parts[2]) + " MiB",
+		}
+		processes = append(processes, process)
+	}
+
+	return processes
 }
 
 // isUnifiedMemoryGPU checks if the GPU name indicates a unified memory architecture.

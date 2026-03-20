@@ -68,19 +68,40 @@ type RunningModel struct {
 
 // GPUInfo holds GPU hardware information.
 type GPUInfo struct {
-	Index          string `json:"index"`
-	Name           string `json:"name"`
-	MemTotal       string `json:"mem_total"`
-	MemUsed        string `json:"mem_used"`
-	MemFree        string `json:"mem_free"`
-	Utilization    string `json:"utilization"`
-	Temperature    string `json:"temperature"`
-	Power          string `json:"power"`
-	PowerLimit     string `json:"power_limit"`
-	Driver         string `json:"driver"`
-	CUDA           string `json:"cuda"`
-	IsUnifiedMem   bool   `json:"is_unified_mem"`       // true for unified memory architectures (GB10, GH200, Grace)
-	UnifiedMemTotal string `json:"unified_mem_total,omitempty"` // system total memory when unified (e.g. "128 GiB")
+	Index           string `json:"index"`
+	Name            string `json:"name"`
+	MemTotal        string `json:"mem_total"`
+	MemUsed         string `json:"mem_used"`
+	MemFree         string `json:"mem_free"`
+	Utilization     string `json:"utilization"`
+	Temperature     string `json:"temperature"`
+	Power           string `json:"power"`
+	PowerLimit      string `json:"power_limit"`
+	Driver          string `json:"driver"`
+	CUDA            string `json:"cuda"`
+	IsUnifiedMem    bool   `json:"is_unified_mem"`
+	UnifiedMemTotal string `json:"unified_mem_total,omitempty"`
+	
+	// 新增字段
+	PersistenceMode string         `json:"persistence_mode"`
+	BusID           string         `json:"bus_id"`
+	DispActive      string         `json:"disp_active"`
+	VolatileECC     string         `json:"volatile_ecc"`
+	FanSpeed        string         `json:"fan_speed"`
+	PerfState       string         `json:"perf_state"`
+	ComputeMode     string         `json:"compute_mode"`
+	MIGMode         string         `json:"mig_mode"`
+	Processes       []GPUProcess   `json:"processes,omitempty"`
+}
+
+// GPUProcess represents a process using GPU.
+type GPUProcess struct {
+	PID       int    `json:"pid"`
+	Type      string `json:"type"`
+	Name      string `json:"name"`
+	MemUsage  string `json:"mem_usage"`
+	GI        string `json:"gi,omitempty"`
+	CI        string `json:"ci,omitempty"`
 }
 
 // DiskUsage holds disk space information.

@@ -1224,6 +1224,23 @@ function renderGpuCards(gpus) {
                 </div>`;
         }
 
+        // GPU 进程列表
+        let processesSection = '';
+        if (gpu.processes && gpu.processes.length > 0) {
+            processesSection = `
+                <div style="margin-top:12px">
+                    <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">活跃进程 (${gpu.processes.length})</div>
+                    <div style="font-size:11px;max-height:200px;overflow-y:auto">
+                        ${gpu.processes.map(p => `
+                            <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-color)">
+                                <span style="color:var(--text-secondary)">[${p.pid}] ${escapeHtml(p.name)}</span>
+                                <span style="color:var(--accent-blue)">${p.mem_usage}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>`;
+        }
+
         return `
             <div class="gpu-card">
                 <h3>🎮 GPU ${gpu.index}: ${escapeHtml(gpu.name)}${isUnified ? ' <span style="color:var(--accent-purple);font-size:12px">统一内存架构</span>' : ''}</h3>
@@ -1241,11 +1258,20 @@ function renderGpuCards(gpus) {
                     ${buildInfoList({
                         '温度': gpu.temperature,
                         '功耗': `${gpu.power} / ${gpu.power_limit}`,
+                        '风扇': gpu.fan_speed || 'N/A',
+                        '性能状态': gpu.perf_state || 'N/A',
+                        '持久化模式': gpu.persistence_mode || 'N/A',
+                        '计算模式': gpu.compute_mode || 'N/A',
+                        '总线 ID': gpu.bus_id || 'N/A',
+                        '显示活跃': gpu.disp_active || 'N/A',
+                        'ECC 错误': gpu.volatile_ecc || '0',
+                        'MIG 模式': gpu.mig_mode || 'N/A',
                         '驱动': gpu.driver,
                         'CUDA': gpu.cuda || '--',
                         ...(isUnified ? {'内存架构': '统一内存 (CPU/GPU 共享)'} : {'空闲显存': gpu.mem_free}),
                     })}
                 </div>
+                ${processesSection}
             </div>
         `;
     }).join('');
