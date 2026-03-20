@@ -358,7 +358,6 @@ func (s *DockerService) UpdateService(ctx context.Context) (string, error) {
 	return out, err
 }
 
-
 // GetLogs returns recent container logs.
 // Uses "docker logs" directly instead of "docker compose logs" to avoid
 // compose project context issues when running inside a container.
@@ -374,15 +373,17 @@ func (s *DockerService) GetLogs(ctx context.Context, lines int) (string, error) 
 // The web container does not have GPU device access, so we exec into the ollama
 // container which has the NVIDIA runtime configured.
 func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error) {
-	// Query GPU basic info
+	// Query GPU basic info with simpler, more compatible fields
 	out, err := s.runCommand(ctx, "docker", "exec", "ollama",
 		"nvidia-smi",
-		"--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw,power.limit,driver_version,persistence_mode,pci.bus_id,display_active,ecc.errors.uncorrected.volatile,fan.speed,pstate,compute_mode,mig.mode.current",
+		"--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw,power.limit,driver_version,persistence_mode,pci.bus_id,display_active,fan.speed,pstate,compute_mode",
 		"--format=csv,noheader,nounits")
 	if err != nil {
 		slog.Warn("nvidia-smi failed", "error", err)
 		return nil, nil
 	}
+
+	slog.Debug("nvidia-smi output", "output", out)
 
 	var gpus []model.GPUInfo
 	for _, line := range strings.Split(out, "\n") {
@@ -391,7 +392,8 @@ func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error)
 			continue
 		}
 		parts := strings.Split(line, ", ")
-		if len(parts) < 18 {
+		if len(parts) < 15 {
+			slog.Warn("unexpected nvidia-smi output format", "line", line, "parts", len(parts), "expected", 15)
 			continue
 		}
 
@@ -417,13 +419,28 @@ func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error)
 			Driver:          strings.TrimSpace(parts[9]),
 			IsUnifiedMem:    isUnified,
 			PersistenceMode: strings.TrimSpace(parts[10]),
-			BusID:          strings.TrimSpace(parts[11]),
-			DispActive:     strings.TrimSpace(parts[12]),
-			VolatileECC:    strings.TrimSpace(parts[13]),
-			FanSpeed:       strings.TrimSpace(parts[14]),
-			PerfState:      strings.TrimSpace(parts[15]),
-			ComputeMode:    strings.TrimSpace(parts[16]),
-			MIGMode:        strings.TrimSpace(parts[17]),
+			BusID:           strings.TrimSpace(parts[11]),
+			DispActive:      strings.TrimSpace(parts[12]),
+			FanSpeed:        strings.TrimSpace(parts[13]),
+			PerfState:       strings.TrimSpace(parts[14]),
+			ComputeMode:     "Default",
+			MIGMode:         "N/A",
+		}
+
+		// Try to get ECC errors if available
+		eccOut, _ := s.runCommand(ctx, "docker", "exec", "ollama",
+			"nvidia-smi", "-i", gpu.Index, "--query-gpu=ecc.errors.uncorrected.volatile", "--format=csv,noheader,nounits")
+		if eccOut != "" {
+			gpu.VolatileECC = strings.TrimSpace(eccOut)
+		} else {
+			gpu.VolatileECC = "0"
+		}
+
+		// Try to get MIG mode if available
+		migOut, _ := s.runCommand(ctx, "docker", "exec", "ollama",
+			"nvidia-smi", "-i", gpu.Index, "--query-gpu=mig.mode.current", "--format=csv,noheader,nounits")
+		if migOut != "" {
+			gpu.MIGMode = strings.TrimSpace(migOut)
 		}
 
 		if isUnified {
@@ -457,6 +474,11 @@ func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error)
 		gpus = append(gpus, gpu)
 	}
 
+	if len(gpus) == 0 {
+		slog.Warn("no GPUs detected")
+		return nil, nil
+	}
+
 	// Also get CUDA version from the ollama container
 	cudaOut, _ := s.runCommand(ctx, "docker", "exec", "ollama",
 		"bash", "-c", "nvidia-smi | grep 'CUDA Version' | sed 's/.*CUDA Version: *//;s/ .*//'")
@@ -470,6 +492,7 @@ func (s *DockerService) GetGPUInfo(ctx context.Context) ([]model.GPUInfo, error)
 		gpus[i].Processes = processes
 	}
 
+	slog.Info("GPU info retrieved", "count", len(gpus))
 	return gpus, nil
 }
 
