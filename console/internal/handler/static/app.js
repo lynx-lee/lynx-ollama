@@ -1590,6 +1590,36 @@ function friendlyChatError(err) {
     return err;
 }
 
+function openImageLightbox(src, name) {
+    let lb = document.getElementById('chatImageLightbox');
+    if (!lb) {
+        lb = document.createElement('div');
+        lb.id = 'chatImageLightbox';
+        lb.className = 'chat-lightbox';
+        lb.innerHTML = `<div class="chat-lightbox-backdrop" onclick="closeImageLightbox()"></div>
+            <div class="chat-lightbox-content">
+                <img id="chatLightboxImg" src="" alt="">
+                <div class="chat-lightbox-name" id="chatLightboxName"></div>
+                <button class="chat-lightbox-close" onclick="closeImageLightbox()">✕</button>
+            </div>`;
+        document.body.appendChild(lb);
+    }
+    document.getElementById('chatLightboxImg').src = src;
+    document.getElementById('chatLightboxName').textContent = name || '';
+    lb.classList.add('open');
+    document.addEventListener('keydown', lightboxEscHandler);
+}
+
+function closeImageLightbox() {
+    const lb = document.getElementById('chatImageLightbox');
+    if (lb) lb.classList.remove('open');
+    document.removeEventListener('keydown', lightboxEscHandler);
+}
+
+function lightboxEscHandler(e) {
+    if (e.key === 'Escape') closeImageLightbox();
+}
+
 // User custom presets stored in localStorage
 function getUserPresets() {
     try { return JSON.parse(localStorage.getItem('ollama_chat_presets') || '{}'); } catch { return {}; }
@@ -1982,7 +2012,7 @@ function appendChatBubble(role, content, fileInfos) {
     if (fileInfos && fileInfos.length) {
         filesHtml = '<div class="chat-msg-files">' + fileInfos.map(f => {
             if (f.isImage && f.url) {
-                return `<img src="${f.url}" class="chat-msg-img-preview" alt="${escapeHtml(f.name)}" title="${escapeHtml(f.name)}">`;
+                return `<img src="${f.url}" class="chat-msg-img-preview" alt="${escapeHtml(f.name)}" title="点击查看原图" onclick="openImageLightbox(this.src, '${escapeAttr(f.name)}')">`;
             }
             return `<span class="chat-msg-file-tag">📄 ${escapeHtml(f.name)}</span>`;
         }).join('') + '</div>';
