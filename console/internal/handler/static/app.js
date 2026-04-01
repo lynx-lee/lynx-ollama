@@ -1567,6 +1567,29 @@ function matchBuiltinPreset(modelName) {
     return null;
 }
 
+function isVisionModel(modelName) {
+    const name = (modelName || '').toLowerCase();
+    return ['llava', 'vision', 'minicpm-v', 'moondream', 'bakllava', 'cogvlm', 'internvl'].some(k => name.includes(k));
+}
+
+function friendlyChatError(err) {
+    if (!err) return '未知错误';
+    const e = err.toLowerCase();
+    if (e.includes('image input') || e.includes('missing data required for image'))
+        return '当前模型不支持图片输入，请使用视觉模型（如 llava、llama3.2-vision）';
+    if (e.includes('not found') || e.includes('no such model'))
+        return '模型不存在，请先下载该模型';
+    if (e.includes('context length') || e.includes('num_ctx') || e.includes('too long'))
+        return '输入内容超出模型上下文长度限制，请缩短输入或增大 num_ctx';
+    if (e.includes('out of memory') || e.includes('oom') || e.includes('not enough memory'))
+        return '显存不足，请尝试使用更小的模型或减小上下文长度';
+    if (e.includes('connection refused') || e.includes('connect:'))
+        return 'Ollama 服务连接失败，请检查服务是否运行中';
+    if (e.includes('timeout') || e.includes('deadline'))
+        return '请求超时，模型可能正在加载中，请稍后重试';
+    return err;
+}
+
 // User custom presets stored in localStorage
 function getUserPresets() {
     try { return JSON.parse(localStorage.getItem('ollama_chat_presets') || '{}'); } catch { return {}; }
@@ -1767,6 +1790,14 @@ function sendChat() {
         return;
     }
 
+    // Check: uploading images requires a vision-capable model
+    const hasImages = chatUploadedFiles.some(f => f.is_image);
+    if (hasImages && !isVisionModel(model)) {
+        showToast('当前模型不支持图片输入，请选择视觉模型（如 llava、llama3.2-vision、minicpm-v 等）', 'error');
+        return;
+    }        return;
+    }
+
     // Add user message
     const userMsg = { role: 'user', content: text, files: chatUploadedFiles.map(f => f.id) };
     chatMessages.push(userMsg);
@@ -1845,7 +1876,7 @@ function sendChat() {
                     break;
                 case 'error':
                     chatStreaming = false;
-                    showToast('对话错误: ' + data.error, 'error');
+                    showToast('对话错误: ' + friendlyChatError(data.error), 'error');
                     document.getElementById('chatSendBtn').style.display = '';
                     document.getElementById('chatStopBtn').style.display = 'none';
                     break;
