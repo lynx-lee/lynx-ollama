@@ -1275,6 +1275,18 @@ do_build() {
     # 显示当前版本
     log_info "当前版本: ${VERSION}"
     
+    # 同步模板：确保 docker-compose.yaml 与 template 一致
+    local template_file="${PROJECT_DIR}/docker-compose.yaml.template"
+    if [ -f "$template_file" ] && [ -f "${DOCKER_COMPOSE_FILE}" ]; then
+        if ! diff -q "$template_file" "${DOCKER_COMPOSE_FILE}" >/dev/null 2>&1; then
+            log_step "检测到 docker-compose.yaml 与模板不一致，重新生成..."
+            local backup_file="${DOCKER_COMPOSE_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+            cp "${DOCKER_COMPOSE_FILE}" "${backup_file}"
+            generate_compose_from_template
+            log_success "docker-compose.yaml 已从模板重新生成（旧文件备份: ${backup_file}）"
+        fi
+    fi
+    
     # 构建参数
     local build_args="--build"
     
