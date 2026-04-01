@@ -801,27 +801,41 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Phase 0: Get old version before update
-	oldVersion, _ := h.ollama.GetVersion()
-
-	// Phase 1: Check if update is available by comparing image digests
+	// Phase 1: Check versions
 	conn.WriteJSON(map[string]interface{}{
 		"phase":  "checking",
-		"status": "正在检查更新...",
+		"status": "正在获取版本信息...",
 	})
 
-	needsUpdate, _, _, checkErr := h.docker.CheckImageUpdate(ctx)
-	if checkErr != nil {
-		slog.Warn("check image update failed, proceeding anyway", "error", checkErr)
-		needsUpdate = true // on error, proceed with pull to be safe
-	}
+	currentVersion, _ := h.ollama.GetVersion()
+	latestVersion, latestErr := h.ollama.GetLatestVersion()
 
-	if !needsUpdate {
+	if latestErr != nil {
+		slog.Warn("failed to get latest version, falling back to digest check", "error", latestErr)
+		// 查询失败时回退到 digest 比对
+		needsUpdate, _, _, checkErr := h.docker.CheckImageUpdate(ctx)
+		if checkErr != nil {
+			needsUpdate = true
+		}
+		if !needsUpdate {
+			conn.WriteJSON(map[string]interface{}{
+				"phase":           "up_to_date",
+				"status":          "success",
+				"message":         "当前版本已是最新",
+				"current_version": currentVersion,
+				"latest_version":  currentVersion,
+			})
+			return
+		}
+		latestVersion = "未知（查询失败）"
+	} else if currentVersion == latestVersion {
+		// 版本号完全一致
 		conn.WriteJSON(map[string]interface{}{
 			"phase":           "up_to_date",
 			"status":          "success",
 			"message":         "当前版本已是最新",
-			"current_version": oldVersion,
+			"current_version": currentVersion,
+			"latest_version":  latestVersion,
 		})
 		return
 	}
@@ -830,7 +844,8 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	conn.WriteJSON(map[string]interface{}{
 		"phase":           "update_available",
 		"status":          "发现新版本",
-		"current_version": oldVersion,
+		"current_version": currentVersion,
+		"latest_version":  latestVersion,
 	})
 
 	// Wait for client to send "confirm" or "cancel"
@@ -839,11 +854,11 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	case msg := <-msgCh:
 		if msg != "confirm" {
-			// Client cancelled
 			conn.WriteJSON(map[string]interface{}{
 				"phase":           "cancelled",
 				"status":          "用户取消更新",
-				"current_version": oldVersion,
+				"current_version": currentVersion,
+				"latest_version":  latestVersion,
 			})
 			return
 		}
@@ -899,7 +914,7 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 		"phase":       "done",
 		"status":      "success",
 		"message":     "更新完成",
-		"old_version": oldVersion,
+		"old_version": currentVersion,
 		"new_version": newVersion,
 	})
 }

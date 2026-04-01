@@ -474,20 +474,20 @@ function finishServiceControl(ws) {
 
 // ── Stream Update via WebSocket ─────────────────────────────────
 // 记录待更新提示信息（取消更新时显示在顶栏）
-let _pendingUpdateVersion = null;
+let _pendingUpdateInfo = null;
 
-function showUpdateHint(currentVersion) {
-    _pendingUpdateVersion = currentVersion;
+function showUpdateHint(currentVersion, latestVersion) {
+    _pendingUpdateInfo = { current: currentVersion, latest: latestVersion };
     const el = document.getElementById('topbarOllamaVersion');
     if (el) {
-        el.textContent = (currentVersion || '--') + ' (有新版本)';
-        el.title = '发现 Ollama 新版本可用，点击「更新版本」按钮升级';
+        el.textContent = currentVersion + ' → ' + latestVersion;
+        el.title = `当前版本 ${currentVersion}，最新版本 ${latestVersion}，点击「更新版本」按钮升级`;
         el.style.color = 'var(--accent-yellow)';
     }
 }
 
 function clearUpdateHint() {
-    _pendingUpdateVersion = null;
+    _pendingUpdateInfo = null;
     const el = document.getElementById('topbarOllamaVersion');
     if (el) {
         el.style.color = '';
@@ -504,7 +504,7 @@ function startStreamUpdate() {
     progressEl.style.display = 'block';
     progressFill.style.width = '0%';
     progressFill.style.background = '';
-    progressText.textContent = '正在检查更新...';
+    progressText.textContent = '正在获取版本信息...';
     document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = true);
 
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -530,33 +530,34 @@ function startStreamUpdate() {
                     progressText.textContent = '🔍 ' + data.status;
                     break;
 
-                case 'up_to_date':
+                case 'up_to_date': {
                     progressFill.style.width = '100%';
                     progressFill.style.background = 'var(--accent-green, #22c55e)';
                     clearUpdateHint();
-                    const curVer = data.current_version ? ` (${data.current_version})` : '';
-                    progressText.textContent = `✅ ${data.message}${curVer}`;
-                    showToast(`${data.message}${curVer}`, 'success');
+                    const cv = data.current_version || '--';
+                    progressText.textContent = `✅ 当前已是最新版本 (${cv})`;
+                    showToast(`当前已是最新版本 (${cv})`, 'success');
                     finishUpdate(ws);
                     return;
+                }
 
                 case 'update_available': {
-                    // 发现新版本，弹确认框
                     progressFill.style.width = '10%';
                     progressFill.style.background = 'var(--accent-yellow)';
                     const cv = data.current_version || '--';
-                    progressText.textContent = `🆕 发现新版本（当前: ${cv}），等待确认...`;
-                    const doUpdate = confirm(`发现 Ollama 新版本可用！\n当前版本: ${cv}\n\n确定要更新并重启 Ollama 服务吗？`);
+                    const lv = data.latest_version || '未知';
+                    progressText.textContent = `🆕 发现新版本 ${lv}（当前: ${cv}），等待确认...`;
+                    const doUpdate = confirm(`发现 Ollama 新版本！\n\n当前版本: ${cv}\n最新版本: ${lv}\n\n确定要立即更新并重启 Ollama 服务吗？`);
                     if (doUpdate) {
                         ws.send('confirm');
                         progressFill.style.background = '';
-                        progressText.textContent = '⏳ 正在准备更新...';
+                        progressText.textContent = `⏳ 正在更新 ${cv} → ${lv}...`;
                     } else {
                         ws.send('cancel');
-                        showUpdateHint(cv);
+                        showUpdateHint(cv, lv);
                         progressFill.style.width = '0%';
-                        progressText.textContent = `ℹ️ 已取消更新（当前: ${cv}，有新版本可用）`;
-                        showToast(`已跳过更新，当前版本 ${cv}`, 'info');
+                        progressText.textContent = `ℹ️ 已取消更新（当前: ${cv}，最新: ${lv}）`;
+                        showToast(`已跳过更新 (${cv} → ${lv})`, 'info');
                         finishUpdate(ws);
                     }
                     break;

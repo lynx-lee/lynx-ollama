@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,7 +89,38 @@ func (s *OllamaService) GetVersion() (string, error) {
 	return result.Version, nil
 }
 
-// ollamaTagsResponse is the raw response from /api/tags.
+// GetLatestVersion queries the GitHub API for the latest Ollama release version.
+func (s *OllamaService) GetLatestVersion() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/repos/ollama/ollama/releases/latest", nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("User-Agent", "lynx-ollama-console/1.0")
+
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to query GitHub API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", fmt.Errorf("failed to decode GitHub response: %w", err)
+	}
+	// Strip leading 'v' if present (e.g. "v0.19.0" → "0.19.0")
+	ver := strings.TrimPrefix(release.TagName, "v")
+	return ver, nil
+}
 type ollamaTagsResponse struct {
 	Models []struct {
 		Name       string    `json:"name"`
