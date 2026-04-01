@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lynxlee/lynx-ollama-web/internal/config"
-	"github.com/lynxlee/lynx-ollama-web/internal/model"
+	"github.com/lynxlee/lynx-ollama-console/internal/config"
+	"github.com/lynxlee/lynx-ollama-console/internal/model"
 )
 
 // SystemService handles system-level operations (config, health, etc).

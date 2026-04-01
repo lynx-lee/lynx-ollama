@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/lynxlee/lynx-ollama-web/internal/config"
-	"github.com/lynxlee/lynx-ollama-web/internal/service"
+	"github.com/lynxlee/lynx-ollama-console/internal/config"
+	"github.com/lynxlee/lynx-ollama-console/internal/service"
 )
 
 //go:embed static/*

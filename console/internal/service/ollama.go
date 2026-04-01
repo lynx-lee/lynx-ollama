@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lynxlee/lynx-ollama-web/internal/config"
-	"github.com/lynxlee/lynx-ollama-web/internal/model"
+	"github.com/lynxlee/lynx-ollama-console/internal/config"
+	"github.com/lynxlee/lynx-ollama-console/internal/model"
 )
 
 // OllamaService interacts with the Ollama API.
@@ -311,7 +311,7 @@ func (s *OllamaService) SearchModels(query, category, sort string) (*model.Marke
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request for page %d: %w", page, err)
 		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; lynx-ollama-web/1.0)")
+		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; lynx-ollama-console/1.0)")
 		req.Header.Set("Accept", "text/html")
 
 		resp, err := fetchClient.Do(req)

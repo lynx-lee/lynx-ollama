@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lynxlee/lynx-ollama-web/internal/config"
-	"github.com/lynxlee/lynx-ollama-web/internal/model"
+	"github.com/lynxlee/lynx-ollama-console/internal/config"
+	"github.com/lynxlee/lynx-ollama-console/internal/model"
 )
 
 // DockerService interacts with Docker for container management.

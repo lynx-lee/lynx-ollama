@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/lynxlee/lynx-ollama-web/internal/model"
+	"github.com/lynxlee/lynx-ollama-console/internal/model"
 )
 
 // apiKeyAuth returns a middleware that validates the API key for /api/* routes.

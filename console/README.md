@@ -19,7 +19,7 @@
 ## 架构
 
 ```
-web/
+console/
 ├── cmd/server/main.go          # 入口
 ├── internal/
 │   ├── config/config.go        # 配置
@@ -62,11 +62,11 @@ cd web
 
 # 本地编译
 bash build.sh v1.0.0 local
-./ollama-web --project-dir /opt/ai/ollama --ollama-url http://localhost:11434
+./ollama-console --project-dir /opt/ai/ollama --ollama-url http://localhost:11434
 
 # 交叉编译 Linux ARM64（适配 DGX Spark）
 bash build.sh v1.0.0 linux-arm64
-# 将 ollama-web-linux-arm64 上传到服务器运行
+# 将 ollama-console-linux-arm64 上传到服务器运行
 ```
 
 ### 方式 3: Docker 构建
@@ -78,7 +78,7 @@ docker run -d -p 9981:8080 \
   -v /opt/ai/ollama:/opt/ai/ollama \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e OLLAMA_API_URL=http://ollama:11434 \
-  ollama-web:v1.0.0
+  ollama-console:v1.0.0
 ```
 
 ## API 端点

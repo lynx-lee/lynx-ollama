@@ -389,7 +389,6 @@ async function controlService(action) {
     const name = actionNames[action] || action;
 
     if (action === 'update') {
-        if (!confirm('确定要更新 Ollama 到最新版本吗？这将拉取最新镜像并重建容器。')) return;
         return startStreamUpdate();
     }
 
@@ -474,6 +473,28 @@ function finishServiceControl(ws) {
 }
 
 // ── Stream Update via WebSocket ─────────────────────────────────
+// 记录待更新提示信息（取消更新时显示在顶栏）
+let _pendingUpdateVersion = null;
+
+function showUpdateHint(currentVersion) {
+    _pendingUpdateVersion = currentVersion;
+    const el = document.getElementById('topbarOllamaVersion');
+    if (el) {
+        el.textContent = (currentVersion || '--') + ' (有新版本)';
+        el.title = '发现 Ollama 新版本可用，点击「更新版本」按钮升级';
+        el.style.color = 'var(--accent-yellow)';
+    }
+}
+
+function clearUpdateHint() {
+    _pendingUpdateVersion = null;
+    const el = document.getElementById('topbarOllamaVersion');
+    if (el) {
+        el.style.color = '';
+        el.title = 'Ollama 引擎版本';
+    }
+}
+
 function startStreamUpdate() {
     const progressEl = document.getElementById('serviceProgress');
     const progressFill = document.getElementById('serviceProgressFill');
@@ -482,14 +503,13 @@ function startStreamUpdate() {
     // Show progress area & disable buttons
     progressEl.style.display = 'block';
     progressFill.style.width = '0%';
-    progressFill.style.background = ''; // reset to default
+    progressFill.style.background = '';
     progressText.textContent = '正在检查更新...';
     document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = true);
 
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${wsProtocol}//${location.host}/api/ws/update?key=${encodeURIComponent(getApiKey())}`);
 
-    // Track pull layer progress for percentage calculation
     let pullLines = 0;
 
     ws.onmessage = (event) => {
@@ -513,19 +533,44 @@ function startStreamUpdate() {
                 case 'up_to_date':
                     progressFill.style.width = '100%';
                     progressFill.style.background = 'var(--accent-green, #22c55e)';
-                    const ver = data.new_version ? ` (${data.new_version})` : '';
-                    progressText.textContent = `✅ ${data.message}${ver}`;
-                    showToast(`${data.message}${ver}`, 'success');
+                    clearUpdateHint();
+                    const curVer = data.current_version ? ` (${data.current_version})` : '';
+                    progressText.textContent = `✅ ${data.message}${curVer}`;
+                    showToast(`${data.message}${curVer}`, 'success');
+                    finishUpdate(ws);
+                    return;
+
+                case 'update_available': {
+                    // 发现新版本，弹确认框
+                    progressFill.style.width = '10%';
+                    progressFill.style.background = 'var(--accent-yellow)';
+                    const cv = data.current_version || '--';
+                    progressText.textContent = `🆕 发现新版本（当前: ${cv}），等待确认...`;
+                    const doUpdate = confirm(`发现 Ollama 新版本可用！\n当前版本: ${cv}\n\n确定要更新并重启 Ollama 服务吗？`);
+                    if (doUpdate) {
+                        ws.send('confirm');
+                        progressFill.style.background = '';
+                        progressText.textContent = '⏳ 正在准备更新...';
+                    } else {
+                        ws.send('cancel');
+                        showUpdateHint(cv);
+                        progressFill.style.width = '0%';
+                        progressText.textContent = `ℹ️ 已取消更新（当前: ${cv}，有新版本可用）`;
+                        showToast(`已跳过更新，当前版本 ${cv}`, 'info');
+                        finishUpdate(ws);
+                    }
+                    break;
+                }
+
+                case 'cancelled':
                     finishUpdate(ws);
                     return;
 
                 case 'pulling':
                     pullLines++;
-                    // docker pull outputs ~10-30 lines per layer; use indeterminate progress
                     const pullPercent = Math.min(10 + pullLines * 2, 85);
                     progressFill.style.width = pullPercent + '%';
-                    progressFill.style.background = ''; // reset to default blue
-                    // Show the last meaningful status from docker pull
+                    progressFill.style.background = '';
                     const statusLine = data.status || '拉取中...';
                     progressText.textContent = '📦 ' + statusLine;
                     break;
@@ -538,6 +583,7 @@ function startStreamUpdate() {
                 case 'done':
                     progressFill.style.width = '100%';
                     progressFill.style.background = 'var(--accent-green, #22c55e)';
+                    clearUpdateHint();
                     if (data.old_version && data.new_version && data.old_version !== data.new_version) {
                         progressText.textContent = `✅ 更新完成: ${data.old_version} → ${data.new_version}`;
                         showToast(`版本更新: ${data.old_version} → ${data.new_version}`, 'success');
@@ -567,7 +613,6 @@ function startStreamUpdate() {
 
 function finishUpdate(ws) {
     document.querySelectorAll('.control-buttons .btn').forEach(b => b.disabled = false);
-    // Auto-hide progress bar after 8 seconds
     setTimeout(() => {
         const el = document.getElementById('serviceProgress');
         if (el) el.style.display = 'none';

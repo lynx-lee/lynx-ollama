@@ -1,4 +1,4 @@
-module github.com/lynxlee/lynx-ollama-web
+module github.com/lynxlee/lynx-ollama-console
 
 go 1.23
 

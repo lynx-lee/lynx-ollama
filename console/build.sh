@@ -11,7 +11,7 @@ cd "$SCRIPT_DIR"
 # Extract default version from main.go (e.g. var Version = "v1.5.2")
 DEFAULT_VERSION=$(grep -m1 'var Version' cmd/server/main.go 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' || echo "dev")
 VERSION="${1:-${DEFAULT_VERSION}}"
-BINARY_NAME="ollama-web"
+BINARY_NAME="ollama-console"
 LDFLAGS="-s -w -X main.Version=${VERSION}"
 
 echo "📦 Building Ollama Web v${VERSION}..."
@@ -36,8 +36,8 @@ case "${2:-local}" in
         ;;
     docker)
         echo "  → Docker build"
-        docker build --build-arg VERSION="${VERSION}" -t "ollama-web:${VERSION}" .
-        echo "  ✅ Image: ollama-web:${VERSION}"
+        docker build --build-arg VERSION="${VERSION}" -t "ollama-console:${VERSION}" .
+        echo "  ✅ Image: ollama-console:${VERSION}"
         ;;
     *)
         echo "Usage: $0 [version] [local|linux|linux-arm64|docker]"

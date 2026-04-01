@@ -81,14 +81,14 @@ services:
     restart: unless-stopped
 
   # ── Web 管理界面 ──────────────────────────────────────────────
-  ollama-web:
+  ollama-console:
     build:
-      context: ./web
+      context: ./console
       dockerfile: Dockerfile
       args:
         VERSION: ${WEB_VERSION:-latest}
-    image: ollama-web:latest
-    container_name: ollama-web
+    image: ollama-console:latest
+    container_name: ollama-console
     networks:
       - ai-network
     ports:

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lynxlee/lynx-ollama-web/internal/config"
+	"github.com/lynxlee/lynx-ollama-console/internal/config"
 )
 
 // GPUMonitorService monitors GPU availability and auto-restarts container if needed.

@@ -11,13 +11,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lynxlee/lynx-ollama-web/internal/config"
-	"github.com/lynxlee/lynx-ollama-web/internal/handler"
-	"github.com/lynxlee/lynx-ollama-web/internal/service"
+	"github.com/lynxlee/lynx-ollama-console/internal/config"
+	"github.com/lynxlee/lynx-ollama-console/internal/handler"
+	"github.com/lynxlee/lynx-ollama-console/internal/service"
 )
 
 // Version is set at build time via -ldflags.
-var Version = "v1.7.7"
+var Version = "v1.7.8"
 
 func main() {
 	showVersion := flag.Bool("version", false, "Show version and exit")

@@ -41,7 +41,7 @@ func (c *Config) EnsureAPIKey() {
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
 		// Fallback: use a simple default (should never happen)
-		c.APIKey = "ollama-web-default-key"
+		c.APIKey = "ollama-console-default-key"
 		return
 	}
 	c.APIKey = "olw_" + hex.EncodeToString(b)

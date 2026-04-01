@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/lynxlee/lynx-ollama-web/internal/config"
-	"github.com/lynxlee/lynx-ollama-web/internal/model"
-	"github.com/lynxlee/lynx-ollama-web/internal/service"
+	"github.com/lynxlee/lynx-ollama-console/internal/config"
+	"github.com/lynxlee/lynx-ollama-console/internal/model"
+	"github.com/lynxlee/lynx-ollama-console/internal/service"
 )
 
 var upgrader = websocket.Upgrader{
@@ -773,6 +773,7 @@ func (h *APIHandler) StreamPull(w http.ResponseWriter, r *http.Request) {
 }
 
 // StreamUpdate streams Ollama update progress (docker pull + recreate) via WebSocket.
+// Flow: checking → up_to_date | update_available → (wait confirm) → pulling → waiting → done
 func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -784,12 +785,18 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 600*time.Second)
 	defer cancel()
 
-	// Monitor client disconnect
+	// Channel to receive client messages
+	msgCh := make(chan string, 1)
 	go func() {
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			_, msg, err := conn.ReadMessage()
+			if err != nil {
 				cancel()
 				return
+			}
+			select {
+			case msgCh <- string(msg):
+			default:
 			}
 		}
 	}()
@@ -810,15 +817,36 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !needsUpdate {
-		newVersion, _ := h.ollama.GetVersion()
 		conn.WriteJSON(map[string]interface{}{
-			"phase":       "up_to_date",
-			"status":      "success",
-			"message":     "当前版本已是最新",
-			"old_version": oldVersion,
-			"new_version": newVersion,
+			"phase":           "up_to_date",
+			"status":          "success",
+			"message":         "当前版本已是最新",
+			"current_version": oldVersion,
 		})
 		return
+	}
+
+	// Phase 1.5: Notify client that update is available, wait for confirmation
+	conn.WriteJSON(map[string]interface{}{
+		"phase":           "update_available",
+		"status":          "发现新版本",
+		"current_version": oldVersion,
+	})
+
+	// Wait for client to send "confirm" or "cancel"
+	select {
+	case <-ctx.Done():
+		return
+	case msg := <-msgCh:
+		if msg != "confirm" {
+			// Client cancelled
+			conn.WriteJSON(map[string]interface{}{
+				"phase":           "cancelled",
+				"status":          "用户取消更新",
+				"current_version": oldVersion,
+			})
+			return
+		}
 	}
 
 	// Phase 2: Stream docker pull progress

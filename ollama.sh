@@ -4,7 +4,7 @@
 # Ollama AI 服务部署脚本 (适配 NVIDIA DGX Spark / GB10)
 #
 # 作者: lynxlee
-# 版本: 由 web/cmd/server/main.go 定义
+# 版本: 由 console/cmd/server/main.go 定义
 #
 # 用法:
 #   ./ollama.sh [命令] [选项]
@@ -52,8 +52,8 @@ NC='\033[0m' # No Color
 PROJECT_NAME="ollama"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 项目版本（唯一真相源: web/cmd/server/main.go → var Version = "vX.Y.Z"）
-VERSION=$(grep -m1 'var Version' "${PROJECT_DIR}/web/cmd/server/main.go" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/')
+# 项目版本（唯一真相源: console/cmd/server/main.go → var Version = "vX.Y.Z"）
+VERSION=$(grep -m1 'var Version' "${PROJECT_DIR}/console/cmd/server/main.go" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/')
 [ -z "$VERSION" ] && VERSION="dev"
 DOCKER_COMPOSE_FILE="${PROJECT_DIR}/docker-compose.yaml"
 BACKUP_DIR="${PROJECT_DIR}/backups"
@@ -527,12 +527,12 @@ do_start() {
             local web_api_key="${WEB_API_KEY:-}"
             if [ -z "$web_api_key" ]; then
                 # 尝试从运行中的容器获取自动生成的 Key
-                web_api_key=$(docker logs ollama-web 2>&1 | grep -oP '(?<=API Key: )\S+' | tail -1 || true)
+                web_api_key=$(docker logs ollama-console 2>&1 | grep -oP '(?<=API Key: )\S+' | tail -1 || true)
             fi
             if [ -n "$web_api_key" ]; then
                 echo -e "    API Key:      ${YELLOW}${web_api_key}${NC}"
             else
-                echo -e "    API Key:      ${DIM}(容器启动后查看: docker logs ollama-web | grep 'API Key')${NC}"
+                echo -e "    API Key:      ${DIM}(容器启动后查看: docker logs ollama-console | grep 'API Key')${NC}"
             fi
             echo ""
 
@@ -1000,13 +1000,13 @@ for i, line in enumerate(lines):
 
     # Web 管理界面状态
     local web_container
-    web_container=$(docker ps -q --filter "name=ollama-web" 2>/dev/null)
+    web_container=$(docker ps -q --filter "name=ollama-console" 2>/dev/null)
     if [ -n "$web_container" ]; then
         local web_port="${WEB_PORT:-9981}"
         local web_status
-        web_status=$(docker inspect --format='{{.State.Status}}' ollama-web 2>/dev/null || echo "unknown")
+        web_status=$(docker inspect --format='{{.State.Status}}' ollama-console 2>/dev/null || echo "unknown")
         local web_health
-        web_health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}' ollama-web 2>/dev/null || echo "N/A")
+        web_health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}' ollama-console 2>/dev/null || echo "N/A")
         # 主动检测 API
         if [ "$web_health" = "starting" ] && curl -sf "http://localhost:${web_port}/api/health" --connect-timeout 3 >/dev/null 2>&1; then
             web_health="healthy"
@@ -1025,12 +1025,12 @@ for i, line in enumerate(lines):
         local web_api_key="${WEB_API_KEY:-}"
         if [ -z "$web_api_key" ]; then
             # 尝试从运行中的容器获取自动生成的 Key
-            web_api_key=$(docker logs ollama-web 2>&1 | grep -oP '(?<=API Key: )\S+' | tail -1 || true)
+            web_api_key=$(docker logs ollama-console 2>&1 | grep -oP '(?<=API Key: )\S+' | tail -1 || true)
         fi
         if [ -n "$web_api_key" ]; then
             echo -e "    API Key: ${YELLOW}${web_api_key}${NC}"
         else
-            echo -e "    API Key: ${DIM}(未获取到，尝试: docker logs ollama-web | grep 'API Key')${NC}"
+            echo -e "    API Key: ${DIM}(未获取到，尝试: docker logs ollama-console | grep 'API Key')${NC}"
         fi
         echo ""
     fi
@@ -1089,23 +1089,23 @@ do_update() {
             echo "  ${git_output}"
         fi
 
-        # 比较 pull 前后 HEAD，检测 web/ 目录是否有变更
+        # 比较 pull 前后 HEAD，检测 console/ 目录是否有变更
         local git_head_after
         git_head_after=$(git -C "${PROJECT_DIR}" rev-parse HEAD 2>/dev/null || echo "")
 
         if [ -n "$git_head_before" ] && [ -n "$git_head_after" ] && [ "$git_head_before" != "$git_head_after" ]; then
-            # 检查 web/ 目录下是否有文件变更
+            # 检查 console/ 目录下是否有文件变更
             local web_diff
-            web_diff=$(git -C "${PROJECT_DIR}" diff --name-only "${git_head_before}" "${git_head_after}" -- web/ 2>/dev/null || echo "")
+            web_diff=$(git -C "${PROJECT_DIR}" diff --name-only "${git_head_before}" "${git_head_after}" -- console/ 2>/dev/null || echo "")
             if [ -n "$web_diff" ]; then
                 web_changed=true
                 log_info "检测到 Web 代码变更:"
                 echo "$web_diff" | while read -r f; do echo "    ${f}"; done
             fi
 
-            # 检查非 web/ 的变更（ollama.sh、docker-compose 等也可能影响服务）
+            # 检查非 console/ 的变更（ollama.sh、docker-compose 等也可能影响服务）
             local other_diff
-            other_diff=$(git -C "${PROJECT_DIR}" diff --name-only "${git_head_before}" "${git_head_after}" -- ':!web/' 2>/dev/null || echo "")
+            other_diff=$(git -C "${PROJECT_DIR}" diff --name-only "${git_head_before}" "${git_head_after}" -- ':!console/' 2>/dev/null || echo "")
             if [ -n "$other_diff" ]; then
                 log_info "检测到其他文件变更:"
                 echo "$other_diff" | while read -r f; do echo "    ${f}"; done
@@ -1190,7 +1190,7 @@ do_update() {
             export WEB_VERSION="${VERSION}"
             $COMPOSE_CMD up -d --force-recreate ollama
             # Web 无变更，确保在运行即可
-            $COMPOSE_CMD up -d ollama-web
+            $COMPOSE_CMD up -d ollama-console
 
             compose_args=""  # 已处理，后面不再执行
         fi
@@ -1228,7 +1228,7 @@ do_update() {
 
         # Web 版本从更新后的 main.go 提取（git pull 后文件已更新，但 bash 内存中的 VERSION 仍是旧值）
         local new_web_ver
-        new_web_ver=$(grep -m1 'var Version' "${PROJECT_DIR}/web/cmd/server/main.go" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' || echo "${VERSION}")
+        new_web_ver=$(grep -m1 'var Version' "${PROJECT_DIR}/console/cmd/server/main.go" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' || echo "${VERSION}")
         [ -z "$new_web_ver" ] && new_web_ver="${VERSION}"
 
         echo ""
@@ -1266,9 +1266,9 @@ do_build() {
     
     cd "${PROJECT_DIR}"
     
-    # 检查 web 目录是否存在
-    if [ ! -d "${PROJECT_DIR}/web" ]; then
-        log_error "web 目录不存在: ${PROJECT_DIR}/web"
+    # 检查 console 目录是否存在
+    if [ ! -d "${PROJECT_DIR}/console" ]; then
+        log_error "console 目录不存在: ${PROJECT_DIR}/web"
         exit 1
     fi
     
@@ -1290,9 +1290,9 @@ do_build() {
     export WEB_VERSION="${VERSION}"
     
     if [ -n "$force_recreate" ]; then
-        $COMPOSE_CMD up -d --build --force-recreate ollama-web
+        $COMPOSE_CMD up -d --build --force-recreate ollama-console
     else
-        $COMPOSE_CMD up -d --build ollama-web
+        $COMPOSE_CMD up -d --build ollama-console
     fi
     
     if [ $? -eq 0 ]; then
@@ -2292,7 +2292,7 @@ print(f'{ec / (ed / 1e9):.1f}')
     total_checks=$((total_checks + 1))
     local web_port="${WEB_PORT:-9981}"
     local web_container
-    web_container=$(docker ps -q --filter "name=ollama-web" 2>/dev/null)
+    web_container=$(docker ps -q --filter "name=ollama-console" 2>/dev/null)
     if [ -n "$web_container" ]; then
         local web_health
         web_health=$(curl -sf "http://localhost:${web_port}/api/health" --connect-timeout 3 2>/dev/null)
@@ -2303,7 +2303,7 @@ print(f'{ec / (ed / 1e9):.1f}')
             echo -e "  ⚠️  Web 管理界面       容器运行中但 API 不可达 (端口: ${web_port})"
         fi
     else
-        echo -e "  ⚠️  Web 管理界面       未运行 (docker logs ollama-web 查看详情)"
+        echo -e "  ⚠️  Web 管理界面       未运行 (docker logs ollama-console 查看详情)"
     fi
 
     # 总结

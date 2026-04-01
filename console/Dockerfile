@@ -17,7 +17,7 @@ ARG VERSION=""
 RUN if [ -z "$VERSION" ]; then \
       VERSION=$(grep -m1 'var Version' cmd/server/main.go | sed 's/.*"\(.*\)".*/\1/'); \
     fi && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.Version=${VERSION}" -o ollama-web ./cmd/server/
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.Version=${VERSION}" -o ollama-console ./cmd/server/
 
 # ── Runtime ──────────────────────────────────────────────────────
 FROM alpine:3.20
@@ -31,8 +31,8 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-COPY --from=builder /build/ollama-web .
+COPY --from=builder /build/ollama-console .
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/ollama-web"]
+ENTRYPOINT ["/app/ollama-console"]
