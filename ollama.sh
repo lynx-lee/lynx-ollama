@@ -3421,7 +3421,7 @@ show_help() {
     echo "  help                显示帮助信息"
     echo ""
     echo -e "${BOLD}Web 管理界面:${NC}"
-    echo "  启动服务后自动运行在端口 ${CYAN}9981${NC} (通过 docker-compose 部署)"
+    echo -e "  启动服务后自动运行在端口 ${CYAN}9981${NC} (通过 docker-compose 部署)"
     echo "  首次访问需输入 API Key (启动时显示在终端，或通过环境变量配置)"
     echo ""
     echo "  环境变量:"
