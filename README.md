@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.8.1-blue)
+![Version](https://img.shields.io/badge/version-v1.8.3-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -322,6 +322,8 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.8.3 | 2026-04-01 | **智能参数预设系统**。切换模型时自动填充最优参数，三级优先级：1️⃣ **用户自定义预设**（localStorage 持久化）— 设置面板底部新增「💾 保存预设」/「🗑 删除预设」按钮，用户调好参数后保存为该模型专属预设，下次选择自动加载；2️⃣ **Ollama 模型默认参数**（`/api/show`）— 从模型 Modelfile 的 `parameters` 字段解析 temperature/top_p/num_ctx/num_predict；3️⃣ **内置推荐预设**（11 个模型族）— Qwen(0.7/0.8/32K)、DeepSeek(0.6/0.9/64K)、CodeLlama/Coder(0.2/高ctx)、Llama(0.7/0.9/8K)、Mistral/Mixtral(32K)、Gemma、Phi、LLaVA、Command-R(0.3/128K) 等。设置面板底部显示当前参数来源标签（「用户预设」/「模型默认」/「Qwen 推荐」等） |
+| v1.8.2 | 2026-04-01 | **对话设置面板**。1️⃣ **System Prompt**：工具栏新增「⚙️ 设置」按钮，打开右侧滑入式设置面板，支持配置系统角色提示词（自动注入为 messages 首条 system 消息）；2️⃣ **参数调节**：Temperature（0-2）、Top P（0-1）滑块实时显示数值，上下文长度（num_ctx 2K-128K）、最大生成长度（num_predict 256-8K/无限制）下拉选择；3️⃣ **JSON 模式**：开关切换，开启后通过 Ollama `format: "json"` 强制模型输出有效 JSON；4️⃣ **keep_alive**：模型选择旁新增驻留时间下拉（5m/30m/1h/4h/24h/永久），控制模型在显存中的保持时间；后端 `ChatStream` 新增 `format`/`keep_alive` 参数透传 |
 | v1.8.1 | 2026-04-01 | **文件持久化 + 图片多模态 + 自适应优化**。1️⃣ **文件持久化存储**：上传文件和 LLM 生成文件从内存改为磁盘持久化，存储在 `chat-files/<日期>/<fileID>/` 目录下（含 metadata.json + 原始文件），服务重启不丢失，宿主机可直接管理和清理；新增 `ChatFileStore` 服务层，支持按日期分目录、启动时加载当日缓存、7 天内文件自动检索；2️⃣ **图片多模态支持**：文件上传新增图片格式（jpg/png/gif/webp/bmp），图片 base64 编码后通过 Ollama `/api/chat` 的 `images` 字段传入，需配合视觉模型（llava/llama3.2-vision）使用；上传标签和气泡中显示图片缩略图预览；3️⃣ **Chat 页面自适应**：三档响应式断点（>768px/≤768px/≤480px），工具栏/气泡/输入区弹性布局，代码块和表格横向滑动，消息区独立滚动；4️⃣ `GetVersion` 缓存 TTL 调整为 1 小时；docker-compose ollama 容器挂载 `chat-files` 共享目录 |
 | v1.8.0 | 2026-04-01 | **新增模型测试（对话）功能 + 状态轮询优化**。1️⃣ **流式对话**：侧边栏新增「💬 模型测试」页面，通过 WebSocket (`/api/ws/chat`) 与本地大模型多轮流式对话，支持停止生成、文件上传（txt/md/csv/json/yaml/代码等文本文件作为上下文）、Markdown 富文本渲染（代码块带复制按钮、表格、列表、标题、链接、图片）、生成统计（token 数/耗时/速度）；2️⃣ **状态轮询优化**：`GetVersion` 新增 60s 缓存（版本号几乎不变，从每 5s 查询降为每 60s）；`IsAPIReady` 独立探针（`GET /`）移除，改为从 `ListRunningModels` 的成败推断 API 可达性；Lite/Full 状态采集均减少 2 个并行 goroutine；整体 Ollama API 调用量降低约 66%；更新完成后自动清除版本缓存 |
 | v1.7.9 | 2026-04-01 | **Ollama 版本更新交互增强**。1️⃣ 后端新增 `GetLatestVersion()` 方法，通过 GitHub API (`/repos/ollama/ollama/releases/latest`) 查询 Ollama 最新发布版本号；2️⃣ `StreamUpdate` 版本检测从 Docker image digest 比对改为**版本号比对**（当前版本 vs GitHub 最新版本），版本相同则提示「当前已是最新版本 (x.x.x)」不执行任何操作；3️⃣ 发现新版本时弹确认框同时显示当前版本号和最新版本号，确认后显示 `正在更新 x.x.x → y.y.y`；4️⃣ 取消更新时顶栏版本处标黄显示 `x.x.x → y.y.y`，hover 提示两个版本号；5️⃣ `do_build` 新增模板同步检查，构建前自动检测 `docker-compose.yaml` 与模板差异并重新生成；6️⃣ 修复 `ollama.sh` help 输出端口号颜色未正确显示（`echo` → `echo -e`） |

@@ -230,10 +230,12 @@ type ChatMessage struct {
 
 // ChatRequest is the client→server message to start a chat completion.
 type ChatRequest struct {
-	Type     string            `json:"type"`              // "chat" or "stop"
-	Model    string            `json:"model,omitempty"`
-	Messages []ChatMessage     `json:"messages,omitempty"`
-	Options  map[string]any    `json:"options,omitempty"`
+	Type      string            `json:"type"`               // "chat" or "stop"
+	Model     string            `json:"model,omitempty"`
+	Messages  []ChatMessage     `json:"messages,omitempty"`
+	Options   map[string]any    `json:"options,omitempty"`
+	Format    string            `json:"format,omitempty"`    // "json" for JSON mode
+	KeepAlive string            `json:"keep_alive,omitempty"` // e.g. "5m", "1h", "-1"
 }
 
 // UploadedFile holds a parsed uploaded file in memory.

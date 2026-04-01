@@ -1018,7 +1018,7 @@ func formatBytes(b int64) string {
 
 // ChatStream sends a streaming chat request to Ollama and returns an io.ReadCloser
 // producing NDJSON lines. Caller must close the reader.
-func (s *OllamaService) ChatStream(modelName string, messages []map[string]any, options map[string]any) (io.ReadCloser, error) {
+func (s *OllamaService) ChatStream(modelName string, messages []map[string]any, options map[string]any, format string, keepAlive string) (io.ReadCloser, error) {
 	payload := map[string]any{
 		"model":    modelName,
 		"messages": messages,
@@ -1026,6 +1026,12 @@ func (s *OllamaService) ChatStream(modelName string, messages []map[string]any, 
 	}
 	if len(options) > 0 {
 		payload["options"] = options
+	}
+	if format != "" {
+		payload["format"] = format
+	}
+	if keepAlive != "" {
+		payload["keep_alive"] = keepAlive
 	}
 
 	body, err := json.Marshal(payload)

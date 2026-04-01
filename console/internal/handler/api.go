@@ -1560,7 +1560,7 @@ func (h *APIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 
-		reader, err := h.ollama.ChatStream(req.Model, ollamaMessages, req.Options)
+		reader, err := h.ollama.ChatStream(req.Model, ollamaMessages, req.Options, req.Format, req.KeepAlive)
 		if err != nil {
 			conn.WriteJSON(map[string]any{"type": "error", "error": err.Error()})
 			cancel()

@@ -247,12 +247,85 @@
                     <!-- Chat toolbar -->
                     <div class="chat-toolbar">
                         <div class="chat-toolbar-left">
-                            <select id="chatModelSelect" class="chat-model-select">
+                            <select id="chatModelSelect" class="chat-model-select" onchange="onChatModelChange()">
                                 <option value="">选择模型...</option>
+                            </select>
+                            <select id="chatKeepAlive" class="chat-keepalive-select" title="模型驻留时间">
+                                <option value="">默认</option>
+                                <option value="5m">5 分钟</option>
+                                <option value="30m">30 分钟</option>
+                                <option value="1h">1 小时</option>
+                                <option value="4h">4 小时</option>
+                                <option value="24h">24 小时</option>
+                                <option value="-1">永久</option>
                             </select>
                         </div>
                         <div class="chat-toolbar-right">
+                            <button class="btn btn-sm" onclick="toggleChatSettings()" title="对话设置" id="chatSettingsBtn">⚙️ 设置</button>
                             <button class="btn btn-sm" onclick="clearChat()" title="新对话">🗑 新对话</button>
+                        </div>
+                    </div>
+
+                    <!-- Settings panel (slide-in) -->
+                    <div class="chat-settings-panel" id="chatSettingsPanel">
+                        <div class="chat-settings-header">
+                            <h4>对话设置</h4>
+                            <button class="btn btn-sm" onclick="toggleChatSettings()">✕</button>
+                        </div>
+                        <div class="chat-settings-body">
+                            <div class="chat-setting-group">
+                                <label>System Prompt</label>
+                                <textarea id="chatSystemPrompt" class="chat-setting-textarea" rows="4" placeholder="设置系统角色提示词（可选）..."></textarea>
+                            </div>
+                            <div class="chat-setting-group">
+                                <label>Temperature <span id="chatTempVal" class="chat-setting-val">0.7</span></label>
+                                <input type="range" id="chatTemperature" min="0" max="2" step="0.1" value="0.7" oninput="document.getElementById('chatTempVal').textContent=this.value">
+                                <div class="chat-setting-hint">越低越确定，越高越随机</div>
+                            </div>
+                            <div class="chat-setting-group">
+                                <label>Top P <span id="chatTopPVal" class="chat-setting-val">0.9</span></label>
+                                <input type="range" id="chatTopP" min="0" max="1" step="0.05" value="0.9" oninput="document.getElementById('chatTopPVal').textContent=this.value">
+                            </div>
+                            <div class="chat-setting-group">
+                                <label>上下文长度 (num_ctx)</label>
+                                <select id="chatNumCtx" class="chat-setting-select">
+                                    <option value="">默认</option>
+                                    <option value="2048">2K</option>
+                                    <option value="4096">4K</option>
+                                    <option value="8192">8K</option>
+                                    <option value="16384">16K</option>
+                                    <option value="32768">32K</option>
+                                    <option value="65536">64K</option>
+                                    <option value="131072">128K</option>
+                                </select>
+                            </div>
+                            <div class="chat-setting-group">
+                                <label>最大生成长度 (num_predict)</label>
+                                <select id="chatNumPredict" class="chat-setting-select">
+                                    <option value="">默认</option>
+                                    <option value="256">256</option>
+                                    <option value="512">512</option>
+                                    <option value="1024">1K</option>
+                                    <option value="2048">2K</option>
+                                    <option value="4096">4K</option>
+                                    <option value="8192">8K</option>
+                                    <option value="-1">无限制</option>
+                                </select>
+                            </div>
+                            <div class="chat-setting-group">
+                                <label class="chat-setting-toggle">
+                                    <input type="checkbox" id="chatJsonMode">
+                                    <span>JSON 模式</span>
+                                </label>
+                                <div class="chat-setting-hint">强制模型输出有效 JSON 格式</div>
+                            </div>
+                            <div class="chat-preset-bar">
+                                <span class="chat-preset-source" id="chatPresetSource" style="display:none"></span>
+                                <div class="chat-preset-actions">
+                                    <button class="btn btn-sm btn-success" id="chatSavePresetBtn" onclick="saveCurrentPreset()" style="display:none" title="保存当前参数为该模型的预设">💾 保存预设</button>
+                                    <button class="btn btn-sm btn-danger" id="chatDeletePresetBtn" onclick="deleteCurrentPreset()" style="display:none" title="删除该模型的用户预设">🗑 删除预设</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
 

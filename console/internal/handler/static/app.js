@@ -1501,6 +1501,218 @@ let chatUploadedFiles = [];     // [{id, name, size, preview}]
 let chatStreaming = false;
 let chatCurrentResponse = '';   // accumulates streaming tokens
 let chatInitialized = false;
+let chatSettingsOpen = false;
+
+function toggleChatSettings() {
+    chatSettingsOpen = !chatSettingsOpen;
+    const panel = document.getElementById('chatSettingsPanel');
+    panel.classList.toggle('open', chatSettingsOpen);
+}
+
+function getChatOptions() {
+    const opts = {};
+    const temp = parseFloat(document.getElementById('chatTemperature').value);
+    if (!isNaN(temp)) opts.temperature = temp;
+    const topP = parseFloat(document.getElementById('chatTopP').value);
+    if (!isNaN(topP)) opts.top_p = topP;
+    const numCtx = document.getElementById('chatNumCtx').value;
+    if (numCtx) opts.num_ctx = parseInt(numCtx);
+    const numPredict = document.getElementById('chatNumPredict').value;
+    if (numPredict) opts.num_predict = parseInt(numPredict);
+    return opts;
+}
+
+function getChatFormat() {
+    return document.getElementById('chatJsonMode').checked ? 'json' : '';
+}
+
+function getChatKeepAlive() {
+    return document.getElementById('chatKeepAlive').value || '';
+}
+
+function getChatSystemPrompt() {
+    return (document.getElementById('chatSystemPrompt').value || '').trim();
+}
+
+// ── Model parameter presets ─────────────────────────────────────
+// Built-in recommended presets for common model families
+const BUILTIN_PRESETS = {
+    'qwen':      { temperature: 0.7, top_p: 0.8, num_ctx: 32768, label: 'Qwen 推荐' },
+    'llama':     { temperature: 0.7, top_p: 0.9, num_ctx: 8192, label: 'Llama 推荐' },
+    'codellama': { temperature: 0.2, top_p: 0.9, num_ctx: 16384, label: 'CodeLlama 推荐（低温度）' },
+    'deepseek':  { temperature: 0.6, top_p: 0.9, num_ctx: 65536, label: 'DeepSeek 推荐' },
+    'coder':     { temperature: 0.2, top_p: 0.95, num_ctx: 16384, label: '代码模型推荐' },
+    'gemma':     { temperature: 0.7, top_p: 0.9, num_ctx: 8192, label: 'Gemma 推荐' },
+    'phi':       { temperature: 0.7, top_p: 0.9, num_ctx: 4096, label: 'Phi 推荐' },
+    'mistral':   { temperature: 0.7, top_p: 0.9, num_ctx: 32768, label: 'Mistral 推荐' },
+    'mixtral':   { temperature: 0.7, top_p: 0.9, num_ctx: 32768, label: 'Mixtral 推荐' },
+    'llava':     { temperature: 0.7, top_p: 0.9, num_ctx: 4096, label: 'LLaVA 视觉推荐' },
+    'command-r': { temperature: 0.3, top_p: 0.9, num_ctx: 131072, label: 'Command R 推荐' },
+};
+
+function matchBuiltinPreset(modelName) {
+    const name = (modelName || '').toLowerCase();
+    // Match specific patterns first, then generic
+    if (name.includes('codellama') || name.includes('code-llama')) return BUILTIN_PRESETS['codellama'];
+    if (name.includes('coder') || name.includes('starcoder')) return BUILTIN_PRESETS['coder'];
+    if (name.includes('command-r') || name.includes('command_r')) return BUILTIN_PRESETS['command-r'];
+    if (name.includes('deepseek')) return BUILTIN_PRESETS['deepseek'];
+    if (name.includes('qwen')) return BUILTIN_PRESETS['qwen'];
+    if (name.includes('llava') || name.includes('vision')) return BUILTIN_PRESETS['llava'];
+    if (name.includes('llama')) return BUILTIN_PRESETS['llama'];
+    if (name.includes('gemma')) return BUILTIN_PRESETS['gemma'];
+    if (name.includes('phi')) return BUILTIN_PRESETS['phi'];
+    if (name.includes('mistral')) return BUILTIN_PRESETS['mistral'];
+    if (name.includes('mixtral')) return BUILTIN_PRESETS['mixtral'];
+    return null;
+}
+
+// User custom presets stored in localStorage
+function getUserPresets() {
+    try { return JSON.parse(localStorage.getItem('ollama_chat_presets') || '{}'); } catch { return {}; }
+}
+function saveUserPreset(modelName, preset) {
+    const presets = getUserPresets();
+    presets[modelName] = preset;
+    localStorage.setItem('ollama_chat_presets', JSON.stringify(presets));
+}
+function deleteUserPreset(modelName) {
+    const presets = getUserPresets();
+    delete presets[modelName];
+    localStorage.setItem('ollama_chat_presets', JSON.stringify(presets));
+}
+
+// Apply a preset to the settings panel
+function applyPresetToPanel(preset) {
+    if (!preset) return;
+    if (preset.temperature != null) {
+        document.getElementById('chatTemperature').value = preset.temperature;
+        document.getElementById('chatTempVal').textContent = preset.temperature;
+    }
+    if (preset.top_p != null) {
+        document.getElementById('chatTopP').value = preset.top_p;
+        document.getElementById('chatTopPVal').textContent = preset.top_p;
+    }
+    if (preset.num_ctx != null) {
+        document.getElementById('chatNumCtx').value = String(preset.num_ctx);
+    }
+    if (preset.num_predict != null) {
+        document.getElementById('chatNumPredict').value = String(preset.num_predict);
+    }
+    if (preset.system_prompt != null) {
+        document.getElementById('chatSystemPrompt').value = preset.system_prompt;
+    }
+    if (preset.json_mode != null) {
+        document.getElementById('chatJsonMode').checked = preset.json_mode;
+    }
+    if (preset.keep_alive != null) {
+        document.getElementById('chatKeepAlive').value = preset.keep_alive;
+    }
+}
+
+// Read current panel values as a preset object
+function readPanelAsPreset() {
+    return {
+        temperature: parseFloat(document.getElementById('chatTemperature').value),
+        top_p: parseFloat(document.getElementById('chatTopP').value),
+        num_ctx: parseInt(document.getElementById('chatNumCtx').value) || null,
+        num_predict: parseInt(document.getElementById('chatNumPredict').value) || null,
+        system_prompt: document.getElementById('chatSystemPrompt').value || '',
+        json_mode: document.getElementById('chatJsonMode').checked,
+        keep_alive: document.getElementById('chatKeepAlive').value || '',
+    };
+}
+
+// Called when model selection changes — auto-fill parameters
+async function onChatModelChange() {
+    const model = document.getElementById('chatModelSelect').value;
+    if (!model) return;
+
+    updatePresetIndicator(model);
+
+    // Priority: user preset > Ollama model defaults > built-in preset > defaults
+    const userPresets = getUserPresets();
+    if (userPresets[model]) {
+        applyPresetToPanel(userPresets[model]);
+        showPresetSource('用户预设');
+        return;
+    }
+
+    // Try fetching model info from Ollama
+    try {
+        const info = await api(`/api/models/${encodeURIComponent(model)}/info`);
+        if (info && info.parameters) {
+            const parsed = parseOllamaParameters(info.parameters);
+            if (Object.keys(parsed).length > 0) {
+                applyPresetToPanel(parsed);
+                showPresetSource('模型默认');
+                return;
+            }
+        }
+    } catch { /* ignore, fall through */ }
+
+    // Built-in preset
+    const builtin = matchBuiltinPreset(model);
+    if (builtin) {
+        applyPresetToPanel(builtin);
+        showPresetSource(builtin.label);
+        return;
+    }
+
+    showPresetSource('默认参数');
+}
+
+// Parse Ollama's "parameters" text block (key value per line)
+function parseOllamaParameters(text) {
+    const preset = {};
+    if (!text) return preset;
+    const lines = text.split('\n');
+    for (const line of lines) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 2) continue;
+        const key = parts[0], val = parts.slice(1).join(' ');
+        switch (key) {
+            case 'temperature': preset.temperature = parseFloat(val); break;
+            case 'top_p': preset.top_p = parseFloat(val); break;
+            case 'num_ctx': preset.num_ctx = parseInt(val); break;
+            case 'num_predict': preset.num_predict = parseInt(val); break;
+            case 'stop': break; // skip stop tokens
+            default: break;
+        }
+    }
+    return preset;
+}
+
+function showPresetSource(text) {
+    const el = document.getElementById('chatPresetSource');
+    if (el) { el.textContent = text; el.style.display = text ? '' : 'none'; }
+}
+
+function updatePresetIndicator(model) {
+    const userPresets = getUserPresets();
+    const saveBtn = document.getElementById('chatSavePresetBtn');
+    const delBtn = document.getElementById('chatDeletePresetBtn');
+    if (saveBtn) saveBtn.style.display = model ? '' : 'none';
+    if (delBtn) delBtn.style.display = userPresets[model] ? '' : 'none';
+}
+
+function saveCurrentPreset() {
+    const model = document.getElementById('chatModelSelect').value;
+    if (!model) { showToast('请先选择模型', 'error'); return; }
+    saveUserPreset(model, readPanelAsPreset());
+    updatePresetIndicator(model);
+    showToast(`已保存 ${model} 参数预设`, 'success');
+    showPresetSource('用户预设');
+}
+
+function deleteCurrentPreset() {
+    const model = document.getElementById('chatModelSelect').value;
+    if (!model) return;
+    deleteUserPreset(model);
+    updatePresetIndicator(model);
+    showToast(`已删除 ${model} 参数预设`, 'info');
+    onChatModelChange(); // re-apply defaults
+}
 
 function initChat() {
     if (!chatInitialized) {
@@ -1576,12 +1788,25 @@ function sendChat() {
         document.getElementById('chatStopBtn').style.display = '';
         appendChatBubble('assistant', '', []);
 
-        ws.send(JSON.stringify({
+        // Build messages with optional system prompt
+        const msgsToSend = [...chatMessages];
+        const sysPrompt = getChatSystemPrompt();
+        if (sysPrompt && (msgsToSend.length === 0 || msgsToSend[0].role !== 'system')) {
+            msgsToSend.unshift({ role: 'system', content: sysPrompt });
+        }
+
+        const payload = {
             type: 'chat',
             model: model,
-            messages: chatMessages,
-            options: {}
-        }));
+            messages: msgsToSend,
+            options: getChatOptions(),
+        };
+        const fmt = getChatFormat();
+        if (fmt) payload.format = fmt;
+        const ka = getChatKeepAlive();
+        if (ka) payload.keep_alive = ka;
+
+        ws.send(JSON.stringify(payload));
     };
 
     if (ws.readyState === WebSocket.OPEN) {
