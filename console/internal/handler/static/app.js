@@ -140,6 +140,16 @@ function switchPage(page) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById(`page-${page}`).classList.add('active');
 
+    // Chat page needs #content to not scroll (chat manages its own scroll)
+    const content = document.getElementById('content');
+    if (page === 'chat') {
+        content.style.overflow = 'hidden';
+        content.style.padding = '0';
+    } else {
+        content.style.overflow = '';
+        content.style.padding = '';
+    }
+
     currentPage = page;
 
     // Notify WebSocket to switch between full/lite mode
