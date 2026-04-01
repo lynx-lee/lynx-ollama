@@ -1825,7 +1825,6 @@ function sendChat() {
     if (hasImages && !isVisionModel(model)) {
         showToast('当前模型不支持图片输入，请选择视觉模型（如 llava、llama3.2-vision、minicpm-v 等）', 'error');
         return;
-    }        return;
     }
 
     // Add user message
