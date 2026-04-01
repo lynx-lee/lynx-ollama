@@ -64,6 +64,10 @@
                     <span class="nav-icon">🤖</span>
                     <span>模型管理</span>
                 </li>
+                <li class="nav-item" data-page="chat">
+                    <span class="nav-icon">💬</span>
+                    <span>模型测试</span>
+                </li>
                 <li class="nav-item" data-page="health">
                     <span class="nav-icon">🩺</span>
                     <span>健康检查</span>
@@ -233,6 +237,44 @@
                     </div>
                     <div id="marketResults">
                         <div class="empty-state">输入关键词搜索 Ollama 官网模型，或留空浏览热门模型</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Page -->
+            <div class="page" id="page-chat">
+                <div class="chat-page">
+                    <!-- Chat toolbar -->
+                    <div class="chat-toolbar">
+                        <div class="chat-toolbar-left">
+                            <select id="chatModelSelect" class="chat-model-select">
+                                <option value="">选择模型...</option>
+                            </select>
+                        </div>
+                        <div class="chat-toolbar-right">
+                            <button class="btn btn-sm" onclick="clearChat()" title="新对话">🗑 新对话</button>
+                        </div>
+                    </div>
+
+                    <!-- Chat messages -->
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="chat-empty-state">
+                            <div class="chat-empty-icon">💬</div>
+                            <div class="chat-empty-text">选择模型，开始对话</div>
+                            <div class="chat-empty-hint">支持 Markdown、代码高亮、表格渲染</div>
+                        </div>
+                    </div>
+
+                    <!-- Chat input -->
+                    <div class="chat-input-area">
+                        <div class="chat-upload-tags" id="chatUploadTags"></div>
+                        <div class="chat-input-row">
+                            <button class="btn btn-sm chat-attach-btn" onclick="document.getElementById('chatFileInput').click()" title="上传文件">📎</button>
+                            <textarea id="chatInput" class="chat-input" placeholder="输入消息... (Shift+Enter 换行)" rows="1" onkeydown="handleChatKeydown(event)" oninput="autoResizeChatInput()"></textarea>
+                            <button class="btn btn-primary btn-sm chat-send-btn" id="chatSendBtn" onclick="sendChat()">发送</button>
+                            <button class="btn btn-danger btn-sm chat-stop-btn" id="chatStopBtn" onclick="stopChat()" style="display:none">停止</button>
+                        </div>
+                        <input type="file" id="chatFileInput" multiple style="display:none" onchange="handleChatFileUpload(event)" accept=".txt,.md,.csv,.json,.log,.yaml,.yml,.xml,.html,.go,.py,.js,.ts,.sh,.sql,.java,.c,.cpp,.h,.ini,.toml,.env,.cfg">
                     </div>
                 </div>
             </div>

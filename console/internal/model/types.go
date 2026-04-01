@@ -220,3 +220,28 @@ type EnvVariable struct {
 	Default     string `json:"default,omitempty"`
 	Description string `json:"description,omitempty"`
 }
+
+// ChatMessage represents a single message in a conversation.
+type ChatMessage struct {
+	Role    string   `json:"role"`              // system, user, assistant
+	Content string   `json:"content"`
+	Files   []string `json:"files,omitempty"`   // uploaded file IDs (for user messages)
+}
+
+// ChatRequest is the client→server message to start a chat completion.
+type ChatRequest struct {
+	Type     string            `json:"type"`              // "chat" or "stop"
+	Model    string            `json:"model,omitempty"`
+	Messages []ChatMessage     `json:"messages,omitempty"`
+	Options  map[string]any    `json:"options,omitempty"`
+}
+
+// UploadedFile holds a parsed uploaded file in memory.
+type UploadedFile struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Size      int64     `json:"size"`
+	Content   string    `json:"-"`          // parsed text content (not sent to client)
+	Preview   string    `json:"preview"`    // first 200 chars preview
+	CreatedAt time.Time `json:"-"`
+}

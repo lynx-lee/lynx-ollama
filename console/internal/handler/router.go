@@ -62,6 +62,11 @@ func NewRouter(ollamaSvc *service.OllamaService, dockerSvc *service.DockerServic
 	mux.HandleFunc("GET /api/ws/update", api.StreamUpdate)
 	mux.HandleFunc("GET /api/ws/service", api.StreamServiceControl)
 	mux.HandleFunc("GET /api/ws/status", api.StreamStatus)
+	mux.HandleFunc("GET /api/ws/chat", api.StreamChat)
+
+	// ── Chat ────────────────────────────────────────────────────────
+	mux.HandleFunc("POST /api/chat/upload", api.UploadChatFile)
+	mux.HandleFunc("GET /api/chat/files/{id}", api.DownloadChatFile)
 
 	// ── Static files (embedded SPA) ─────────────────────────────────
 	staticContent, _ := fs.Sub(staticFS, "static")

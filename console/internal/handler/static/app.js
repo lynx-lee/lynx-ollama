@@ -152,6 +152,7 @@ function switchPage(page) {
     switch (page) {
         case 'dashboard': refreshStatus(); break;
         case 'models': loadModels(); break;
+        case 'chat': initChat(); break;
         case 'health': break; // Manual trigger
         case 'logs': loadLogs(); break;
         case 'config': loadConfig(); break;
@@ -1481,6 +1482,339 @@ function sendStatusWsCommand(cmd) {
 function startAutoRefresh() {
     refreshStatus();         // immediate HTTP fetch for first paint
     connectStatusWs();       // then switch to WebSocket for subsequent updates
+}
+
+// ── Chat Module ─────────────────────────────────────────────────
+let chatWs = null;
+let chatMessages = [];          // conversation history [{role, content, files}]
+let chatUploadedFiles = [];     // [{id, name, size, preview}]
+let chatStreaming = false;
+let chatCurrentResponse = '';   // accumulates streaming tokens
+let chatInitialized = false;
+
+function initChat() {
+    if (!chatInitialized) {
+        chatInitialized = true;
+    }
+    // Populate model selector from cached status or fetch
+    const select = document.getElementById('chatModelSelect');
+    const models = (currentStatus && currentStatus.models) || _allModels || [];
+    const currentVal = select.value;
+    select.innerHTML = '<option value="">选择模型...</option>';
+    models.forEach(m => {
+        if (m.name && !m.name.includes(':cloud') && !m.name.toLowerCase().includes('embed')) {
+            const opt = document.createElement('option');
+            opt.value = m.name;
+            opt.textContent = `${m.name} (${m.size_human || ''})`;
+            select.appendChild(opt);
+        }
+    });
+    if (currentVal) select.value = currentVal;
+    // If no models loaded yet, try fetching
+    if (models.length === 0) {
+        api('/api/models').then(list => {
+            if (list && list.length) {
+                list.forEach(m => {
+                    if (m.name && !m.name.includes(':cloud') && !m.name.toLowerCase().includes('embed')) {
+                        const opt = document.createElement('option');
+                        opt.value = m.name;
+                        opt.textContent = `${m.name} (${m.size_human || ''})`;
+                        select.appendChild(opt);
+                    }
+                });
+            }
+        }).catch(() => {});
+    }
+}
+
+function ensureChatWs() {
+    if (chatWs && chatWs.readyState === WebSocket.OPEN) return chatWs;
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    chatWs = new WebSocket(`${wsProtocol}//${location.host}/api/ws/chat?key=${encodeURIComponent(getApiKey())}`);
+    chatWs.onclose = () => { chatWs = null; };
+    chatWs.onerror = () => { showToast('对话连接失败', 'error'); };
+    return chatWs;
+}
+
+function sendChat() {
+    const input = document.getElementById('chatInput');
+    const text = input.value.trim();
+    const model = document.getElementById('chatModelSelect').value;
+    if (!text || !model) {
+        if (!model) showToast('请先选择模型', 'error');
+        return;
+    }
+
+    // Add user message
+    const userMsg = { role: 'user', content: text, files: chatUploadedFiles.map(f => f.id) };
+    chatMessages.push(userMsg);
+    appendChatBubble('user', text, chatUploadedFiles.map(f => f.name));
+
+    // Clear input
+    input.value = '';
+    autoResizeChatInput();
+    chatUploadedFiles = [];
+    renderChatUploadTags();
+
+    // Prepare and send
+    const ws = ensureChatWs();
+    const doSend = () => {
+        chatStreaming = true;
+        chatCurrentResponse = '';
+        document.getElementById('chatSendBtn').style.display = 'none';
+        document.getElementById('chatStopBtn').style.display = '';
+        appendChatBubble('assistant', '', []);
+
+        ws.send(JSON.stringify({
+            type: 'chat',
+            model: model,
+            messages: chatMessages,
+            options: {}
+        }));
+    };
+
+    if (ws.readyState === WebSocket.OPEN) {
+        doSend();
+    } else {
+        ws.onopen = doSend;
+    }
+
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            switch (data.type) {
+                case 'token':
+                    chatCurrentResponse += data.content;
+                    updateLastAssistantBubble(chatCurrentResponse, false);
+                    break;
+                case 'done':
+                    chatStreaming = false;
+                    chatMessages.push({ role: 'assistant', content: chatCurrentResponse });
+                    updateLastAssistantBubble(chatCurrentResponse, true);
+                    document.getElementById('chatSendBtn').style.display = '';
+                    document.getElementById('chatStopBtn').style.display = 'none';
+                    // Show stats
+                    if (data.eval_count && data.total_duration) {
+                        const secs = data.total_duration / 1e9;
+                        const tps = (data.eval_count / (data.eval_duration / 1e9)).toFixed(1);
+                        showChatStats(`${data.eval_count} tokens · ${secs.toFixed(1)}s · ${tps} tok/s`);
+                    }
+                    break;
+                case 'stopped':
+                    chatStreaming = false;
+                    chatMessages.push({ role: 'assistant', content: chatCurrentResponse });
+                    updateLastAssistantBubble(chatCurrentResponse, true);
+                    document.getElementById('chatSendBtn').style.display = '';
+                    document.getElementById('chatStopBtn').style.display = 'none';
+                    break;
+                case 'error':
+                    chatStreaming = false;
+                    showToast('对话错误: ' + data.error, 'error');
+                    document.getElementById('chatSendBtn').style.display = '';
+                    document.getElementById('chatStopBtn').style.display = 'none';
+                    break;
+            }
+        } catch (e) { /* ignore parse errors */ }
+    };
+}
+
+function stopChat() {
+    if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+        chatWs.send(JSON.stringify({ type: 'stop' }));
+    }
+}
+
+function clearChat() {
+    chatMessages = [];
+    chatUploadedFiles = [];
+    chatCurrentResponse = '';
+    chatStreaming = false;
+    document.getElementById('chatMessages').innerHTML = `
+        <div class="chat-empty-state">
+            <div class="chat-empty-icon">💬</div>
+            <div class="chat-empty-text">选择模型，开始对话</div>
+            <div class="chat-empty-hint">支持 Markdown、代码高亮、表格渲染</div>
+        </div>`;
+    renderChatUploadTags();
+    document.getElementById('chatSendBtn').style.display = '';
+    document.getElementById('chatStopBtn').style.display = 'none';
+    if (chatWs) { chatWs.close(); chatWs = null; }
+}
+
+function handleChatKeydown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendChat();
+    }
+}
+
+function autoResizeChatInput() {
+    const el = document.getElementById('chatInput');
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+}
+
+// ── Chat file upload ────────────────────────────────────────────
+async function handleChatFileUpload(event) {
+    const files = event.target.files;
+    if (!files.length) return;
+    for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const resp = await fetch('/api/chat/upload', {
+                method: 'POST',
+                headers: { 'X-API-Key': getApiKey() },
+                body: formData,
+            });
+            const data = await resp.json();
+            if (data.success && data.data) {
+                chatUploadedFiles.push(data.data);
+                renderChatUploadTags();
+            } else {
+                showToast(`上传失败: ${data.error || '未知错误'}`, 'error');
+            }
+        } catch (err) {
+            showToast(`上传失败: ${err.message}`, 'error');
+        }
+    }
+    event.target.value = '';
+}
+
+function renderChatUploadTags() {
+    const container = document.getElementById('chatUploadTags');
+    if (!chatUploadedFiles.length) { container.innerHTML = ''; return; }
+    container.innerHTML = chatUploadedFiles.map((f, i) =>
+        `<span class="chat-file-tag">📄 ${escapeHtml(f.name)} <span class="chat-file-tag-remove" onclick="removeChatFile(${i})">✕</span></span>`
+    ).join('');
+}
+
+function removeChatFile(index) {
+    chatUploadedFiles.splice(index, 1);
+    renderChatUploadTags();
+}
+
+// ── Chat bubble rendering ───────────────────────────────────────
+function appendChatBubble(role, content, fileNames) {
+    const container = document.getElementById('chatMessages');
+    // Remove empty state
+    const empty = container.querySelector('.chat-empty-state');
+    if (empty) empty.remove();
+
+    const bubble = document.createElement('div');
+    bubble.className = `chat-message chat-message-${role}`;
+
+    let filesHtml = '';
+    if (fileNames && fileNames.length) {
+        filesHtml = `<div class="chat-msg-files">${fileNames.map(n => `<span class="chat-msg-file-tag">📄 ${escapeHtml(n)}</span>`).join('')}</div>`;
+    }
+
+    if (role === 'user') {
+        bubble.innerHTML = `<div class="chat-bubble chat-bubble-user">${filesHtml}<div class="chat-bubble-text">${escapeHtml(content)}</div></div>`;
+    } else {
+        bubble.innerHTML = `<div class="chat-bubble chat-bubble-assistant"><div class="chat-bubble-text chat-md-content">${content ? renderChatMarkdown(content) : '<span class="chat-typing">●●●</span>'}</div></div>`;
+    }
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
+}
+
+function updateLastAssistantBubble(content, finalize) {
+    const container = document.getElementById('chatMessages');
+    const bubbles = container.querySelectorAll('.chat-message-assistant');
+    const last = bubbles[bubbles.length - 1];
+    if (!last) return;
+    const textEl = last.querySelector('.chat-bubble-text');
+    if (finalize) {
+        textEl.innerHTML = renderChatMarkdown(content);
+    } else {
+        // During streaming, show plain text with cursor for performance
+        textEl.textContent = content;
+        textEl.innerHTML += '<span class="chat-typing-cursor">▌</span>';
+    }
+    container.scrollTop = container.scrollHeight;
+}
+
+function showChatStats(text) {
+    const container = document.getElementById('chatMessages');
+    const stats = document.createElement('div');
+    stats.className = 'chat-stats';
+    stats.textContent = text;
+    container.appendChild(stats);
+    container.scrollTop = container.scrollHeight;
+}
+
+// ── Lightweight Markdown renderer ───────────────────────────────
+function renderChatMarkdown(text) {
+    // Escape HTML first
+    let html = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    // Code blocks: ```lang\n...\n```
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+        const langLabel = lang ? `<span class="chat-code-lang">${lang}</span>` : '';
+        return `<div class="chat-code-block">${langLabel}<pre><code>${code}</code></pre><button class="chat-code-copy" onclick="this.textContent='已复制';navigator.clipboard.writeText(this.parentElement.querySelector('code').textContent);setTimeout(()=>this.textContent='复制',2000)">复制</button></div>`;
+    });
+
+    // Inline code: `code`
+    html = html.replace(/`([^`]+)`/g, '<code class="chat-inline-code">$1</code>');
+
+    // Tables: | ... | ... |
+    html = html.replace(/((?:\|[^\n]+\|\n?)+)/g, (match) => {
+        const rows = match.trim().split('\n').filter(r => r.trim());
+        if (rows.length < 2) return match;
+        // Check if second row is separator
+        if (!/^\|[\s\-:|]+\|$/.test(rows[1])) return match;
+        const headerCells = rows[0].split('|').filter(c => c.trim());
+        const thead = `<thead><tr>${headerCells.map(c => `<th>${c.trim()}</th>`).join('')}</tr></thead>`;
+        const bodyRows = rows.slice(2).map(row => {
+            const cells = row.split('|').filter(c => c.trim());
+            return `<tr>${cells.map(c => `<td>${c.trim()}</td>`).join('')}</tr>`;
+        }).join('');
+        return `<table class="chat-table">${thead}<tbody>${bodyRows}</tbody></table>`;
+    });
+
+    // Headers
+    html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+    // Bold / Italic
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    // Unordered lists
+    html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+
+    // Ordered lists
+    html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+    // Links: [text](url)
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+    // Images: ![alt](url)
+    html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" class="chat-img" />');
+
+    // Line breaks → paragraphs
+    html = html.replace(/\n\n/g, '</p><p>');
+    html = html.replace(/\n/g, '<br>');
+    html = '<p>' + html + '</p>';
+
+    // Clean up empty paragraphs
+    html = html.replace(/<p>\s*<\/p>/g, '');
+    html = html.replace(/<p>(<h[1-4]>)/g, '$1');
+    html = html.replace(/(<\/h[1-4]>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<div class="chat-code-block">)/g, '$1');
+    html = html.replace(/(<\/div>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<table)/g, '$1');
+    html = html.replace(/(<\/table>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<ul>)/g, '$1');
+    html = html.replace(/(<\/ul>)<\/p>/g, '$1');
+
+    return html;
 }
 
 // ── Init ────────────────────────────────────────────────────────

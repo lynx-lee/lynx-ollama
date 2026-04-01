@@ -29,6 +29,11 @@ type OllamaService struct {
 	apiReadyCacheAt  time.Time
 	apiReadyCacheTTL time.Duration
 
+	// Version cache — Ollama version rarely changes, no need to query every 5s.
+	versionCache    string
+	versionCacheAt  time.Time
+	versionCacheTTL time.Duration
+
 	// Translation cache: English description → Chinese translation.
 	// Persists in memory for the lifetime of the process — avoids redundant LLM calls
 	// when the user refreshes the model market or navigates back to it.
@@ -46,6 +51,7 @@ func NewOllamaService(cfg *config.Config) *OllamaService {
 			Timeout: 3 * time.Second,
 		},
 		apiReadyCacheTTL: 5 * time.Second,
+		versionCacheTTL:  60 * time.Second,
 	}
 }
 
@@ -72,11 +78,15 @@ func (s *OllamaService) IsAPIReady() bool {
 	return ready
 }
 
-// GetVersion returns the Ollama version.
+// GetVersion returns the Ollama version (cached for 60s).
 func (s *OllamaService) GetVersion() (string, error) {
+	if s.versionCache != "" && time.Since(s.versionCacheAt) < s.versionCacheTTL {
+		return s.versionCache, nil
+	}
+
 	resp, err := s.client.Get(s.cfg.OllamaAPIURL + "/api/version")
 	if err != nil {
-		return "", fmt.Errorf("failed to get version: %w", err)
+		return s.versionCache, fmt.Errorf("failed to get version: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -84,9 +94,16 @@ func (s *OllamaService) GetVersion() (string, error) {
 		Version string `json:"version"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode version: %w", err)
+		return s.versionCache, fmt.Errorf("failed to decode version: %w", err)
 	}
+	s.versionCache = result.Version
+	s.versionCacheAt = time.Now()
 	return result.Version, nil
+}
+
+// InvalidateVersionCache forces the next GetVersion call to query the API.
+func (s *OllamaService) InvalidateVersionCache() {
+	s.versionCacheAt = time.Time{}
 }
 
 // GetLatestVersion queries the GitHub API for the latest Ollama release version.
@@ -997,4 +1014,50 @@ func formatBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
+}
+
+// ChatStream sends a streaming chat request to Ollama and returns an io.ReadCloser
+// producing NDJSON lines. Caller must close the reader.
+func (s *OllamaService) ChatStream(modelName string, messages []map[string]string, options map[string]any) (io.ReadCloser, error) {
+	payload := map[string]any{
+		"model":    modelName,
+		"messages": messages,
+		"stream":   true,
+	}
+	if len(options) > 0 {
+		payload["options"] = options
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal chat request: %w", err)
+	}
+
+	// No timeout — LLM generation can take minutes for long responses
+	chatClient := &http.Client{}
+	resp, err := chatClient.Post(
+		s.cfg.OllamaAPIURL+"/api/chat",
+		"application/json",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("chat request failed: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		errBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("chat failed (status %d): %s", resp.StatusCode, string(errBody))
+	}
+	return resp.Body, nil
+}
+
+// ParseFileContent extracts text content from an uploaded file based on its extension.
+// Supports: .txt, .md, .csv, .json, .log, .yaml, .yml, .xml, .html, .go, .py, .js, .sh, .sql, etc.
+func ParseFileContent(filename string, data []byte) (string, error) {
+	// For all text-based files, just return as string (with size limit)
+	const maxSize = 100 * 1024 // 100KB text limit
+	if len(data) > maxSize {
+		return string(data[:maxSize]) + "\n\n... (文件内容已截断，超过 100KB 限制)", nil
+	}
+	return string(data), nil
 }

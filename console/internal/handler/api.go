@@ -3,6 +3,7 @@ package handler
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -202,18 +203,15 @@ func (h *APIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, status)
 }
 
-// GetStatusLite returns a lightweight status snapshot (container + API + running models + GPU).
-// This is used for background polling when the user is NOT on the Dashboard page,
-// significantly reducing the number of requests to Ollama and Docker.
+// GetStatusLite returns a lightweight status snapshot.
+// Optimized: version from cache, API readiness inferred from ListRunningModels.
 func (h *APIHandler) GetStatusLite(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
 	status := model.ServiceStatus{}
 
-	// 4 lightweight queries (vs. 7 in full status)
-	ch := make(chan collectResult, 4)
-
+	ch := make(chan collectResult, 3)
 	go func() {
 		info, err := h.docker.GetContainerInfo(ctx)
 		ch <- collectResult{"container", info, err}
@@ -223,26 +221,22 @@ func (h *APIHandler) GetStatusLite(w http.ResponseWriter, r *http.Request) {
 		ch <- collectResult{"running", running, err}
 	}()
 	go func() {
-		version, err := h.ollama.GetVersion()
-		ch <- collectResult{"version", version, err}
-	}()
-	go func() {
 		gpus, err := h.docker.GetGPUInfo(ctx)
 		ch <- collectResult{"gpu", gpus, err}
 	}()
 
-	for i := 0; i < 4; i++ {
+	apiReady := false
+	for i := 0; i < 3; i++ {
 		r := <-ch
 		switch r.key {
 		case "container":
 			status.Container = r.val.(model.ContainerInfo)
 		case "running":
+			if r.err == nil {
+				apiReady = true
+			}
 			if r.val != nil {
 				status.RunningModels = r.val.([]model.RunningModel)
-			}
-		case "version":
-			if r.val != nil {
-				status.OllamaVersion = r.val.(string)
 			}
 		case "gpu":
 			if r.val != nil {
@@ -251,11 +245,12 @@ func (h *APIHandler) GetStatusLite(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Single IsAPIReady call (cached internally)
-	apiReady := h.ollama.IsAPIReady()
+	if ver, err := h.ollama.GetVersion(); err == nil {
+		status.OllamaVersion = ver
+	}
+
 	status.APIReachable = apiReady
 	h.correctHealthStatus(&status.Container, apiReady)
-
 	status.ProjectVersion = h.version
 
 	jsonResponse(w, status)
@@ -909,6 +904,7 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Phase 4: Done
+	h.ollama.InvalidateVersionCache()
 	newVersion, _ := h.ollama.GetVersion()
 	conn.WriteJSON(map[string]interface{}{
 		"phase":       "done",
@@ -1209,6 +1205,7 @@ func (hub *StatusHub) broadcast() {
 }
 
 // collectFullStatus collects the full status (same as GetStatus handler).
+// Version uses 60s cache; API readiness is inferred from ListRunningModels.
 func (hub *StatusHub) collectFullStatus() model.ServiceStatus {
 	h := hub.handler
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -1216,7 +1213,7 @@ func (hub *StatusHub) collectFullStatus() model.ServiceStatus {
 
 	status := model.ServiceStatus{}
 
-	ch := make(chan collectResult, 7)
+	ch := make(chan collectResult, 6)
 	go func() {
 		info, err := h.docker.GetContainerInfo(ctx)
 		ch <- collectResult{"container", info, err}
@@ -1241,12 +1238,9 @@ func (hub *StatusHub) collectFullStatus() model.ServiceStatus {
 		disk, err := h.docker.GetDiskUsage(ctx)
 		ch <- collectResult{"disk", disk, err}
 	}()
-	go func() {
-		version, err := h.ollama.GetVersion()
-		ch <- collectResult{"version", version, err}
-	}()
 
-	for i := 0; i < 7; i++ {
+	apiReady := false
+	for i := 0; i < 6; i++ {
 		r := <-ch
 		switch r.key {
 		case "container":
@@ -1258,6 +1252,9 @@ func (hub *StatusHub) collectFullStatus() model.ServiceStatus {
 				status.Models = r.val.([]model.ModelInfo)
 			}
 		case "running":
+			if r.err == nil {
+				apiReady = true
+			}
 			if r.val != nil {
 				status.RunningModels = r.val.([]model.RunningModel)
 			}
@@ -1267,14 +1264,14 @@ func (hub *StatusHub) collectFullStatus() model.ServiceStatus {
 			}
 		case "disk":
 			status.Disk = r.val.(model.DiskUsage)
-		case "version":
-			if r.val != nil {
-				status.OllamaVersion = r.val.(string)
-			}
 		}
 	}
 
-	apiReady := h.ollama.IsAPIReady()
+	// Version from cache (60s TTL)
+	if ver, err := h.ollama.GetVersion(); err == nil {
+		status.OllamaVersion = ver
+	}
+
 	status.APIReachable = apiReady
 	h.correctHealthStatus(&status.Container, apiReady)
 	status.ProjectVersion = h.version
@@ -1309,7 +1306,8 @@ func (hub *StatusHub) collectFullStatus() model.ServiceStatus {
 }
 
 // collectLiteStatus collects lightweight status (same as GetStatusLite handler).
-// It now also includes GPU data so the GPU page can be updated via WebSocket.
+// Optimized: version uses 60s cache (no per-poll API call), API readiness is
+// inferred from ListRunningModels success (avoids separate GET / probe).
 func (hub *StatusHub) collectLiteStatus() model.ServiceStatus {
 	h := hub.handler
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -1317,7 +1315,7 @@ func (hub *StatusHub) collectLiteStatus() model.ServiceStatus {
 
 	status := model.ServiceStatus{}
 
-	ch := make(chan collectResult, 4)
+	ch := make(chan collectResult, 3)
 	go func() {
 		info, err := h.docker.GetContainerInfo(ctx)
 		ch <- collectResult{"container", info, err}
@@ -1327,26 +1325,22 @@ func (hub *StatusHub) collectLiteStatus() model.ServiceStatus {
 		ch <- collectResult{"running", running, err}
 	}()
 	go func() {
-		version, err := h.ollama.GetVersion()
-		ch <- collectResult{"version", version, err}
-	}()
-	go func() {
 		gpus, err := h.docker.GetGPUInfo(ctx)
 		ch <- collectResult{"gpu", gpus, err}
 	}()
 
-	for i := 0; i < 4; i++ {
+	apiReady := false
+	for i := 0; i < 3; i++ {
 		r := <-ch
 		switch r.key {
 		case "container":
 			status.Container = r.val.(model.ContainerInfo)
 		case "running":
+			if r.err == nil {
+				apiReady = true // ListRunningModels succeeded → API is reachable
+			}
 			if r.val != nil {
 				status.RunningModels = r.val.([]model.RunningModel)
-			}
-		case "version":
-			if r.val != nil {
-				status.OllamaVersion = r.val.(string)
 			}
 		case "gpu":
 			if r.val != nil {
@@ -1355,7 +1349,11 @@ func (hub *StatusHub) collectLiteStatus() model.ServiceStatus {
 		}
 	}
 
-	apiReady := h.ollama.IsAPIReady()
+	// Version from cache (60s TTL, no extra API call per poll)
+	if ver, err := h.ollama.GetVersion(); err == nil {
+		status.OllamaVersion = ver
+	}
+
 	status.APIReachable = apiReady
 	h.correctHealthStatus(&status.Container, apiReady)
 	status.ProjectVersion = h.version
@@ -1466,4 +1464,233 @@ func (h *APIHandler) StreamStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		client.mu.Unlock()
 	}
+}
+
+// ── Chat ────────────────────────────────────────────────────────
+
+// chatFileStore holds uploaded files in memory with TTL-based cleanup.
+var chatFileStore = struct {
+	mu    sync.RWMutex
+	files map[string]*model.UploadedFile
+}{files: make(map[string]*model.UploadedFile)}
+
+func init() {
+	// Cleanup expired files every 10 minutes
+	go func() {
+		for range time.Tick(10 * time.Minute) {
+			chatFileStore.mu.Lock()
+			for id, f := range chatFileStore.files {
+				if time.Since(f.CreatedAt) > 1*time.Hour {
+					delete(chatFileStore.files, id)
+				}
+			}
+			chatFileStore.mu.Unlock()
+		}
+	}()
+}
+
+// StreamChat handles streaming chat via WebSocket.
+// Protocol:
+//   - Client sends: {"type":"chat","model":"...","messages":[...],"options":{...}}
+//   - Server pushes: {"type":"token","content":"..."} per token
+//   - Server sends:  {"type":"done","model":"...","eval_count":N,"total_duration":N} at end
+//   - Client sends: {"type":"stop"} to abort generation
+func (h *APIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Error("chat websocket upgrade failed", "error", err)
+		return
+	}
+	defer conn.Close()
+
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			return // client disconnected
+		}
+
+		var req model.ChatRequest
+		if err := json.Unmarshal(msg, &req); err != nil {
+			conn.WriteJSON(map[string]any{"type": "error", "error": "invalid request"})
+			continue
+		}
+
+		if req.Type == "stop" {
+			continue // stop is handled by cancelling the context below
+		}
+
+		if req.Type != "chat" || req.Model == "" || len(req.Messages) == 0 {
+			conn.WriteJSON(map[string]any{"type": "error", "error": "model and messages are required"})
+			continue
+		}
+
+		// Build messages with file content injected
+		ollamaMessages := make([]map[string]string, 0, len(req.Messages))
+		for _, m := range req.Messages {
+			content := m.Content
+			// Inject uploaded file contents
+			if len(m.Files) > 0 {
+				chatFileStore.mu.RLock()
+				for _, fid := range m.Files {
+					if f, ok := chatFileStore.files[fid]; ok {
+						content += fmt.Sprintf("\n\n--- 文件: %s ---\n%s", f.Name, f.Content)
+					}
+				}
+				chatFileStore.mu.RUnlock()
+			}
+			ollamaMessages = append(ollamaMessages, map[string]string{
+				"role":    m.Role,
+				"content": content,
+			})
+		}
+
+		// Start streaming
+		ctx, cancel := context.WithCancel(r.Context())
+
+		// Listen for stop command in background
+		stopCh := make(chan struct{}, 1)
+		go func() {
+			for {
+				_, stopMsg, err := conn.ReadMessage()
+				if err != nil {
+					cancel()
+					return
+				}
+				var stopReq model.ChatRequest
+				if json.Unmarshal(stopMsg, &stopReq) == nil && stopReq.Type == "stop" {
+					close(stopCh)
+					cancel()
+					return
+				}
+			}
+		}()
+
+		reader, err := h.ollama.ChatStream(req.Model, ollamaMessages, req.Options)
+		if err != nil {
+			conn.WriteJSON(map[string]any{"type": "error", "error": err.Error()})
+			cancel()
+			continue
+		}
+
+		// Stream tokens to client
+		buf := bufio.NewReader(reader)
+		for {
+			select {
+			case <-ctx.Done():
+				reader.Close()
+				conn.WriteJSON(map[string]any{"type": "stopped"})
+				goto nextMessage
+			default:
+			}
+
+			line, err := buf.ReadBytes('\n')
+			if len(line) > 0 {
+				var chunk map[string]any
+				if json.Unmarshal(line, &chunk) == nil {
+					// Extract token content from Ollama response
+					if msgObj, ok := chunk["message"].(map[string]any); ok {
+						if content, ok := msgObj["content"].(string); ok && content != "" {
+							conn.WriteJSON(map[string]any{"type": "token", "content": content})
+						}
+					}
+					// Check if done
+					if done, ok := chunk["done"].(bool); ok && done {
+						doneMsg := map[string]any{"type": "done", "model": req.Model}
+						if v, ok := chunk["eval_count"]; ok {
+							doneMsg["eval_count"] = v
+						}
+						if v, ok := chunk["total_duration"]; ok {
+							doneMsg["total_duration"] = v
+						}
+						if v, ok := chunk["eval_duration"]; ok {
+							doneMsg["eval_duration"] = v
+						}
+						conn.WriteJSON(doneMsg)
+						break
+					}
+				}
+			}
+			if err != nil {
+				if err != io.EOF {
+					conn.WriteJSON(map[string]any{"type": "error", "error": err.Error()})
+				}
+				break
+			}
+		}
+		reader.Close()
+		cancel()
+
+	nextMessage:
+		// Ready for next chat request on same connection
+	}
+}
+
+// UploadChatFile handles file upload for chat context.
+func (h *APIHandler) UploadChatFile(w http.ResponseWriter, r *http.Request) {
+	// 10MB max
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		jsonError(w, http.StatusBadRequest, "文件过大或格式错误 (最大 10MB)")
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "未找到上传文件")
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "读取文件失败")
+		return
+	}
+
+	content, err := service.ParseFileContent(header.Filename, data)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, fmt.Sprintf("文件解析失败: %s", err.Error()))
+		return
+	}
+
+	// Generate unique ID
+	idBytes := make([]byte, 8)
+	rand.Read(idBytes)
+	id := fmt.Sprintf("file_%x", idBytes)
+
+	preview := content
+	if len(preview) > 200 {
+		preview = preview[:200] + "..."
+	}
+
+	uf := &model.UploadedFile{
+		ID:        id,
+		Name:      header.Filename,
+		Size:      header.Size,
+		Content:   content,
+		Preview:   preview,
+		CreatedAt: time.Now(),
+	}
+
+	chatFileStore.mu.Lock()
+	chatFileStore.files[id] = uf
+	chatFileStore.mu.Unlock()
+
+	jsonResponse(w, uf)
+}
+
+// DownloadChatFile serves a generated file for download.
+func (h *APIHandler) DownloadChatFile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	chatFileStore.mu.RLock()
+	f, ok := chatFileStore.files[id]
+	chatFileStore.mu.RUnlock()
+
+	if !ok {
+		jsonError(w, http.StatusNotFound, "文件不存在或已过期")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", f.Name))
+	w.Write([]byte(f.Content))
 }
