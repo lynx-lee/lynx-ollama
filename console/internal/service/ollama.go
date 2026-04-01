@@ -1039,13 +1039,15 @@ func (s *OllamaService) ChatStream(modelName string, messages []map[string]any, 
 		return nil, fmt.Errorf("failed to marshal chat request: %w", err)
 	}
 
-	// No timeout — LLM generation can take minutes for long responses
-	chatClient := &http.Client{}
-	resp, err := chatClient.Post(
-		s.cfg.OllamaAPIURL+"/api/chat",
-		"application/json",
-		strings.NewReader(string(body)),
-	)
+	// No timeout — LLM generation can take minutes for long responses.
+	// Cancellation is handled by closing the response body (reader.Close()).
+	req, err := http.NewRequest("POST", s.cfg.OllamaAPIURL+"/api/chat", strings.NewReader(string(body)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create chat request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("chat request failed: %w", err)
 	}

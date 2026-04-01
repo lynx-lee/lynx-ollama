@@ -1491,20 +1491,34 @@ func (h *APIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// Single reader goroutine — gorilla/websocket does NOT support concurrent reads
+	msgCh := make(chan []byte, 4)
+	go func() {
+		for {
+			_, msg, err := conn.ReadMessage()
+			if err != nil {
+				close(msgCh)
+				return
+			}
+			msgCh <- msg
+		}
+	}()
+
 	for {
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
+		// Wait for next chat request
+		rawMsg, ok := <-msgCh
+		if !ok {
 			return // client disconnected
 		}
 
 		var req model.ChatRequest
-		if err := json.Unmarshal(msg, &req); err != nil {
+		if err := json.Unmarshal(rawMsg, &req); err != nil {
 			conn.WriteJSON(map[string]any{"type": "error", "error": "invalid request"})
 			continue
 		}
 
 		if req.Type == "stop" {
-			continue // stop is handled by cancelling the context below
+			continue
 		}
 
 		if req.Type != "chat" || req.Model == "" || len(req.Messages) == 0 {
@@ -1517,7 +1531,6 @@ func (h *APIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		for _, m := range req.Messages {
 			content := m.Content
 			var images []string
-			// Inject uploaded file contents / images
 			if len(m.Files) > 0 {
 				for _, fid := range m.Files {
 					if f, ok := h.chatFiles.Get(fid); ok {
@@ -1539,26 +1552,8 @@ func (h *APIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			ollamaMessages = append(ollamaMessages, msg)
 		}
 
-		// Start streaming
+		// Start streaming with cancellable context
 		ctx, cancel := context.WithCancel(r.Context())
-
-		// Listen for stop command in background
-		stopCh := make(chan struct{}, 1)
-		go func() {
-			for {
-				_, stopMsg, err := conn.ReadMessage()
-				if err != nil {
-					cancel()
-					return
-				}
-				var stopReq model.ChatRequest
-				if json.Unmarshal(stopMsg, &stopReq) == nil && stopReq.Type == "stop" {
-					close(stopCh)
-					cancel()
-					return
-				}
-			}
-		}()
 
 		reader, err := h.ollama.ChatStream(req.Model, ollamaMessages, req.Options, req.Format, req.KeepAlive)
 		if err != nil {
@@ -1567,56 +1562,79 @@ func (h *APIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Stream tokens to client
-		buf := bufio.NewReader(reader)
+		// Stream tokens; monitor msgCh for stop command concurrently
+		stopped := false
+		doneCh := make(chan struct{})
+
+		go func() {
+			defer close(doneCh)
+			buf := bufio.NewReader(reader)
+			for {
+				line, err := buf.ReadBytes('\n')
+				if len(line) > 0 {
+					var chunk map[string]any
+					if json.Unmarshal(line, &chunk) == nil {
+						if msgObj, ok := chunk["message"].(map[string]any); ok {
+							if content, ok := msgObj["content"].(string); ok && content != "" {
+								conn.WriteJSON(map[string]any{"type": "token", "content": content})
+							}
+						}
+						if done, ok := chunk["done"].(bool); ok && done {
+							doneMsg := map[string]any{"type": "done", "model": req.Model}
+							if v, ok := chunk["eval_count"]; ok {
+								doneMsg["eval_count"] = v
+							}
+							if v, ok := chunk["total_duration"]; ok {
+								doneMsg["total_duration"] = v
+							}
+							if v, ok := chunk["eval_duration"]; ok {
+								doneMsg["eval_duration"] = v
+							}
+							conn.WriteJSON(doneMsg)
+							return
+						}
+					}
+				}
+				if err != nil {
+					if err != io.EOF && ctx.Err() == nil {
+						conn.WriteJSON(map[string]any{"type": "error", "error": err.Error()})
+					}
+					return
+				}
+			}
+		}()
+
+		// Wait for either: stream done, client stop command, or client disconnect
+	waitLoop:
 		for {
 			select {
-			case <-ctx.Done():
-				reader.Close()
-				conn.WriteJSON(map[string]any{"type": "stopped"})
-				goto nextMessage
-			default:
-			}
-
-			line, err := buf.ReadBytes('\n')
-			if len(line) > 0 {
-				var chunk map[string]any
-				if json.Unmarshal(line, &chunk) == nil {
-					// Extract token content from Ollama response
-					if msgObj, ok := chunk["message"].(map[string]any); ok {
-						if content, ok := msgObj["content"].(string); ok && content != "" {
-							conn.WriteJSON(map[string]any{"type": "token", "content": content})
-						}
-					}
-					// Check if done
-					if done, ok := chunk["done"].(bool); ok && done {
-						doneMsg := map[string]any{"type": "done", "model": req.Model}
-						if v, ok := chunk["eval_count"]; ok {
-							doneMsg["eval_count"] = v
-						}
-						if v, ok := chunk["total_duration"]; ok {
-							doneMsg["total_duration"] = v
-						}
-						if v, ok := chunk["eval_duration"]; ok {
-							doneMsg["eval_duration"] = v
-						}
-						conn.WriteJSON(doneMsg)
-						break
-					}
+			case <-doneCh:
+				// Stream finished naturally
+				break waitLoop
+			case rawMsg, ok := <-msgCh:
+				if !ok {
+					// Client disconnected
+					cancel()
+					reader.Close()
+					return
 				}
-			}
-			if err != nil {
-				if err != io.EOF {
-					conn.WriteJSON(map[string]any{"type": "error", "error": err.Error()})
+				var stopReq model.ChatRequest
+				if json.Unmarshal(rawMsg, &stopReq) == nil && stopReq.Type == "stop" {
+					stopped = true
+					cancel()
+					reader.Close()
+					<-doneCh // wait for reader goroutine to exit
+					conn.WriteJSON(map[string]any{"type": "stopped"})
+					break waitLoop
 				}
-				break
 			}
 		}
-		reader.Close()
-		cancel()
 
-	nextMessage:
-		// Ready for next chat request on same connection
+		cancel()
+		if !stopped {
+			reader.Close()
+		}
+		// Ready for next chat request
 	}
 }
 
