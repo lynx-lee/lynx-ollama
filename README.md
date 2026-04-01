@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.7.8-blue)
+![Version](https://img.shields.io/badge/version-v1.7.9-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -320,6 +320,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.7.9 | 2026-04-01 | **Ollama 版本更新交互增强**。1️⃣ 后端新增 `GetLatestVersion()` 方法，通过 GitHub API (`/repos/ollama/ollama/releases/latest`) 查询 Ollama 最新发布版本号；2️⃣ `StreamUpdate` 版本检测从 Docker image digest 比对改为**版本号比对**（当前版本 vs GitHub 最新版本），版本相同则提示「当前已是最新版本 (x.x.x)」不执行任何操作；3️⃣ 发现新版本时弹确认框同时显示当前版本号和最新版本号，确认后显示 `正在更新 x.x.x → y.y.y`；4️⃣ 取消更新时顶栏版本处标黄显示 `x.x.x → y.y.y`，hover 提示两个版本号；5️⃣ `do_build` 新增模板同步检查，构建前自动检测 `docker-compose.yaml` 与模板差异并重新生成；6️⃣ 修复 `ollama.sh` help 输出端口号颜色未正确显示（`echo` → `echo -e`） |
 | v1.7.8 | 2026-04-01 | **目录重命名 + 更新版本交互优化**。1️⃣ `web/` 目录重命名为 `console/`，所有引用同步更新：Go module `lynx-ollama-web` → `lynx-ollama-console`、二进制名/Docker 镜像名/容器名 `ollama-web` → `ollama-console`、`docker-compose.yaml.template` build context `./web` → `./console`、`ollama.sh` 中所有路径和容器名引用；2️⃣ 更新版本流程优化：点击「更新版本」后先自动检查是否有新版本——已是最新则直接提示无需操作；发现新版本时弹确认框显示当前版本号、询问是否更新并重启——确认则立即执行更新+重启流程，取消则在顶栏 Ollama 版本处标黄提示「有新版本」；后端 `StreamUpdate` WebSocket 新增 `update_available`/`cancelled` 阶段，支持前端发送 `confirm`/`cancel` 消息控制更新流程 |
 | v1.7.7 | 2026-03-20 | **GPU 监控全面增强**。新增 GPU 详细信息显示：持久化模式、PCIe 总线 ID、显示活跃状态、ECC 错误计数、风扇转速、性能状态 (P-State)、计算模式、MIG 模式；新增 GPU 进程列表显示（进程 PID、名称、显存占用）；前端 GPU 卡片优化布局，支持进程列表滚动显示 |
 | v1.7.6 | 2026-03-20 | **新增 build 命令**。新增 `./ollama.sh build [--recreate]` 命令，强制构建 Web 管理界面镜像；支持 `--recreate` 参数强制重新创建容器以应用新配置；适用于修改 Web 源码后快速重新构建、版本更新后强制构建、开发调试等场景 |
