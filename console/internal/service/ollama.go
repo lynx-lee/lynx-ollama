@@ -51,7 +51,7 @@ func NewOllamaService(cfg *config.Config) *OllamaService {
 			Timeout: 3 * time.Second,
 		},
 		apiReadyCacheTTL: 5 * time.Second,
-		versionCacheTTL:  60 * time.Second,
+		versionCacheTTL:  1 * time.Hour,
 	}
 }
 
