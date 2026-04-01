@@ -72,7 +72,7 @@ bash build.sh v1.0.0 linux-arm64
 ### 方式 3: Docker 构建
 
 ```bash
-cd web
+cd console
 bash build.sh v1.0.0 docker
 docker run -d -p 9981:8080 \
   -v /opt/ai/ollama:/opt/ai/ollama \

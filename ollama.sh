@@ -1268,7 +1268,7 @@ do_build() {
     
     # 检查 console 目录是否存在
     if [ ! -d "${PROJECT_DIR}/console" ]; then
-        log_error "console 目录不存在: ${PROJECT_DIR}/web"
+        log_error "console 目录不存在: ${PROJECT_DIR}/console"
         exit 1
     fi
     
