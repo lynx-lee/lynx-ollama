@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.8.0-blue)
+![Version](https://img.shields.io/badge/version-v1.8.1-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -308,6 +308,8 @@ WEB_CORS_ORIGIN="https://admin.example.com" ./ollama.sh start
 ```
 lynx-ollama/
 ├── ollama.sh                    # 管理脚本（服务/模型/GPU/维护）
+├── console/                     # Web 管理界面（Go + 嵌入式 SPA）
+├── chat-files/                  # 对话文件持久化目录（按日期子目录，运行时生成）
 ├── docker-compose.yaml.template # Docker Compose 模板（纳入版本管理，source of truth）
 ├── docker-compose.yaml          # 运行时配置（从模板生成，不纳入 Git）
 ├── .env                         # 环境变量配置（由 init/optimize 生成，不纳入 Git）
@@ -320,6 +322,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.8.1 | 2026-04-01 | **文件持久化 + 图片多模态 + 自适应优化**。1️⃣ **文件持久化存储**：上传文件和 LLM 生成文件从内存改为磁盘持久化，存储在 `chat-files/<日期>/<fileID>/` 目录下（含 metadata.json + 原始文件），服务重启不丢失，宿主机可直接管理和清理；新增 `ChatFileStore` 服务层，支持按日期分目录、启动时加载当日缓存、7 天内文件自动检索；2️⃣ **图片多模态支持**：文件上传新增图片格式（jpg/png/gif/webp/bmp），图片 base64 编码后通过 Ollama `/api/chat` 的 `images` 字段传入，需配合视觉模型（llava/llama3.2-vision）使用；上传标签和气泡中显示图片缩略图预览；3️⃣ **Chat 页面自适应**：三档响应式断点（>768px/≤768px/≤480px），工具栏/气泡/输入区弹性布局，代码块和表格横向滑动，消息区独立滚动；4️⃣ `GetVersion` 缓存 TTL 调整为 1 小时；docker-compose ollama 容器挂载 `chat-files` 共享目录 |
 | v1.8.0 | 2026-04-01 | **新增模型测试（对话）功能 + 状态轮询优化**。1️⃣ **流式对话**：侧边栏新增「💬 模型测试」页面，通过 WebSocket (`/api/ws/chat`) 与本地大模型多轮流式对话，支持停止生成、文件上传（txt/md/csv/json/yaml/代码等文本文件作为上下文）、Markdown 富文本渲染（代码块带复制按钮、表格、列表、标题、链接、图片）、生成统计（token 数/耗时/速度）；2️⃣ **状态轮询优化**：`GetVersion` 新增 60s 缓存（版本号几乎不变，从每 5s 查询降为每 60s）；`IsAPIReady` 独立探针（`GET /`）移除，改为从 `ListRunningModels` 的成败推断 API 可达性；Lite/Full 状态采集均减少 2 个并行 goroutine；整体 Ollama API 调用量降低约 66%；更新完成后自动清除版本缓存 |
 | v1.7.9 | 2026-04-01 | **Ollama 版本更新交互增强**。1️⃣ 后端新增 `GetLatestVersion()` 方法，通过 GitHub API (`/repos/ollama/ollama/releases/latest`) 查询 Ollama 最新发布版本号；2️⃣ `StreamUpdate` 版本检测从 Docker image digest 比对改为**版本号比对**（当前版本 vs GitHub 最新版本），版本相同则提示「当前已是最新版本 (x.x.x)」不执行任何操作；3️⃣ 发现新版本时弹确认框同时显示当前版本号和最新版本号，确认后显示 `正在更新 x.x.x → y.y.y`；4️⃣ 取消更新时顶栏版本处标黄显示 `x.x.x → y.y.y`，hover 提示两个版本号；5️⃣ `do_build` 新增模板同步检查，构建前自动检测 `docker-compose.yaml` 与模板差异并重新生成；6️⃣ 修复 `ollama.sh` help 输出端口号颜色未正确显示（`echo` → `echo -e`） |
 | v1.7.8 | 2026-04-01 | **目录重命名 + 更新版本交互优化**。1️⃣ `web/` 目录重命名为 `console/`，所有引用同步更新：Go module `lynx-ollama-web` → `lynx-ollama-console`、二进制名/Docker 镜像名/容器名 `ollama-web` → `ollama-console`、`docker-compose.yaml.template` build context `./web` → `./console`、`ollama.sh` 中所有路径和容器名引用；2️⃣ 更新版本流程优化：点击「更新版本」后先自动检查是否有新版本——已是最新则直接提示无需操作；发现新版本时弹确认框显示当前版本号、询问是否更新并重启——确认则立即执行更新+重启流程，取消则在顶栏 Ollama 版本处标黄提示「有新版本」；后端 `StreamUpdate` WebSocket 新增 `update_available`/`cancelled` 阶段，支持前端发送 `confirm`/`cancel` 消息控制更新流程 |

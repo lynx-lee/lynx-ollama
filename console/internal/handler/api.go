@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ type APIHandler struct {
 	ollama    *service.OllamaService
 	docker    *service.DockerService
 	system    *service.SystemService
+	chatFiles *service.ChatFileStore
 	cfg       *config.Config
 	version   string
 	statusHub *StatusHub
@@ -38,7 +40,14 @@ type APIHandler struct {
 
 // NewAPIHandler creates a new APIHandler.
 func NewAPIHandler(ollama *service.OllamaService, docker *service.DockerService, system *service.SystemService, cfg *config.Config, version string) *APIHandler {
-	h := &APIHandler{ollama: ollama, docker: docker, system: system, cfg: cfg, version: version}
+	h := &APIHandler{
+		ollama:    ollama,
+		docker:    docker,
+		system:    system,
+		chatFiles: service.NewChatFileStore(cfg.ChatFilesDir),
+		cfg:       cfg,
+		version:   version,
+	}
 	h.statusHub = NewStatusHub(h)
 	return h
 }
@@ -1468,27 +1477,6 @@ func (h *APIHandler) StreamStatus(w http.ResponseWriter, r *http.Request) {
 
 // ── Chat ────────────────────────────────────────────────────────
 
-// chatFileStore holds uploaded files in memory with TTL-based cleanup.
-var chatFileStore = struct {
-	mu    sync.RWMutex
-	files map[string]*model.UploadedFile
-}{files: make(map[string]*model.UploadedFile)}
-
-func init() {
-	// Cleanup expired files every 10 minutes
-	go func() {
-		for range time.Tick(10 * time.Minute) {
-			chatFileStore.mu.Lock()
-			for id, f := range chatFileStore.files {
-				if time.Since(f.CreatedAt) > 1*time.Hour {
-					delete(chatFileStore.files, id)
-				}
-			}
-			chatFileStore.mu.Unlock()
-		}
-	}()
-}
-
 // StreamChat handles streaming chat via WebSocket.
 // Protocol:
 //   - Client sends: {"type":"chat","model":"...","messages":[...],"options":{...}}
@@ -1524,24 +1512,31 @@ func (h *APIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Build messages with file content injected
-		ollamaMessages := make([]map[string]string, 0, len(req.Messages))
+		// Build messages with file content and images injected
+		ollamaMessages := make([]map[string]any, 0, len(req.Messages))
 		for _, m := range req.Messages {
 			content := m.Content
-			// Inject uploaded file contents
+			var images []string
+			// Inject uploaded file contents / images
 			if len(m.Files) > 0 {
-				chatFileStore.mu.RLock()
 				for _, fid := range m.Files {
-					if f, ok := chatFileStore.files[fid]; ok {
-						content += fmt.Sprintf("\n\n--- 文件: %s ---\n%s", f.Name, f.Content)
+					if f, ok := h.chatFiles.Get(fid); ok {
+						if f.IsImage {
+							images = append(images, f.Base64)
+						} else {
+							content += fmt.Sprintf("\n\n--- 文件: %s ---\n%s", f.Name, f.Content)
+						}
 					}
 				}
-				chatFileStore.mu.RUnlock()
 			}
-			ollamaMessages = append(ollamaMessages, map[string]string{
+			msg := map[string]any{
 				"role":    m.Role,
 				"content": content,
-			})
+			}
+			if len(images) > 0 {
+				msg["images"] = images
+			}
+			ollamaMessages = append(ollamaMessages, msg)
 		}
 
 		// Start streaming
@@ -1625,7 +1620,7 @@ func (h *APIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// UploadChatFile handles file upload for chat context.
+// UploadChatFile handles file upload for chat context (text files + images).
 func (h *APIHandler) UploadChatFile(w http.ResponseWriter, r *http.Request) {
 	// 10MB max
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
@@ -1646,51 +1641,56 @@ func (h *APIHandler) UploadChatFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := service.ParseFileContent(header.Filename, data)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, fmt.Sprintf("文件解析失败: %s", err.Error()))
-		return
-	}
-
 	// Generate unique ID
 	idBytes := make([]byte, 8)
 	rand.Read(idBytes)
 	id := fmt.Sprintf("file_%x", idBytes)
 
-	preview := content
-	if len(preview) > 200 {
-		preview = preview[:200] + "..."
-	}
-
 	uf := &model.UploadedFile{
 		ID:        id,
 		Name:      header.Filename,
 		Size:      header.Size,
-		Content:   content,
-		Preview:   preview,
 		CreatedAt: time.Now(),
 	}
 
-	chatFileStore.mu.Lock()
-	chatFileStore.files[id] = uf
-	chatFileStore.mu.Unlock()
+	if service.IsImageFile(header.Filename) {
+		// Image: base64 encode, store for injection into Ollama images field
+		uf.IsImage = true
+		uf.Base64 = base64.StdEncoding.EncodeToString(data)
+		uf.Preview = "image"
+	} else {
+		// Text file: parse content
+		content, err := service.ParseFileContent(header.Filename, data)
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, fmt.Sprintf("文件解析失败: %s", err.Error()))
+			return
+		}
+		uf.Content = content
+		preview := content
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		uf.Preview = preview
+	}
+
+	if err := h.chatFiles.Save(uf); err != nil {
+		slog.Error("failed to save chat file", "error", err)
+	}
 
 	jsonResponse(w, uf)
 }
 
-// DownloadChatFile serves a generated file for download.
+// DownloadChatFile serves a file for download from persistent storage.
 func (h *APIHandler) DownloadChatFile(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	chatFileStore.mu.RLock()
-	f, ok := chatFileStore.files[id]
-	chatFileStore.mu.RUnlock()
 
+	filePath, ok := h.chatFiles.GetFilePath(id)
 	if !ok {
-		jsonError(w, http.StatusNotFound, "文件不存在或已过期")
+		jsonError(w, http.StatusNotFound, "文件不存在或已删除")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/octet-stream")
+	f, _ := h.chatFiles.Get(id)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", f.Name))
-	w.Write([]byte(f.Content))
+	http.ServeFile(w, r, filePath)
 }

@@ -14,6 +14,7 @@ type Config struct {
 	OllamaAPIURL string // Ollama API base URL (e.g. "http://localhost:11434")
 	ProjectDir   string // Path to the ollama project directory
 	ScriptPath   string // Path to ollama.sh
+	ChatFilesDir string // Path to chat files storage directory
 	LogLevel     string // Log level: debug, info, warn, error
 	APIKey       string // API key for authentication (empty = auto-generate)
 	CORSOrigin   string // Allowed CORS origin ("*" for all, empty = same-origin only)
@@ -27,6 +28,7 @@ func New() *Config {
 		OllamaAPIURL: envOrDefault("OLLAMA_API_URL", "http://localhost:11434"),
 		ProjectDir:   projectDir,
 		ScriptPath:   envOrDefault("OLLAMA_SCRIPT_PATH", filepath.Join(projectDir, "ollama.sh")),
+		ChatFilesDir: envOrDefault("CHAT_FILES_DIR", filepath.Join(projectDir, "chat-files")),
 		LogLevel:     envOrDefault("WEB_LOG_LEVEL", "info"),
 		APIKey:       os.Getenv("WEB_API_KEY"),
 		CORSOrigin:   os.Getenv("WEB_CORS_ORIGIN"),

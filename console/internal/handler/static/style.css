@@ -1136,7 +1136,7 @@ tbody tr:hover { background: var(--bg-hover); }
 
 .chat-bubble-text { white-space: pre-wrap; }
 
-.chat-msg-files { margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+.chat-msg-files { margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .chat-msg-file-tag {
     font-size: 11px;
     padding: 2px 8px;
@@ -1145,6 +1145,29 @@ tbody tr:hover { background: var(--bg-hover); }
 }
 .chat-message-assistant .chat-msg-file-tag {
     background: var(--bg-hover);
+}
+
+.chat-msg-img-preview {
+    max-width: 200px;
+    max-height: 120px;
+    border-radius: var(--radius-sm);
+    object-fit: cover;
+    cursor: pointer;
+}
+.chat-msg-img-preview:hover { opacity: 0.85; }
+
+.chat-upload-thumb {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    object-fit: cover;
+    vertical-align: middle;
+    margin-right: 2px;
+}
+
+.chat-file-tag-img {
+    display: inline-flex;
+    align-items: center;
 }
 
 .chat-typing { animation: chatBlink 1.2s infinite; color: var(--text-muted); }

@@ -1018,7 +1018,7 @@ func formatBytes(b int64) string {
 
 // ChatStream sends a streaming chat request to Ollama and returns an io.ReadCloser
 // producing NDJSON lines. Caller must close the reader.
-func (s *OllamaService) ChatStream(modelName string, messages []map[string]string, options map[string]any) (io.ReadCloser, error) {
+func (s *OllamaService) ChatStream(modelName string, messages []map[string]any, options map[string]any) (io.ReadCloser, error) {
 	payload := map[string]any{
 		"model":    modelName,
 		"messages": messages,
@@ -1051,8 +1051,20 @@ func (s *OllamaService) ChatStream(modelName string, messages []map[string]strin
 	return resp.Body, nil
 }
 
+// IsImageFile checks if the filename has an image extension.
+func IsImageFile(filename string) bool {
+	ext := strings.ToLower(filename)
+	for _, suffix := range []string{".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"} {
+		if strings.HasSuffix(ext, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 // ParseFileContent extracts text content from an uploaded file based on its extension.
 // Supports: .txt, .md, .csv, .json, .log, .yaml, .yml, .xml, .html, .go, .py, .js, .sh, .sql, etc.
+// For image files, use IsImageFile() check first — images should be base64-encoded, not parsed as text.
 func ParseFileContent(filename string, data []byte) (string, error) {
 	// For all text-based files, just return as string (with size limit)
 	const maxSize = 100 * 1024 // 100KB text limit

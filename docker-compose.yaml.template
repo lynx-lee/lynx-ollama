@@ -44,6 +44,8 @@ services:
       # 时区挂载：直接用 zoneinfo 数据文件而非宿主机 symlink，避免容器内解析异常
       - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
       - /usr/share/zoneinfo/${OLLAMA_TZ:-Asia/Shanghai}:/etc/localtime:ro
+      # Chat 文件共享目录（上传文件 + LLM 生成文件）
+      - ${OLLAMA_PROJECT_DIR:-/opt/ai/ollama}/chat-files:/opt/ai/ollama/chat-files
     deploy:
       resources:
         reservations:

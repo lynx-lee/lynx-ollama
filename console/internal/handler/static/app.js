@@ -1558,7 +1558,8 @@ function sendChat() {
     // Add user message
     const userMsg = { role: 'user', content: text, files: chatUploadedFiles.map(f => f.id) };
     chatMessages.push(userMsg);
-    appendChatBubble('user', text, chatUploadedFiles.map(f => f.name));
+    const fileInfos = chatUploadedFiles.map(f => ({ name: f.name, isImage: f.is_image, url: f._localUrl }));
+    appendChatBubble('user', text, fileInfos);
 
     // Clear input
     input.value = '';
@@ -1679,7 +1680,12 @@ async function handleChatFileUpload(event) {
             });
             const data = await resp.json();
             if (data.success && data.data) {
-                chatUploadedFiles.push(data.data);
+                const fileData = data.data;
+                // For images, create a local blob URL for thumbnail preview
+                if (fileData.is_image) {
+                    fileData._localUrl = URL.createObjectURL(file);
+                }
+                chatUploadedFiles.push(fileData);
                 renderChatUploadTags();
             } else {
                 showToast(`上传失败: ${data.error || '未知错误'}`, 'error');
@@ -1694,9 +1700,12 @@ async function handleChatFileUpload(event) {
 function renderChatUploadTags() {
     const container = document.getElementById('chatUploadTags');
     if (!chatUploadedFiles.length) { container.innerHTML = ''; return; }
-    container.innerHTML = chatUploadedFiles.map((f, i) =>
-        `<span class="chat-file-tag">📄 ${escapeHtml(f.name)} <span class="chat-file-tag-remove" onclick="removeChatFile(${i})">✕</span></span>`
-    ).join('');
+    container.innerHTML = chatUploadedFiles.map((f, i) => {
+        if (f.is_image && f._localUrl) {
+            return `<span class="chat-file-tag chat-file-tag-img"><img src="${f._localUrl}" class="chat-upload-thumb" alt="${escapeHtml(f.name)}"> ${escapeHtml(f.name)} <span class="chat-file-tag-remove" onclick="removeChatFile(${i})">✕</span></span>`;
+        }
+        return `<span class="chat-file-tag">📄 ${escapeHtml(f.name)} <span class="chat-file-tag-remove" onclick="removeChatFile(${i})">✕</span></span>`;
+    }).join('');
 }
 
 function removeChatFile(index) {
@@ -1705,9 +1714,8 @@ function removeChatFile(index) {
 }
 
 // ── Chat bubble rendering ───────────────────────────────────────
-function appendChatBubble(role, content, fileNames) {
+function appendChatBubble(role, content, fileInfos) {
     const container = document.getElementById('chatMessages');
-    // Remove empty state
     const empty = container.querySelector('.chat-empty-state');
     if (empty) empty.remove();
 
@@ -1715,8 +1723,13 @@ function appendChatBubble(role, content, fileNames) {
     bubble.className = `chat-message chat-message-${role}`;
 
     let filesHtml = '';
-    if (fileNames && fileNames.length) {
-        filesHtml = `<div class="chat-msg-files">${fileNames.map(n => `<span class="chat-msg-file-tag">📄 ${escapeHtml(n)}</span>`).join('')}</div>`;
+    if (fileInfos && fileInfos.length) {
+        filesHtml = '<div class="chat-msg-files">' + fileInfos.map(f => {
+            if (f.isImage && f.url) {
+                return `<img src="${f.url}" class="chat-msg-img-preview" alt="${escapeHtml(f.name)}" title="${escapeHtml(f.name)}">`;
+            }
+            return `<span class="chat-msg-file-tag">📄 ${escapeHtml(f.name)}</span>`;
+        }).join('') + '</div>';
     }
 
     if (role === 'user') {

@@ -241,7 +241,9 @@ type UploadedFile struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	Size      int64     `json:"size"`
-	Content   string    `json:"-"`          // parsed text content (not sent to client)
-	Preview   string    `json:"preview"`    // first 200 chars preview
+	IsImage   bool      `json:"is_image"`
+	Content   string    `json:"-"`           // parsed text content (not sent to client)
+	Base64    string    `json:"-"`           // base64-encoded image data (not sent to client)
+	Preview   string    `json:"preview"`     // first 200 chars preview, or "image" for images
 	CreatedAt time.Time `json:"-"`
 }
