@@ -11,6 +11,7 @@ RUN go mod download
 
 # Copy source code
 COPY . .
+RUN go mod tidy
 
 # Extract version from main.go as fallback; allow override via build arg
 ARG VERSION=""

@@ -1,6 +1,6 @@
 module github.com/lynxlee/lynx-ollama-console
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/gorilla/websocket v1.5.3
