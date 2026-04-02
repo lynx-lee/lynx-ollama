@@ -287,6 +287,7 @@ WEB_CORS_ORIGIN="https://admin.example.com" ./ollama.sh start
 | `GET /api/gpu` | GPU 信息 | ✅ |
 | `GET /api/logs` | 服务日志 | ✅ |
 | `GET /api/benchmark/results` | 查询历史评测结果 | ✅ |
+| `GET /api/ws/perf` | WebSocket 实时性能监控 | ✅ |
 
 ## 数据目录
 
