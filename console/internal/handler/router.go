@@ -65,6 +65,9 @@ func NewRouter(ollamaSvc *service.OllamaService, dockerSvc *service.DockerServic
 	mux.HandleFunc("GET /api/ws/status", api.StreamStatus)
 	mux.HandleFunc("GET /api/ws/chat", api.StreamChat)
 
+	// ── Performance Monitor ─────────────────────────────────────────
+	mux.HandleFunc("GET /api/ws/perf", api.StreamPerf)
+
 	// ── Chat ────────────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/chat/upload", api.UploadChatFile)
 	mux.HandleFunc("GET /api/chat/files/{id}", api.DownloadChatFile)

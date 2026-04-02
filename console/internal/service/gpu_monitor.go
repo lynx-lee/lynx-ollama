@@ -164,7 +164,7 @@ func (s *GPUMonitorService) checkGPU() {
 }
 
 // handleGPUNotAvailable handles the case when GPU is not available.
-func (s *GPUMonitorService) handleGPUNotAvailable(ctx context.Context, reason string) {
+func (s *GPUMonitorService) handleGPUNotAvailable(_ context.Context, reason string) {
 	s.gpuAvailable = false
 
 	s.mu.Lock()

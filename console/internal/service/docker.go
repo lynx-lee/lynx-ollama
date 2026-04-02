@@ -605,6 +605,161 @@ func (s *DockerService) CleanHard(ctx context.Context) (string, error) {
 	return out, err
 }
 
+// GetPerfMetrics collects all performance metrics in a single call.
+// Returns parsed numeric values suitable for real-time charting.
+func (s *DockerService) GetPerfMetrics(ctx context.Context) model.PerfMetrics {
+	m := model.PerfMetrics{Timestamp: time.Now().Unix()}
+
+	// Docker stats (CPU, Mem, Net, BlockIO) in one call
+	out, err := s.runCommand(ctx, "docker", "stats", "--no-stream", "--format",
+		"{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}|{{.BlockIO}}", "ollama")
+	if err == nil {
+		parts := strings.Split(out, "|")
+		if len(parts) >= 4 {
+			m.CPU = parsePercent(strings.TrimSpace(parts[0]))
+			memUsed, memTotal := parseMemUsage(strings.TrimSpace(parts[1]))
+			m.MemUsed = memUsed
+			m.MemTotal = memTotal
+			m.NetRx, m.NetTx = parseNetIO(strings.TrimSpace(parts[2]))
+			m.BlockRead, m.BlockWrite = parseBlockIO(strings.TrimSpace(parts[3]))
+		}
+	}
+
+	// GPU metrics via nvidia-smi (best effort)
+	gpuOut, err := s.runCommand(ctx, "docker", "exec", "ollama",
+		"nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total",
+		"--format=csv,noheader,nounits")
+	if err == nil {
+		for _, line := range strings.Split(gpuOut, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			parts := strings.Split(line, ", ")
+			if len(parts) >= 3 {
+				fmt.Sscanf(strings.TrimSpace(parts[0]), "%d", &m.GPUUtil)
+				gpuMemUsed := 0.0
+				gpuMemTotal := 0.0
+				fmt.Sscanf(strings.TrimSpace(parts[1]), "%f", &gpuMemUsed)
+				fmt.Sscanf(strings.TrimSpace(parts[2]), "%f", &gpuMemTotal)
+				// If [N/A] (unified memory), try system memory
+				if gpuMemTotal == 0 {
+					sysMem := s.getSystemMemory(ctx)
+					if sysMem != "" {
+						fmt.Sscanf(strings.TrimSuffix(sysMem, " GiB"), "%f", &gpuMemTotal)
+					}
+					usedMem := s.getUsedMemory(ctx)
+					if usedMem != "" {
+						fmt.Sscanf(strings.TrimSuffix(usedMem, " GiB"), "%f", &gpuMemUsed)
+					}
+					m.GPUMemUsed = gpuMemUsed
+					m.GPUMemTotal = gpuMemTotal
+				} else {
+					m.GPUMemUsed = gpuMemUsed / 1024 // MiB → GiB
+					m.GPUMemTotal = gpuMemTotal / 1024
+				}
+			}
+			break // Only first GPU
+		}
+	}
+
+	return m
+}
+
+// parsePercent parses "45.2%" into 45.2.
+func parsePercent(s string) float64 {
+	s = strings.TrimSuffix(s, "%")
+	var v float64
+	fmt.Sscanf(s, "%f", &v)
+	return v
+}
+
+// parseMemUsage parses "8.5GiB / 120GiB" into (8.5, 120.0).
+func parseMemUsage(s string) (float64, float64) {
+	parts := strings.Split(s, "/")
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	return parseSizeToGiB(strings.TrimSpace(parts[0])), parseSizeToGiB(strings.TrimSpace(parts[1]))
+}
+
+// parseSizeToGiB converts "8.5GiB" or "512MiB" or "8.5GB" to GiB.
+func parseSizeToGiB(s string) float64 {
+	var val float64
+	s = strings.TrimSpace(s)
+	switch {
+	case strings.HasSuffix(s, "GiB"):
+		fmt.Sscanf(strings.TrimSuffix(s, "GiB"), "%f", &val)
+	case strings.HasSuffix(s, "GB"):
+		fmt.Sscanf(strings.TrimSuffix(s, "GB"), "%f", &val)
+	case strings.HasSuffix(s, "MiB"):
+		fmt.Sscanf(strings.TrimSuffix(s, "MiB"), "%f", &val)
+		val /= 1024
+	case strings.HasSuffix(s, "MB"):
+		fmt.Sscanf(strings.TrimSuffix(s, "MB"), "%f", &val)
+		val /= 1024
+	case strings.HasSuffix(s, "KiB"), strings.HasSuffix(s, "kB"):
+		fmt.Sscanf(s[:len(s)-3], "%f", &val)
+		val /= (1024 * 1024)
+	default:
+		fmt.Sscanf(s, "%f", &val)
+	}
+	return val
+}
+
+// parseNetIO parses "12.3MB / 45.6MB" into (rx_bytes, tx_bytes).
+func parseNetIO(s string) (int64, int64) {
+	parts := strings.Split(s, "/")
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	return parseSizeToBytes(strings.TrimSpace(parts[0])), parseSizeToBytes(strings.TrimSpace(parts[1]))
+}
+
+// parseBlockIO parses "1.23MB / 4.56MB" into (read_bytes, write_bytes).
+func parseBlockIO(s string) (int64, int64) {
+	parts := strings.Split(s, "/")
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	return parseSizeToBytes(strings.TrimSpace(parts[0])), parseSizeToBytes(strings.TrimSpace(parts[1]))
+}
+
+// parseSizeToBytes converts "12.3MB", "1.5GB", "456kB" to bytes.
+func parseSizeToBytes(s string) int64 {
+	var val float64
+	s = strings.TrimSpace(s)
+	switch {
+	case strings.HasSuffix(s, "TB"):
+		fmt.Sscanf(strings.TrimSuffix(s, "TB"), "%f", &val)
+		return int64(val * 1e12)
+	case strings.HasSuffix(s, "GB"):
+		fmt.Sscanf(strings.TrimSuffix(s, "GB"), "%f", &val)
+		return int64(val * 1e9)
+	case strings.HasSuffix(s, "GiB"):
+		fmt.Sscanf(strings.TrimSuffix(s, "GiB"), "%f", &val)
+		return int64(val * 1024 * 1024 * 1024)
+	case strings.HasSuffix(s, "MB"):
+		fmt.Sscanf(strings.TrimSuffix(s, "MB"), "%f", &val)
+		return int64(val * 1e6)
+	case strings.HasSuffix(s, "MiB"):
+		fmt.Sscanf(strings.TrimSuffix(s, "MiB"), "%f", &val)
+		return int64(val * 1024 * 1024)
+	case strings.HasSuffix(s, "kB"):
+		fmt.Sscanf(strings.TrimSuffix(s, "kB"), "%f", &val)
+		return int64(val * 1000)
+	case strings.HasSuffix(s, "KiB"):
+		fmt.Sscanf(strings.TrimSuffix(s, "KiB"), "%f", &val)
+		return int64(val * 1024)
+	case strings.HasSuffix(s, "B"):
+		fmt.Sscanf(strings.TrimSuffix(s, "B"), "%f", &val)
+		return int64(val)
+	default:
+		fmt.Sscanf(s, "%f", &val)
+		return int64(val)
+	}
+}
+
 func formatDuration(d time.Duration) string {
 	days := int(d.Hours()) / 24
 	hours := int(d.Hours()) % 24

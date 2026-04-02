@@ -512,10 +512,10 @@ func (s *OllamaService) SearchModels(query, category, sort string) (*model.Marke
 		if len(m.Tags) > 0 {
 			modelType := "chat"
 			for _, t := range m.Tags {
-				tl := strings.ToLower(t)
-				if tl == "vision" {
+				switch strings.ToLower(t) {
+				case "vision":
 					modelType = "vision"
-				} else if tl == "embedding" {
+				case "embedding":
 					modelType = "embedding"
 				}
 			}

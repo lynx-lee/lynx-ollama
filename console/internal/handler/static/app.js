@@ -160,12 +160,12 @@ function switchPage(page) {
 
     // Load data for the page
     switch (page) {
-        case 'dashboard': refreshStatus(); break;
-        case 'models': loadModels(); break;
-        case 'chat': initChat(); break;
-        case 'compare': initCompare(); break;
-        case 'benchmark': initBenchmark(); break;
-        case 'health': break; // Manual trigger
+        case 'dashboard': refreshStatus(); onDashboardEnter(); break;
+        case 'models': loadModels(); onDashboardLeave(); break;
+        case 'chat': initChat(); onDashboardLeave(); break;
+        case 'compare': initCompare(); onDashboardLeave(); break;
+        case 'benchmark': initBenchmark(); onDashboardLeave(); break;
+        case 'health': onDashboardLeave(); break; // Manual trigger
         case 'logs': loadLogs(); break;
         case 'config': loadConfig(); break;
         case 'gpu': renderGpuCards(currentStatus ? currentStatus.gpu : null); break;
@@ -2016,7 +2016,6 @@ function fallbackCopy(text) {
     try { document.execCommand('copy'); } catch {}
     document.body.removeChild(ta);
 }
-}
 
 function toggleChatSettings() {
     chatSettingsOpen = !chatSettingsOpen;
@@ -2697,6 +2696,200 @@ document.addEventListener('DOMContentLoaded', async () => {
         clearApiKey();
     }
     // Show auth screen (already visible by default)
+
+// ── Performance Monitor Module ──────────────────────────────────
+let perfWs = null;
+let perfHistory = [];
+let perfEnabled = true;
+let perfInterval = 3;
+let perfWindow = 300; // seconds
+const PERF_SVG_W = 300, PERF_SVG_H = 120;
+
+function initPerfMonitor() {
+    if (perfWs && perfWs.readyState <= 1) return; // already connected
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    perfWs = new WebSocket(`${wsProto}//${location.host}/api/ws/perf?key=${encodeURIComponent(getApiKey())}`);
+    perfWs.onopen = () => {
+        if (perfEnabled) perfWs.send(JSON.stringify({ type: 'start', interval: perfInterval }));
+    };
+    perfWs.onmessage = (e) => {
+        try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'perf' && msg.data) {
+                perfHistory.push(msg.data);
+                // Trim to window
+                const maxPoints = Math.ceil(perfWindow / perfInterval) + 5;
+                if (perfHistory.length > maxPoints) perfHistory = perfHistory.slice(-maxPoints);
+                renderPerfCharts();
+            }
+        } catch {}
+    };
+    perfWs.onclose = () => { perfWs = null; };
+    perfWs.onerror = () => {};
+}
+
+function stopPerfMonitor() {
+    if (perfWs && perfWs.readyState === WebSocket.OPEN) {
+        perfWs.send(JSON.stringify({ type: 'stop' }));
+    }
+}
+
+function togglePerfMonitor(on) {
+    perfEnabled = on;
+    document.getElementById('perfToggleLabel').textContent = on ? '实时' : '暂停';
+    if (on) {
+        if (!perfWs || perfWs.readyState > 1) initPerfMonitor();
+        else perfWs.send(JSON.stringify({ type: 'start', interval: perfInterval }));
+    } else {
+        stopPerfMonitor();
+    }
+}
+
+function changePerfInterval(val) {
+    perfInterval = parseInt(val) || 3;
+    if (perfWs && perfWs.readyState === WebSocket.OPEN && perfEnabled) {
+        perfWs.send(JSON.stringify({ type: 'interval', value: perfInterval }));
+    }
+}
+
+function changePerfWindow(val) {
+    perfWindow = parseInt(val) || 300;
+}
+
+function renderPerfCharts() {
+    const h = perfHistory;
+    if (h.length < 2) return;
+    const now = h[h.length - 1].ts;
+    const windowStart = now - perfWindow;
+    const visible = h.filter(p => p.ts >= windowStart);
+    if (visible.length < 2) return;
+
+    // Helper: map data points to SVG polyline string
+    function toPolyline(points, maxVal) {
+        if (maxVal <= 0) maxVal = 1;
+        return points.map((p, i) => {
+            const x = ((p.ts - windowStart) / perfWindow) * PERF_SVG_W;
+            const y = PERF_SVG_H - (p.val / maxVal) * PERF_SVG_H;
+            return `${x.toFixed(1)},${Math.max(0, Math.min(PERF_SVG_H, y)).toFixed(1)}`;
+        }).join(' ');
+    }
+    function toArea(points, maxVal) {
+        if (maxVal <= 0) maxVal = 1;
+        const first = ((points[0].ts - windowStart) / perfWindow) * PERF_SVG_W;
+        const last = ((points[points.length-1].ts - windowStart) / perfWindow) * PERF_SVG_W;
+        let pts = `${first.toFixed(1)},${PERF_SVG_H} `;
+        pts += points.map(p => {
+            const x = ((p.ts - windowStart) / perfWindow) * PERF_SVG_W;
+            const y = PERF_SVG_H - (p.val / maxVal) * PERF_SVG_H;
+            return `${x.toFixed(1)},${Math.max(0, Math.min(PERF_SVG_H, y)).toFixed(1)}`;
+        }).join(' ');
+        pts += ` ${last.toFixed(1)},${PERF_SVG_H}`;
+        return pts;
+    }
+    function setTimeAxis(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const labels = [];
+        for (let i = 0; i < 5; i++) {
+            const t = windowStart + (perfWindow / 4) * i;
+            const d = new Date(t * 1000);
+            labels.push(d.toTimeString().slice(0, 8));
+        }
+        el.innerHTML = labels.map(l => `<span>${l}</span>`).join('');
+    }
+
+    // --- CPU ---
+    const cpuPts = visible.map(p => ({ ts: p.ts, val: p.cpu }));
+    const cpuMax = 100;
+    const cpuLast = cpuPts[cpuPts.length - 1].val;
+    document.getElementById('perfCPUVal').textContent = cpuLast.toFixed(1) + '%';
+    document.getElementById('perfCPULine').setAttribute('points', toPolyline(cpuPts, cpuMax));
+    document.getElementById('perfCPUArea').setAttribute('points', toArea(cpuPts, cpuMax));
+    setTimeAxis('perfCPUTime');
+
+    // --- GPU ---
+    const gpuPts = visible.map(p => ({ ts: p.ts, val: p.gpu_util }));
+    const gpuLast = gpuPts[gpuPts.length - 1].val;
+    document.getElementById('perfGPUVal').textContent = gpuLast + '%';
+    document.getElementById('perfGPULine').setAttribute('points', toPolyline(gpuPts, 100));
+    document.getElementById('perfGPUArea').setAttribute('points', toArea(gpuPts, 100));
+    setTimeAxis('perfGPUTime');
+
+    // --- Memory ---
+    const memPts = visible.map(p => ({ ts: p.ts, val: p.mem_used }));
+    const memMax = visible[0].mem_total || Math.max(...memPts.map(p => p.val)) * 1.2;
+    const memLast = memPts[memPts.length - 1].val;
+    document.getElementById('perfMemVal').textContent = memLast.toFixed(1) + ' / ' + (memMax).toFixed(0) + ' GiB';
+    document.getElementById('perfMemLine').setAttribute('points', toPolyline(memPts, memMax));
+    document.getElementById('perfMemArea').setAttribute('points', toArea(memPts, memMax));
+    setTimeAxis('perfMemTime');
+
+    // --- Network (rate: delta / interval) ---
+    const netRxRates = [], netTxRates = [];
+    for (let i = 1; i < visible.length; i++) {
+        const dt = visible[i].ts - visible[i-1].ts || perfInterval;
+        netRxRates.push({ ts: visible[i].ts, val: Math.max(0, (visible[i].net_rx - visible[i-1].net_rx) / dt) });
+        netTxRates.push({ ts: visible[i].ts, val: Math.max(0, (visible[i].net_tx - visible[i-1].net_tx) / dt) });
+    }
+    if (netRxRates.length > 0) {
+        const netMax = Math.max(1024, ...netRxRates.map(p => p.val), ...netTxRates.map(p => p.val)) * 1.2;
+        const rxLast = netRxRates[netRxRates.length - 1].val;
+        const txLast = netTxRates[netTxRates.length - 1].val;
+        document.getElementById('perfNetVal').textContent = `↓${formatRate(rxLast)} ↑${formatRate(txLast)}`;
+        document.getElementById('perfNetRxLine').setAttribute('points', toPolyline(netRxRates, netMax));
+        document.getElementById('perfNetRxArea').setAttribute('points', toArea(netRxRates, netMax));
+        document.getElementById('perfNetTxLine').setAttribute('points', toPolyline(netTxRates, netMax));
+    }
+    setTimeAxis('perfNetTime');
+
+    // --- Disk IO (rate) ---
+    const diskRRates = [], diskWRates = [];
+    for (let i = 1; i < visible.length; i++) {
+        const dt = visible[i].ts - visible[i-1].ts || perfInterval;
+        diskRRates.push({ ts: visible[i].ts, val: Math.max(0, (visible[i].block_read - visible[i-1].block_read) / dt) });
+        diskWRates.push({ ts: visible[i].ts, val: Math.max(0, (visible[i].block_write - visible[i-1].block_write) / dt) });
+    }
+    if (diskRRates.length > 0) {
+        const diskMax = Math.max(1024, ...diskRRates.map(p => p.val), ...diskWRates.map(p => p.val)) * 1.2;
+        const rLast = diskRRates[diskRRates.length - 1].val;
+        const wLast = diskWRates[diskWRates.length - 1].val;
+        document.getElementById('perfDiskVal').textContent = `R:${formatRate(rLast)} W:${formatRate(wLast)}`;
+        document.getElementById('perfDiskRLine').setAttribute('points', toPolyline(diskRRates, diskMax));
+        document.getElementById('perfDiskRArea').setAttribute('points', toArea(diskRRates, diskMax));
+        document.getElementById('perfDiskWLine').setAttribute('points', toPolyline(diskWRates, diskMax));
+    }
+    setTimeAxis('perfDiskTime');
+
+    // --- Inference latency ---
+    const inferPts = visible.map(p => ({ ts: p.ts, val: p.infer_ms || 0 }));
+    const inferMax = Math.max(100, ...inferPts.map(p => p.val)) * 1.2;
+    const inferLast = inferPts[inferPts.length - 1].val;
+    document.getElementById('perfInferVal').textContent = inferLast > 0 ? inferLast + ' ms' : '-- ms';
+    document.getElementById('perfInferLine').setAttribute('points', toPolyline(inferPts, inferMax));
+    document.getElementById('perfInferArea').setAttribute('points', toArea(inferPts, inferMax));
+    setTimeAxis('perfInferTime');
+}
+
+function formatRate(bytesPerSec) {
+    if (bytesPerSec > 1e9) return (bytesPerSec / 1e9).toFixed(1) + ' GB/s';
+    if (bytesPerSec > 1e6) return (bytesPerSec / 1e6).toFixed(1) + ' MB/s';
+    if (bytesPerSec > 1e3) return (bytesPerSec / 1e3).toFixed(1) + ' KB/s';
+    return bytesPerSec.toFixed(0) + ' B/s';
+}
+
+// Start/stop perf monitor when navigating pages
+function onDashboardEnter() { if (perfEnabled) initPerfMonitor(); }
+function onDashboardLeave() { stopPerfMonitor(); }
+
+// Handle tab visibility
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        stopPerfMonitor();
+    } else if (perfEnabled && document.getElementById('page-dashboard').classList.contains('active')) {
+        if (!perfWs || perfWs.readyState > 1) initPerfMonitor();
+        else perfWs.send(JSON.stringify({ type: 'start', interval: perfInterval }));
+    }
+});
 
 // ── Benchmark Module ────────────────────────────────────────────
 let benchmarkWs = null;

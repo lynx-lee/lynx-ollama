@@ -1852,6 +1852,130 @@ func (h *APIHandler) DownloadChatFile(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filePath)
 }
 
+// ── Performance Monitor ─────────────────────────────────────────
+
+// PerfHub manages performance monitoring WebSocket connections.
+// Each client runs its own ticker goroutine at the client's requested interval.
+type PerfHub struct {
+	handler *APIHandler
+}
+
+// StreamPerf handles the /api/ws/perf WebSocket endpoint.
+// Protocol:
+//   Client sends: {"type":"start","interval":3}  → begin pushing perf data
+//   Client sends: {"type":"stop"}                 → pause pushing
+//   Client sends: {"type":"interval","value":5}   → change interval
+//   Server pushes: {"type":"perf","data":{...}}   → performance frame
+func (h *APIHandler) StreamPerf(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Error("perf websocket upgrade failed", "error", err)
+		return
+	}
+	defer conn.Close()
+
+	var (
+		ticker   *time.Ticker
+		stopCh   = make(chan struct{})
+		running  bool
+		interval = 3 * time.Second
+		mu       sync.Mutex
+	)
+
+	// Collect and send one perf frame
+	sendFrame := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		metrics := h.docker.GetPerfMetrics(ctx)
+		cancel()
+
+		mu.Lock()
+		defer mu.Unlock()
+		conn.WriteJSON(map[string]any{
+			"type": "perf",
+			"data": metrics,
+		})
+	}
+
+	// Start the ticker goroutine
+	startTicker := func() {
+		mu.Lock()
+		if running {
+			mu.Unlock()
+			return
+		}
+		running = true
+		stopCh = make(chan struct{})
+		ticker = time.NewTicker(interval)
+		mu.Unlock()
+
+		go func() {
+			// Send an immediate frame
+			sendFrame()
+			for {
+				select {
+				case <-ticker.C:
+					sendFrame()
+				case <-stopCh:
+					ticker.Stop()
+					return
+				}
+			}
+		}()
+	}
+
+	// Stop the ticker
+	stopTicker := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if !running {
+			return
+		}
+		running = false
+		close(stopCh)
+	}
+
+	defer stopTicker()
+
+	// Read commands from client
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+
+		var cmd struct {
+			Type     string `json:"type"`
+			Interval int    `json:"interval"`
+			Value    int    `json:"value"`
+		}
+		if json.Unmarshal(msg, &cmd) != nil {
+			continue
+		}
+
+		switch cmd.Type {
+		case "start":
+			if cmd.Interval >= 1 && cmd.Interval <= 60 {
+				interval = time.Duration(cmd.Interval) * time.Second
+			}
+			stopTicker()
+			startTicker()
+		case "stop":
+			stopTicker()
+		case "interval":
+			if cmd.Value >= 1 && cmd.Value <= 60 {
+				interval = time.Duration(cmd.Value) * time.Second
+				mu.Lock()
+				wasRunning := running
+				mu.Unlock()
+				if wasRunning {
+					stopTicker()
+					startTicker()
+				}
+			}
+		}
+	}
+}
+
 // ── Benchmark ───────────────────────────────────────────────────
 
 // benchmarkDimensions defines the evaluation test suite.

@@ -43,6 +43,22 @@ type ResourceUsage struct {
 	BlockIO       string `json:"block_io"`
 }
 
+// PerfMetrics holds parsed numeric performance metrics for real-time monitoring.
+type PerfMetrics struct {
+	Timestamp    int64   `json:"ts"`             // Unix timestamp (seconds)
+	CPU          float64 `json:"cpu"`            // CPU usage (%)
+	MemUsed      float64 `json:"mem_used"`       // Memory used (GiB)
+	MemTotal     float64 `json:"mem_total"`      // Memory total (GiB)
+	GPUUtil      int     `json:"gpu_util"`       // GPU utilization (%)
+	GPUMemUsed   float64 `json:"gpu_mem_used"`   // GPU memory used (GiB)
+	GPUMemTotal  float64 `json:"gpu_mem_total"`  // GPU memory total (GiB)
+	NetRx        int64   `json:"net_rx"`         // Network received cumulative (bytes)
+	NetTx        int64   `json:"net_tx"`         // Network transmitted cumulative (bytes)
+	BlockRead    int64   `json:"block_read"`     // Block IO read cumulative (bytes)
+	BlockWrite   int64   `json:"block_write"`    // Block IO write cumulative (bytes)
+	InferMs      int64   `json:"infer_ms"`       // Latest inference latency (ms), 0 if none
+}
+
 // ModelInfo represents a downloaded model.
 type ModelInfo struct {
 	Name         string    `json:"name"`

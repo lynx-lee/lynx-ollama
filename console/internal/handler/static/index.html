@@ -194,6 +194,100 @@
                         </table>
                     </div>
                 </div>
+
+                <!-- Performance Monitor -->
+                <div class="card" id="perfMonitorCard">
+                    <div class="card-header">
+                        <h3>📈 性能监控</h3>
+                        <div class="perf-toolbar">
+                            <label class="perf-toggle" title="实时刷新">
+                                <input type="checkbox" id="perfToggle" checked onchange="togglePerfMonitor(this.checked)">
+                                <span class="perf-toggle-dot"></span>
+                                <span id="perfToggleLabel">实时</span>
+                            </label>
+                            <select id="perfInterval" class="perf-select" onchange="changePerfInterval(this.value)">
+                                <option value="3" selected>3s</option>
+                                <option value="5">5s</option>
+                                <option value="10">10s</option>
+                            </select>
+                            <select id="perfWindow" class="perf-select" onchange="changePerfWindow(this.value)">
+                                <option value="60">1 min</option>
+                                <option value="300" selected>5 min</option>
+                                <option value="900">15 min</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="perf-grid">
+                        <div class="perf-panel" id="perfCPU">
+                            <div class="perf-panel-head"><span class="perf-title">CPU 使用率</span><span class="perf-value" id="perfCPUVal">--%</span></div>
+                            <svg class="perf-svg" viewBox="0 0 300 120" preserveAspectRatio="none">
+                                <defs><linearGradient id="gradCPU" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent-blue)" stop-opacity="0.3"/><stop offset="100%" stop-color="var(--accent-blue)" stop-opacity="0"/></linearGradient></defs>
+                                <line class="perf-threshold" x1="0" y1="24" x2="300" y2="24"/>
+                                <polygon class="perf-area" id="perfCPUArea" fill="url(#gradCPU)" points="0,120 300,120"/>
+                                <polyline class="perf-line perf-line-cpu" id="perfCPULine" points=""/>
+                            </svg>
+                            <div class="perf-time-axis" id="perfCPUTime"></div>
+                        </div>
+                        <div class="perf-panel" id="perfGPU">
+                            <div class="perf-panel-head"><span class="perf-title">GPU 使用率</span><span class="perf-value" id="perfGPUVal">--%</span></div>
+                            <svg class="perf-svg" viewBox="0 0 300 120" preserveAspectRatio="none">
+                                <defs><linearGradient id="gradGPU" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent-purple,#a855f7)" stop-opacity="0.3"/><stop offset="100%" stop-color="var(--accent-purple,#a855f7)" stop-opacity="0"/></linearGradient></defs>
+                                <line class="perf-threshold" x1="0" y1="24" x2="300" y2="24"/>
+                                <polygon class="perf-area" id="perfGPUArea" fill="url(#gradGPU)" points="0,120 300,120"/>
+                                <polyline class="perf-line perf-line-gpu" id="perfGPULine" points=""/>
+                            </svg>
+                            <div class="perf-time-axis" id="perfGPUTime"></div>
+                        </div>
+                        <div class="perf-panel" id="perfMem">
+                            <div class="perf-panel-head"><span class="perf-title">内存使用</span><span class="perf-value" id="perfMemVal">-- GiB</span></div>
+                            <svg class="perf-svg" viewBox="0 0 300 120" preserveAspectRatio="none">
+                                <defs><linearGradient id="gradMem" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent-green)" stop-opacity="0.3"/><stop offset="100%" stop-color="var(--accent-green)" stop-opacity="0"/></linearGradient></defs>
+                                <polygon class="perf-area" id="perfMemArea" fill="url(#gradMem)" points="0,120 300,120"/>
+                                <polyline class="perf-line perf-line-mem" id="perfMemLine" points=""/>
+                            </svg>
+                            <div class="perf-time-axis" id="perfMemTime"></div>
+                        </div>
+                        <div class="perf-panel" id="perfNet">
+                            <div class="perf-panel-head"><span class="perf-title">网络 IO</span><span class="perf-value" id="perfNetVal">-- KB/s</span></div>
+                            <svg class="perf-svg" viewBox="0 0 300 120" preserveAspectRatio="none">
+                                <defs>
+                                    <linearGradient id="gradNetRx" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#22d3ee" stop-opacity="0.2"/><stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/></linearGradient>
+                                </defs>
+                                <polygon class="perf-area" id="perfNetRxArea" fill="url(#gradNetRx)" points="0,120 300,120"/>
+                                <polyline class="perf-line" style="stroke:#22d3ee" id="perfNetRxLine" points=""/>
+                                <polyline class="perf-line" style="stroke:#f97316" id="perfNetTxLine" points=""/>
+                            </svg>
+                            <div class="perf-time-axis" id="perfNetTime"></div>
+                        </div>
+                        <div class="perf-panel" id="perfDisk">
+                            <div class="perf-panel-head"><span class="perf-title">磁盘 IO</span><span class="perf-value" id="perfDiskVal">-- MB/s</span></div>
+                            <svg class="perf-svg" viewBox="0 0 300 120" preserveAspectRatio="none">
+                                <defs>
+                                    <linearGradient id="gradDiskR" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#facc15" stop-opacity="0.2"/><stop offset="100%" stop-color="#facc15" stop-opacity="0"/></linearGradient>
+                                </defs>
+                                <polygon class="perf-area" id="perfDiskRArea" fill="url(#gradDiskR)" points="0,120 300,120"/>
+                                <polyline class="perf-line" style="stroke:#facc15" id="perfDiskRLine" points=""/>
+                                <polyline class="perf-line" style="stroke:#ef4444" id="perfDiskWLine" points=""/>
+                            </svg>
+                            <div class="perf-time-axis" id="perfDiskTime"></div>
+                        </div>
+                        <div class="perf-panel" id="perfInfer">
+                            <div class="perf-panel-head"><span class="perf-title">推理耗时</span><span class="perf-value" id="perfInferVal">-- ms</span></div>
+                            <svg class="perf-svg" viewBox="0 0 300 120" preserveAspectRatio="none">
+                                <defs><linearGradient id="gradInfer" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.3"/><stop offset="100%" stop-color="#8b5cf6" stop-opacity="0"/></linearGradient></defs>
+                                <polygon class="perf-area" id="perfInferArea" fill="url(#gradInfer)" points="0,120 300,120"/>
+                                <polyline class="perf-line" style="stroke:#8b5cf6" id="perfInferLine" points=""/>
+                            </svg>
+                            <div class="perf-time-axis" id="perfInferTime"></div>
+                        </div>
+                    </div>
+                    <div class="perf-legend">
+                        <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#22d3ee"></span>网络入</span>
+                        <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#f97316"></span>网络出</span>
+                        <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#facc15"></span>磁盘读</span>
+                        <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#ef4444"></span>磁盘写</span>
+                    </div>
+                </div>
             </div>
 
             <!-- Models Page -->
