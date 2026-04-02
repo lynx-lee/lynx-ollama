@@ -325,6 +325,11 @@ func (s *OllamaService) DeleteModel(name string) error {
 
 // GenerateChat sends a chat message for testing/benchmarking.
 func (s *OllamaService) GenerateChat(modelName, message string) (map[string]any, error) {
+	return s.GenerateChatWithContext(context.Background(), modelName, message)
+}
+
+// GenerateChatWithContext sends a chat message with context support for cancellation/timeout.
+func (s *OllamaService) GenerateChatWithContext(ctx context.Context, modelName, message string) (map[string]any, error) {
 	payload, err := json.Marshal(map[string]any{
 		"model": modelName,
 		"messages": []map[string]string{
@@ -335,12 +340,13 @@ func (s *OllamaService) GenerateChat(modelName, message string) (map[string]any,
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal chat request: %w", err)
 	}
-	client := &http.Client{Timeout: 300 * time.Second}
-	resp, err := client.Post(
-		s.cfg.OllamaAPIURL+"/api/chat",
-		"application/json",
-		strings.NewReader(string(payload)),
-	)
+	req, err := http.NewRequestWithContext(ctx, "POST", s.cfg.OllamaAPIURL+"/api/chat", strings.NewReader(string(payload)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create chat request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("chat request failed: %w", err)
 	}

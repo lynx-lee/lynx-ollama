@@ -2602,7 +2602,8 @@ function startBenchmark() {
     const models = Array.from(checkboxes).map(cb => cb.value);
     if (models.length === 0) { showToast('请至少选择一个模型', 'error'); return; }
 
-    document.getElementById('benchmarkStartBtn').disabled = true;
+    document.getElementById('benchmarkStartBtn').style.display = 'none';
+    document.getElementById('benchmarkStopBtn').style.display = '';
     document.getElementById('benchmarkProgressCard').style.display = '';
     document.getElementById('benchmarkProgressFill').style.width = '0%';
     document.getElementById('benchmarkProgressText').textContent = '正在连接...';
@@ -2628,13 +2629,19 @@ function startBenchmark() {
                 case 'done':
                     document.getElementById('benchmarkProgressFill').style.width = '100%';
                     document.getElementById('benchmarkProgressText').textContent = '评测完成！';
-                    document.getElementById('benchmarkStartBtn').disabled = false;
+                    benchmarkFinish();
                     renderBenchmarkResults(data.results);
+                    benchmarkWs.close();
+                    break;
+                case 'stopped':
+                    document.getElementById('benchmarkProgressText').textContent = '评测已取消（已完成部分已保存）';
+                    benchmarkFinish();
+                    if (data.results && data.results.length) renderBenchmarkResults(data.results);
                     benchmarkWs.close();
                     break;
                 case 'error':
                     showToast('评测错误: ' + data.error, 'error');
-                    document.getElementById('benchmarkStartBtn').disabled = false;
+                    benchmarkFinish();
                     benchmarkWs.close();
                     break;
             }
@@ -2643,9 +2650,20 @@ function startBenchmark() {
 
     benchmarkWs.onerror = () => {
         showToast('评测连接失败', 'error');
-        document.getElementById('benchmarkStartBtn').disabled = false;
+        benchmarkFinish();
     };
     benchmarkWs.onclose = () => { benchmarkWs = null; };
+}
+
+function stopBenchmark() {
+    if (benchmarkWs && benchmarkWs.readyState === WebSocket.OPEN) {
+        benchmarkWs.send(JSON.stringify({ type: 'stop' }));
+    }
+}
+
+function benchmarkFinish() {
+    document.getElementById('benchmarkStartBtn').style.display = '';
+    document.getElementById('benchmarkStopBtn').style.display = 'none';
 }
 
 function renderBenchmarkResults(results) {
