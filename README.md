@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v2.2.0-blue)
+![Version](https://img.shields.io/badge/version-v2.2.1-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -325,6 +325,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v2.2.1 | 2026-04-03 | **关键 Bug 修复 + 交互优化**。🔸 **DOMContentLoaded 闭合修复**（根因）：`app.js` 第 2678 行的 `DOMContentLoaded` 回调缺少 `});` 闭合，导致性能监控、模型对比、能力评测、对比复制等约 600 行代码被意外嵌套在异步回调作用域内，`switchPage` 调用这些函数时在严格模式浏览器中报 undefined，修复后所有模块恢复到全局作用域正常工作；🔸 **防误发送机制**：聊天输入框从 Enter 发送改为 Ctrl+Enter / Cmd+Enter 发送，Enter 键仅换行；对比页同步更新；🔸 **全选支持**：聊天输入框 Ctrl+A / Cmd+A 全选文本内容；🔸 **不兼容模型行内标注**：从顶部独立告警卡片改为直接在模型列表行内添加红色「⚠ 需重新下载」标签 + 🔄 重新拉取按钮，hover 显示错误详情，不兼容行背景高亮；🔸 **复制功能全面兜底**：所有 `navigator.clipboard.writeText` 调用（聊天导出文本/Markdown、对比页单侧复制/全局复制）统一添加 `fallbackCopy()` textarea 降级方案，兼容非 HTTPS 环境 |
 | v2.2.0 | 2026-04-03 | **仪表盘实时性能监控**。🔸 **6 面板实时图表**：新增「📈 性能监控」区域，纯 SVG 零依赖折线图展示 CPU 使用率、GPU 使用率、内存使用、网络 IO（入/出）、磁盘 IO（读/写）、推理耗时，80% 阈值红色虚线预警；🔸 **WebSocket 独立通道**：`GET /api/ws/perf` 端点，客户端可发送 `start/stop/interval` 控制采集，后端 `GetPerfMetrics` 单次调用采集 docker stats + nvidia-smi 数据；🔸 **工具栏控制**：实时刷新开关（绿色圆点）、采集间隔选择（3s/5s/10s）、时间窗口选择（1min/5min/15min）；🔸 **智能生命周期**：离开 Dashboard 自动暂停采集，切换回来恢复，Tab 不可见时暂停，可见时恢复；🔸 **网络/磁盘速率计算**：后端返回累计字节数，前端差值计算实时速率并自动选择 B/KB/MB/GB 单位；🔸 **响应式布局**：3 列 → 2 列 → 1 列自适应，移动端友好；🔸 **Lint 修复**：app.js 多余闭括号、gpu_monitor.go 未使用参数、ollama.go 应使用 tagged switch、docker.go KiB 转换数学错误 |
 | v2.1.1 | 2026-04-03 | **Bug 修复与体验优化**。🔸 **复制功能修复**：代码块复制按钮改为独立 `copyCodeBlock()` 函数解决 HTML 实体转义问题，气泡复制按钮改用 `innerText` 兜底 + `fallbackCopy()` textarea 方案兼容非 HTTPS 环境；🔸 **代码语法高亮**：内置轻量级语法高亮引擎（`highlightCode`），支持 20+ 语言关键词/字符串/注释/数字着色，暗色和亮色主题各有独立配色；🔸 **云端模型增强**：云端模型表格新增类型、能力列和💬测试按钮，Chat/对比模型选择器不再过滤云端模型；🔸 **模型对比数据加载**：`initCompare()` 增加 fallback API fetch，解决首次进入对比页面下拉框为空的问题，工具栏 select 改为 CSS flex 响应式宽度；🔸 **能力评测数据加载**：`initBenchmark()` 增加 fallback API fetch，解决模型列表显示「加载中」不消失的问题；🔸 **拉取完成按钮状态**：模型下载完成后「开始拉取」按钮变为绿色「✅ 完成」，点击关闭弹窗，下次打开自动恢复；🔸 **模型兼容性检测**：新增 `GET /api/models/check` 端点 + `ShowModel` HTTP 500 处理，模型管理页自动检测不兼容模型并显示红色告警卡片，支持一键重新拉取；🔸 **Vision 误判修复**：`model_info` 键名扫描收紧（仅 `mmproj`/`projector.block_count` 才标记 vision），启动时清除旧 show 缓存 |
 | v2.1.0 | 2026-04-02 | **模型管理增强 + 对话拷贝 + 模型对比完善 + 能力评测系统**。🔸 **模型列表快捷测试**：已下载模型操作列新增「💬 测试」按钮，点击跳转到模型测试页并自动选中该模型；🔸 **对话拷贝功能**：每条消息气泡 hover 显示复制按钮（📋 文本 / 📝 Markdown），工具栏「导出」按钮改为多格式菜单（复制文本/Markdown、下载 MD/JSON、截图为图片）；🔸 **模型对比界面完善**：新增页面标题和设置面板（System Prompt、Temperature、Thinking 模式），支持 Enter 快捷发送，对比生成中显示停止按钮，每个面板支持单独复制输出，新增「复制对比结果」按钮（Markdown 格式），统计指标改为结构化标签显示，支持 Thinking 推理链折叠展示；🔸 **模型能力评测系统**：新增「📊 能力评测」页面，支持多模型并发评测 6 个维度（逻辑推理/数学计算/代码能力/创意写作/指令遵循/中文能力），每项 10 分共 60 分，基于规则引擎自动评分（关键词匹配 + JSON 格式验证 + 长度检查），WebSocket 流式进度推送，评测结果排行榜含百分比进度条/维度雷达分/详细评分卡片，结果持久化到 SQLite（`benchmark_results` 表），支持历史结果查看；🔸 **Go 版本升级**：go.mod + Dockerfile 统一升级到 Go 1.25（匹配本地 go1.25.5） |

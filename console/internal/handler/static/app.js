@@ -783,27 +783,39 @@ async function loadModels() {
 async function checkModelCompatibility() {
     try {
         const incompatible = await api('/api/models/check');
-        const container = document.getElementById('modelsContainer');
-        // Remove old alert if exists
-        const old = document.getElementById('modelCompatAlert');
-        if (old) old.remove();
         if (!incompatible || incompatible.length === 0) return;
 
-        const alertHtml = `<div id="modelCompatAlert" class="card" style="border-color:var(--accent-red);background:rgba(239,68,68,0.05)">
-            <div class="card-header"><h3 style="color:var(--accent-red)">⚠️ ${incompatible.length} 个模型需要重新下载</h3></div>
-            <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">以下模型与当前 Ollama 版本不兼容，需要重新拉取才能使用：</p>
-            <div class="table-container"><table>
-                <thead><tr><th>模型名称</th><th>大小</th><th>错误信息</th><th>操作</th></tr></thead>
-                <tbody>${incompatible.map(m => `<tr>
-                    <td><strong style="color:var(--accent-red)">${escapeHtml(m.name)}</strong></td>
-                    <td>${m.size_human || '--'}</td>
-                    <td style="font-size:12px;color:var(--text-muted);max-width:300px">${escapeHtml(m.error)}</td>
-                    <td><button class="btn btn-sm btn-primary" onclick="repullModel('${escapeAttr(m.name)}')">🔄 重新拉取</button></td>
-                </tr>`).join('')}</tbody>
-            </table></div>
-            <div style="margin-top:10px"><button class="btn btn-sm btn-warning" onclick="repullAllIncompatible()">🔄 全部重新拉取</button></div>
-        </div>`;
-        container.insertAdjacentHTML('afterbegin', alertHtml);
+        // Store incompatible model names for inline display
+        window._incompatibleModels = {};
+        incompatible.forEach(m => { window._incompatibleModels[m.name] = m.error; });
+
+        // Mark rows in the model table
+        document.querySelectorAll('#modelsContainer table tbody tr').forEach(row => {
+            const nameCell = row.querySelector('td:first-child strong');
+            if (!nameCell) return;
+            const name = nameCell.textContent.trim();
+            if (window._incompatibleModels[name]) {
+                row.style.background = 'rgba(239,68,68,0.06)';
+                // Add warning badge after the name
+                if (!row.querySelector('.compat-badge')) {
+                    const badge = document.createElement('span');
+                    badge.className = 'compat-badge';
+                    badge.title = window._incompatibleModels[name];
+                    badge.innerHTML = ' <span style="display:inline-block;background:var(--accent-red);color:#fff;font-size:10px;padding:1px 6px;border-radius:3px;cursor:help">⚠ 需重新下载</span>';
+                    nameCell.parentElement.appendChild(badge);
+                    // Add repull button in the actions cell
+                    const actionsCell = row.querySelector('td:last-child');
+                    if (actionsCell && !actionsCell.querySelector('.compat-repull')) {
+                        const repullBtn = document.createElement('button');
+                        repullBtn.className = 'btn btn-sm btn-warning compat-repull';
+                        repullBtn.title = '重新拉取';
+                        repullBtn.textContent = '🔄';
+                        repullBtn.onclick = () => repullModel(name);
+                        actionsCell.prepend(repullBtn);
+                    }
+                }
+            }
+        });
     } catch { /* ignore */ }
 }
 
@@ -1826,14 +1838,15 @@ async function doChatExport(format) {
             const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : '系统';
             return `【${role}】\n${m.content}`;
         }).join('\n\n');
-        await navigator.clipboard.writeText(text);
+        try { await navigator.clipboard.writeText(text); } catch { fallbackCopy(text); }
         showToast('已复制为文本', 'success');
     } else if (format === 'md') {
         const md = chatMessages.map(m => {
             const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : '系统';
             return `## ${role}\n\n${m.content}`;
         }).join('\n\n---\n\n');
-        await navigator.clipboard.writeText('# 对话记录\n\n' + md);
+        const fullMd = '# 对话记录\n\n' + md;
+        try { await navigator.clipboard.writeText(fullMd); } catch { fallbackCopy(fullMd); }
         showToast('已复制为 Markdown', 'success');
     } else if (format === 'md-file') {
         await autoSaveSession();
@@ -2446,9 +2459,14 @@ function stopChat() {
 function clearChat() { newChatSession(); }
 
 function handleChatKeydown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Ctrl+Enter or Cmd+Enter to send (anti-accidental-send)
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         sendChat();
+    }
+    // Ctrl+A / Cmd+A to select all text in textarea
+    if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+        e.target.select();
     }
 }
 
@@ -2696,6 +2714,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         clearApiKey();
     }
     // Show auth screen (already visible by default)
+});
 
 // ── Performance Monitor Module ──────────────────────────────────
 let perfWs = null;
@@ -3264,7 +3283,7 @@ function copySingleCompare(side) {
     if (!resp) { showToast('无内容可复制', 'info'); return; }
     navigator.clipboard.writeText(resp).then(
         () => showToast('已复制', 'success'),
-        () => showToast('复制失败', 'error')
+        () => { fallbackCopy(resp); showToast('已复制', 'success'); }
     );
 }
 
@@ -3278,7 +3297,6 @@ function copyCompareResult() {
     const md = `# 模型对比\n\n**Prompt:** ${prompt}\n\n---\n\n## ${modelA}\n${statsA ? `> ${statsA}\n\n` : ''}${compareResponseA}\n\n---\n\n## ${modelB}\n${statsB ? `> ${statsB}\n\n` : ''}${compareResponseB}`;
     navigator.clipboard.writeText(md).then(
         () => showToast('对比结果已复制为 Markdown', 'success'),
-        () => showToast('复制失败', 'error')
+        () => { fallbackCopy(md); showToast('对比结果已复制为 Markdown', 'success'); }
     );
 }
-});

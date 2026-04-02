@@ -465,7 +465,7 @@
                         <div class="chat-upload-tags" id="chatUploadTags"></div>
                         <div class="chat-input-row">
                             <button class="btn btn-sm chat-attach-btn" onclick="document.getElementById('chatFileInput').click()" title="上传文件">📎</button>
-                            <textarea id="chatInput" class="chat-input" placeholder="输入消息... (Shift+Enter 换行)" rows="1" onkeydown="handleChatKeydown(event)" oninput="autoResizeChatInput()"></textarea>
+                            <textarea id="chatInput" class="chat-input" placeholder="输入消息... (Ctrl+Enter 发送)" rows="1" onkeydown="handleChatKeydown(event)" oninput="autoResizeChatInput()"></textarea>
                             <button class="btn btn-primary btn-sm chat-send-btn" id="chatSendBtn" onclick="sendChat()">发送</button>
                             <button class="btn btn-danger btn-sm chat-stop-btn" id="chatStopBtn" onclick="stopChat()" style="display:none">停止</button>
                         </div>
@@ -511,7 +511,7 @@
                         <button class="btn btn-sm" onclick="clearCompare()">🗑 清空</button>
                     </div>
                     <div class="compare-input-area">
-                        <textarea id="compareInput" class="chat-input" placeholder="输入相同的 prompt 发送到两个模型...（Enter 发送，Shift+Enter 换行）" rows="2" style="width:100%" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendCompare()}"></textarea>
+                        <textarea id="compareInput" class="chat-input" placeholder="输入相同的 prompt 发送到两个模型...（Ctrl+Enter 发送）" rows="2" style="width:100%" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();sendCompare()}"></textarea>
                     </div>
                     <div class="compare-panels">
                         <div class="compare-panel">
