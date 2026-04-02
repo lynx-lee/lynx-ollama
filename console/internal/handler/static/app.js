@@ -140,9 +140,9 @@ function switchPage(page) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById(`page-${page}`).classList.add('active');
 
-    // Chat page needs #content to not scroll (chat manages its own scroll)
+    // Chat/Compare pages need #content to not scroll (they manage their own scroll)
     const content = document.getElementById('content');
-    if (page === 'chat') {
+    if (page === 'chat' || page === 'compare') {
         content.style.overflow = 'hidden';
         content.style.padding = '0';
     } else {
@@ -163,6 +163,7 @@ function switchPage(page) {
         case 'dashboard': refreshStatus(); break;
         case 'models': loadModels(); break;
         case 'chat': initChat(); break;
+        case 'compare': initCompare(); break;
         case 'health': break; // Manual trigger
         case 'logs': loadLogs(); break;
         case 'config': loadConfig(); break;
@@ -775,7 +776,47 @@ async function loadModels() {
 async function showModelInfo(name) {
     try {
         const info = await api(`/api/models/${encodeURIComponent(name)}/info`);
-        alert(JSON.stringify(info, null, 2));
+        const details = info.details || {};
+        const modelInfo = info.model_info || {};
+        const params = info.parameters || '';
+        const template = info.template || '';
+        const system = info.system || '';
+        const license = info.license || '';
+
+        // Infer capabilities from details
+        const families = (details.families || []).join(', ') || '--';
+        const paramSize = details.parameter_size || '--';
+        const quantLevel = details.quantization_level || '--';
+        const format = details.format || '--';
+
+        // Context length from model_info
+        let ctxLen = '--';
+        for (const [k, v] of Object.entries(modelInfo)) {
+            if (k.toLowerCase().includes('context_length')) { ctxLen = String(v); break; }
+        }
+
+        let html = `<div class="modal-overlay" id="modelInfoModal" onclick="if(event.target===this)this.remove()">
+            <div class="modal" style="width:640px;max-height:85vh;display:flex;flex-direction:column">
+                <div class="modal-header">
+                    <h3>📋 ${escapeHtml(name)}</h3>
+                    <button class="btn-close" onclick="document.getElementById('modelInfoModal').remove()">✕</button>
+                </div>
+                <div class="modal-body" style="overflow-y:auto;flex:1">
+                    <div class="model-info-grid">
+                        <div class="model-info-row"><span class="model-info-label">参数规模</span><span>${escapeHtml(paramSize)}</span></div>
+                        <div class="model-info-row"><span class="model-info-label">量化级别</span><span>${escapeHtml(quantLevel)}</span></div>
+                        <div class="model-info-row"><span class="model-info-label">格式</span><span>${escapeHtml(format)}</span></div>
+                        <div class="model-info-row"><span class="model-info-label">模型族</span><span>${escapeHtml(families)}</span></div>
+                        <div class="model-info-row"><span class="model-info-label">上下文长度</span><span>${escapeHtml(ctxLen)}</span></div>
+                    </div>
+                    ${params ? `<details class="model-info-section"><summary>📝 模型参数 (Modelfile)</summary><pre class="model-info-pre">${escapeHtml(params)}</pre></details>` : ''}
+                    ${system ? `<details class="model-info-section"><summary>🤖 System Prompt</summary><pre class="model-info-pre">${escapeHtml(system)}</pre></details>` : ''}
+                    ${template ? `<details class="model-info-section"><summary>📄 模板</summary><pre class="model-info-pre">${escapeHtml(template)}</pre></details>` : ''}
+                    ${license ? `<details class="model-info-section"><summary>📜 许可证</summary><pre class="model-info-pre">${escapeHtml(license.slice(0, 2000))}</pre></details>` : ''}
+                </div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
     } catch (err) {
         showToast('获取模型信息失败: ' + err.message, 'error');
     }
@@ -1221,7 +1262,7 @@ async function runOptimize() {
     showToast('正在执行自动优化...', 'info');
 
     try {
-        const result = await api('/api/optimize', { method: 'POST' });
+        await api('/api/optimize', { method: 'POST' });
         showToast('优化完成，请查看配置页面', 'success');
         loadConfig();
     } catch (err) {
@@ -1259,7 +1300,7 @@ function renderGpuCards(gpus) {
         return;
     }
 
-    container.innerHTML = gpus.map((gpu, i) => {
+    container.innerHTML = gpus.map((gpu) => {
         const isUnified = gpu.is_unified_mem;
         const memTotal = parseFloat(gpu.mem_total) || 1;
         const memUsed = parseFloat(gpu.mem_used) || 0;
@@ -1513,8 +1554,172 @@ let chatMessages = [];          // conversation history [{role, content, files}]
 let chatUploadedFiles = [];     // [{id, name, size, preview}]
 let chatStreaming = false;
 let chatCurrentResponse = '';   // accumulates streaming tokens
+let chatThinkingContent = '';   // accumulates thinking/reasoning tokens
 let chatInitialized = false;
 let chatSettingsOpen = false;
+let chatHistoryOpen = false;
+let currentSessionId = null;    // current active session ID
+
+// ── Chat History (multi-session) ────────────────────────────────
+
+function toggleChatHistory() {
+    chatHistoryOpen = !chatHistoryOpen;
+    const panel = document.getElementById('chatHistoryPanel');
+    panel.classList.toggle('open', chatHistoryOpen);
+    if (chatHistoryOpen) loadChatHistory();
+}
+
+async function loadChatHistory() {
+    try {
+        const sessions = await api('/api/chat/sessions');
+        const list = document.getElementById('chatHistoryList');
+        if (!sessions || sessions.length === 0) {
+            list.innerHTML = '<div class="chat-history-empty">暂无对话记录</div>';
+            return;
+        }
+        list.innerHTML = sessions.map(s => `
+            <div class="chat-history-item ${s.id === currentSessionId ? 'active' : ''}" onclick="loadChatSession('${s.id}')">
+                <div class="chat-history-item-title">${escapeHtml(s.title)}</div>
+                <div class="chat-history-item-meta">${escapeHtml(s.model || '未知模型')} · ${formatTime(s.updated_at)}</div>
+                <div class="chat-history-item-actions">
+                    <button class="btn-icon" onclick="event.stopPropagation();renameChatSession('${s.id}','${escapeAttr(s.title)}')" title="重命名">✏️</button>
+                    <button class="btn-icon" onclick="event.stopPropagation();exportChatSession('${s.id}','md')" title="导出 Markdown">📥</button>
+                    <button class="btn-icon" onclick="event.stopPropagation();deleteChatSession('${s.id}')" title="删除">🗑</button>
+                </div>
+            </div>
+        `).join('');
+    } catch { /* ignore */ }
+}
+
+async function newChatSession() {
+    // Save current session if has messages
+    if (currentSessionId && chatMessages.length > 0) {
+        await autoSaveSession();
+    }
+    currentSessionId = null;
+    chatMessages = [];
+    chatUploadedFiles = [];
+    chatCurrentResponse = '';
+    chatStreaming = false;
+    document.getElementById('chatMessages').innerHTML = `
+        <div class="chat-empty-state">
+            <div class="chat-empty-icon">💬</div>
+            <div class="chat-empty-text">选择模型，开始对话</div>
+            <div class="chat-empty-hint">支持 Markdown、代码高亮、表格渲染</div>
+        </div>`;
+    renderChatUploadTags();
+    document.getElementById('chatSendBtn').style.display = '';
+    document.getElementById('chatStopBtn').style.display = 'none';
+    if (chatWs) { chatWs.close(); chatWs = null; }
+}
+
+async function autoSaveSession() {
+    if (!currentSessionId) {
+        // Create a new session
+        const model = document.getElementById('chatModelSelect').value || '';
+        const title = generateSessionTitle();
+        try {
+            const resp = await api('/api/chat/sessions', {
+                method: 'POST', body: JSON.stringify({ title, model }),
+            });
+            if (resp && resp.id) currentSessionId = resp.id;
+        } catch { return; }
+    }
+    // Save all messages
+    for (const msg of chatMessages) {
+        if (!msg._saved) {
+            try {
+                await api(`/api/chat/sessions/${currentSessionId}/messages`, {
+                    method: 'POST',
+                    body: JSON.stringify({ role: msg.role, content: msg.content, files: msg.files || [] }),
+                });
+                msg._saved = true;
+            } catch { /* ignore */ }
+        }
+    }
+}
+
+function generateSessionTitle() {
+    const first = chatMessages.find(m => m.role === 'user');
+    if (first && first.content) {
+        return first.content.slice(0, 30) + (first.content.length > 30 ? '...' : '');
+    }
+    return '新对话';
+}
+
+async function loadChatSession(sessionId) {
+    // Save current first
+    if (currentSessionId && chatMessages.length > 0) {
+        await autoSaveSession();
+    }
+    try {
+        const msgs = await api(`/api/chat/sessions/${sessionId}`);
+        currentSessionId = sessionId;
+        chatMessages = (msgs || []).map(m => ({ role: m.role, content: m.content, files: m.files || [], _saved: true }));
+
+        // Rebuild UI
+        const container = document.getElementById('chatMessages');
+        container.innerHTML = '';
+        for (const msg of chatMessages) {
+            appendChatBubble(msg.role, msg.content, []);
+        }
+        if (chatMessages.length === 0) {
+            container.innerHTML = `<div class="chat-empty-state"><div class="chat-empty-icon">💬</div><div class="chat-empty-text">空对话</div></div>`;
+        }
+        toggleChatHistory(); // close history panel
+    } catch (err) {
+        showToast('加载对话失败: ' + err.message, 'error');
+    }
+}
+
+async function deleteChatSession(id) {
+    if (!confirm('确定删除该对话记录？')) return;
+    try {
+        await api(`/api/chat/sessions/${id}`, { method: 'DELETE' });
+        if (currentSessionId === id) {
+            currentSessionId = null;
+            chatMessages = [];
+            document.getElementById('chatMessages').innerHTML = `<div class="chat-empty-state"><div class="chat-empty-icon">💬</div><div class="chat-empty-text">选择模型，开始对话</div></div>`;
+        }
+        loadChatHistory();
+        showToast('对话已删除', 'success');
+    } catch (err) {
+        showToast('删除失败: ' + err.message, 'error');
+    }
+}
+
+async function renameChatSession(id, currentTitle) {
+    const title = prompt('输入新标题', currentTitle);
+    if (!title || title === currentTitle) return;
+    try {
+        await api(`/api/chat/sessions/${id}`, { method: 'PUT', body: JSON.stringify({ title }) });
+        loadChatHistory();
+    } catch { /* ignore */ }
+}
+
+function exportChatSession(id, format) {
+    window.open(`/api/chat/sessions/${id}/export?format=${format}&key=${encodeURIComponent(getApiKey())}`, '_blank');
+}
+
+async function exportCurrentChat() {
+    if (chatMessages.length === 0) { showToast('当前无对话内容', 'info'); return; }
+    await autoSaveSession();
+    if (currentSessionId) {
+        exportChatSession(currentSessionId, 'md');
+    } else {
+        // Fallback: client-side export
+        let md = '# 对话导出\\n\\n';
+        for (const m of chatMessages) {
+            const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : '系统';
+            md += `## ${role}\\n\\n${m.content}\\n\\n---\\n\\n`;
+        }
+        const blob = new Blob([md], { type: 'text/markdown' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'chat_export.md';
+        a.click();
+    }
+}
 
 function toggleChatSettings() {
     chatSettingsOpen = !chatSettingsOpen;
@@ -1857,6 +2062,7 @@ function sendChat() {
     const doSend = () => {
         chatStreaming = true;
         chatCurrentResponse = '';
+        chatThinkingContent = '';
         document.getElementById('chatSendBtn').style.display = 'none';
         document.getElementById('chatStopBtn').style.display = '';
         appendChatBubble('assistant', '', []);
@@ -1878,6 +2084,7 @@ function sendChat() {
         if (fmt) payload.format = fmt;
         const ka = getChatKeepAlive();
         if (ka) payload.keep_alive = ka;
+        if (document.getElementById('chatThinkMode').checked) payload.think = true;
 
         ws.send(JSON.stringify(payload));
     };
@@ -1894,12 +2101,16 @@ function sendChat() {
             switch (data.type) {
                 case 'token':
                     chatCurrentResponse += data.content;
-                    updateLastAssistantBubble(chatCurrentResponse, false);
+                    updateLastAssistantBubble(chatCurrentResponse, false, chatThinkingContent);
+                    break;
+                case 'thinking':
+                    chatThinkingContent += data.content;
+                    updateLastAssistantBubble(chatCurrentResponse, false, chatThinkingContent);
                     break;
                 case 'done':
                     chatStreaming = false;
                     chatMessages.push({ role: 'assistant', content: chatCurrentResponse });
-                    updateLastAssistantBubble(chatCurrentResponse, true);
+                    updateLastAssistantBubble(chatCurrentResponse, true, chatThinkingContent);
                     document.getElementById('chatSendBtn').style.display = '';
                     document.getElementById('chatStopBtn').style.display = 'none';
                     // Show stats
@@ -1908,13 +2119,15 @@ function sendChat() {
                         const tps = (data.eval_count / (data.eval_duration / 1e9)).toFixed(1);
                         showChatStats(`${data.eval_count} tokens · ${secs.toFixed(1)}s · ${tps} tok/s`);
                     }
+                    autoSaveSession(); // persist to SQLite
                     break;
                 case 'stopped':
                     chatStreaming = false;
                     chatMessages.push({ role: 'assistant', content: chatCurrentResponse });
-                    updateLastAssistantBubble(chatCurrentResponse, true);
+                    updateLastAssistantBubble(chatCurrentResponse, true, chatThinkingContent);
                     document.getElementById('chatSendBtn').style.display = '';
                     document.getElementById('chatStopBtn').style.display = 'none';
+                    autoSaveSession(); // persist to SQLite
                     break;
                 case 'error':
                     chatStreaming = false;
@@ -1933,22 +2146,8 @@ function stopChat() {
     }
 }
 
-function clearChat() {
-    chatMessages = [];
-    chatUploadedFiles = [];
-    chatCurrentResponse = '';
-    chatStreaming = false;
-    document.getElementById('chatMessages').innerHTML = `
-        <div class="chat-empty-state">
-            <div class="chat-empty-icon">💬</div>
-            <div class="chat-empty-text">选择模型，开始对话</div>
-            <div class="chat-empty-hint">支持 Markdown、代码高亮、表格渲染</div>
-        </div>`;
-    renderChatUploadTags();
-    document.getElementById('chatSendBtn').style.display = '';
-    document.getElementById('chatStopBtn').style.display = 'none';
-    if (chatWs) { chatWs.close(); chatWs = null; }
-}
+// clearChat is an alias for newChatSession for backward compatibility
+function clearChat() { newChatSession(); }
 
 function handleChatKeydown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -2039,18 +2238,27 @@ function appendChatBubble(role, content, fileInfos) {
     container.scrollTop = container.scrollHeight;
 }
 
-function updateLastAssistantBubble(content, finalize) {
+function updateLastAssistantBubble(content, finalize, thinking) {
     const container = document.getElementById('chatMessages');
     const bubbles = container.querySelectorAll('.chat-message-assistant');
     const last = bubbles[bubbles.length - 1];
     if (!last) return;
     const textEl = last.querySelector('.chat-bubble-text');
+
+    let thinkHtml = '';
+    if (thinking) {
+        if (finalize) {
+            thinkHtml = `<details class="chat-thinking-block"><summary>🧠 思维链</summary><div class="chat-thinking-content">${renderChatMarkdown(thinking)}</div></details>`;
+        } else {
+            thinkHtml = `<div class="chat-thinking-streaming">🧠 思考中...<div class="chat-thinking-preview">${escapeHtml(thinking.slice(-200))}</div></div>`;
+        }
+    }
+
     if (finalize) {
-        textEl.innerHTML = renderChatMarkdown(content);
+        textEl.innerHTML = thinkHtml + renderChatMarkdown(content);
     } else {
-        // During streaming, show plain text with cursor for performance
         textEl.textContent = content;
-        textEl.innerHTML += '<span class="chat-typing-cursor">▌</span>';
+        textEl.innerHTML = thinkHtml + textEl.innerHTML + '<span class="chat-typing-cursor">▌</span>';
     }
     container.scrollTop = container.scrollHeight;
 }
@@ -2160,4 +2368,101 @@ document.addEventListener('DOMContentLoaded', async () => {
         clearApiKey();
     }
     // Show auth screen (already visible by default)
+
+// ── Model Compare Module ────────────────────────────────────────
+let compareWsA = null, compareWsB = null;
+let compareResponseA = '', compareResponseB = '';
+
+function initCompare() {
+    const models = (currentStatus && currentStatus.models) || _allModels || [];
+    ['compareModelA', 'compareModelB'].forEach(id => {
+        const sel = document.getElementById(id);
+        const cur = sel.value;
+        sel.innerHTML = `<option value="">${id.includes('A') ? '模型 A' : '模型 B'}</option>`;
+        models.forEach(m => {
+            if (m.name && !m.name.includes(':cloud') && !m.name.toLowerCase().includes('embed')) {
+                const opt = document.createElement('option');
+                opt.value = m.name;
+                opt.textContent = `${m.name} (${m.size_human || ''})`;
+                sel.appendChild(opt);
+            }
+        });
+        if (cur) sel.value = cur;
+    });
+}
+
+function sendCompare() {
+    const modelA = document.getElementById('compareModelA').value;
+    const modelB = document.getElementById('compareModelB').value;
+    const prompt = document.getElementById('compareInput').value.trim();
+    if (!modelA || !modelB) { showToast('请选择两个模型', 'error'); return; }
+    if (!prompt) { showToast('请输入 prompt', 'error'); return; }
+    if (modelA === modelB) { showToast('请选择不同的模型', 'error'); return; }
+
+    document.getElementById('compareLabelA').textContent = modelA;
+    document.getElementById('compareLabelB').textContent = modelB;
+
+    // Start both streams
+    compareResponseA = '';
+    compareResponseB = '';
+    startCompareStream('A', modelA, prompt);
+    startCompareStream('B', modelB, prompt);
+}
+
+function startCompareStream(side, model, prompt) {
+    const outputEl = document.getElementById(`compareOutput${side}`);
+    const statsEl = document.getElementById(`compareStats${side}`);
+    outputEl.innerHTML = '<span class="chat-typing">●●●</span>';
+    statsEl.textContent = '';
+
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${wsProtocol}//${location.host}/api/ws/chat?key=${encodeURIComponent(getApiKey())}`);
+
+    if (side === 'A') { if (compareWsA) compareWsA.close(); compareWsA = ws; }
+    else { if (compareWsB) compareWsB.close(); compareWsB = ws; }
+
+    let response = '';
+    ws.onopen = () => {
+        ws.send(JSON.stringify({
+            type: 'chat', model: model,
+            messages: [{ role: 'user', content: prompt }],
+            options: {},
+        }));
+    };
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            switch (data.type) {
+                case 'token':
+                    response += data.content;
+                    outputEl.innerHTML = renderChatMarkdown(response) + '<span class="chat-typing-cursor">▌</span>';
+                    break;
+                case 'done':
+                    outputEl.innerHTML = renderChatMarkdown(response);
+                    if (data.eval_count && data.total_duration) {
+                        const secs = data.total_duration / 1e9;
+                        const tps = (data.eval_count / (data.eval_duration / 1e9)).toFixed(1);
+                        statsEl.textContent = `${data.eval_count} tokens · ${secs.toFixed(1)}s · ${tps} tok/s`;
+                    }
+                    ws.close();
+                    break;
+                case 'error':
+                    outputEl.innerHTML = `<span style="color:var(--accent-red)">${friendlyChatError(data.error)}</span>`;
+                    ws.close();
+                    break;
+            }
+        } catch { /* ignore */ }
+    };
+    ws.onerror = () => { outputEl.innerHTML = '<span style="color:var(--accent-red)">连接失败</span>'; };
+}
+
+function clearCompare() {
+    if (compareWsA) { compareWsA.close(); compareWsA = null; }
+    if (compareWsB) { compareWsB.close(); compareWsB = null; }
+    document.getElementById('compareOutputA').innerHTML = '<div class="chat-empty-state"><div class="chat-empty-text">等待输入</div></div>';
+    document.getElementById('compareOutputB').innerHTML = '<div class="chat-empty-state"><div class="chat-empty-text">等待输入</div></div>';
+    document.getElementById('compareStatsA').textContent = '';
+    document.getElementById('compareStatsB').textContent = '';
+    document.getElementById('compareInput').value = '';
+}
 });

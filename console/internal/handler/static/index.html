@@ -68,6 +68,10 @@
                     <span class="nav-icon">💬</span>
                     <span>模型测试</span>
                 </li>
+                <li class="nav-item" data-page="compare">
+                    <span class="nav-icon">⚖️</span>
+                    <span>模型对比</span>
+                </li>
                 <li class="nav-item" data-page="health">
                     <span class="nav-icon">🩺</span>
                     <span>健康检查</span>
@@ -261,8 +265,21 @@
                             </select>
                         </div>
                         <div class="chat-toolbar-right">
+                            <button class="btn btn-sm" onclick="toggleChatHistory()" title="对话历史" id="chatHistoryBtn">📜 历史</button>
+                            <button class="btn btn-sm" onclick="exportCurrentChat()" title="导出对话" id="chatExportBtn">📥 导出</button>
                             <button class="btn btn-sm" onclick="toggleChatSettings()" title="对话设置" id="chatSettingsBtn">⚙️ 设置</button>
-                            <button class="btn btn-sm" onclick="clearChat()" title="新对话">🗑 新对话</button>
+                            <button class="btn btn-sm" onclick="newChatSession()" title="新对话">🗑 新对话</button>
+                        </div>
+                    </div>
+
+                    <!-- History panel (slide-in from left) -->
+                    <div class="chat-history-panel" id="chatHistoryPanel">
+                        <div class="chat-history-header">
+                            <h4>对话历史</h4>
+                            <button class="btn btn-sm" onclick="toggleChatHistory()">✕</button>
+                        </div>
+                        <div class="chat-history-list" id="chatHistoryList">
+                            <div class="chat-history-empty">暂无对话记录</div>
                         </div>
                     </div>
 
@@ -319,6 +336,13 @@
                                 </label>
                                 <div class="chat-setting-hint">强制模型输出有效 JSON 格式</div>
                             </div>
+                            <div class="chat-setting-group">
+                                <label class="chat-setting-toggle">
+                                    <input type="checkbox" id="chatThinkMode">
+                                    <span>Thinking 模式</span>
+                                </label>
+                                <div class="chat-setting-hint">启用推理思维链（模型需支持，如 QwQ、DeepSeek-R1）</div>
+                            </div>
                             <div class="chat-preset-bar">
                                 <span class="chat-preset-source" id="chatPresetSource" style="display:none"></span>
                                 <div class="chat-preset-actions">
@@ -348,6 +372,42 @@
                             <button class="btn btn-danger btn-sm chat-stop-btn" id="chatStopBtn" onclick="stopChat()" style="display:none">停止</button>
                         </div>
                         <input type="file" id="chatFileInput" multiple style="display:none" onchange="handleChatFileUpload(event)" accept=".txt,.md,.csv,.json,.log,.yaml,.yml,.xml,.html,.go,.py,.js,.ts,.sh,.sql,.java,.c,.cpp,.h,.ini,.toml,.env,.cfg,.jpg,.jpeg,.png,.gif,.webp,.bmp">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Model Compare Page -->
+            <div class="page" id="page-compare">
+                <div class="compare-page">
+                    <div class="compare-toolbar">
+                        <select id="compareModelA" class="chat-model-select" style="max-width:200px">
+                            <option value="">模型 A</option>
+                        </select>
+                        <span style="color:var(--text-muted)">vs</span>
+                        <select id="compareModelB" class="chat-model-select" style="max-width:200px">
+                            <option value="">模型 B</option>
+                        </select>
+                        <button class="btn btn-primary btn-sm" onclick="sendCompare()">发送对比</button>
+                        <button class="btn btn-sm" onclick="clearCompare()">清空</button>
+                    </div>
+                    <div class="compare-input-area">
+                        <textarea id="compareInput" class="chat-input" placeholder="输入相同的 prompt 发送到两个模型..." rows="2" style="width:100%"></textarea>
+                    </div>
+                    <div class="compare-panels">
+                        <div class="compare-panel">
+                            <div class="compare-panel-header" id="compareLabelA">模型 A</div>
+                            <div class="compare-panel-body chat-md-content" id="compareOutputA">
+                                <div class="chat-empty-state"><div class="chat-empty-text">等待输入</div></div>
+                            </div>
+                            <div class="compare-panel-stats" id="compareStatsA"></div>
+                        </div>
+                        <div class="compare-panel">
+                            <div class="compare-panel-header" id="compareLabelB">模型 B</div>
+                            <div class="compare-panel-body chat-md-content" id="compareOutputB">
+                                <div class="chat-empty-state"><div class="chat-empty-text">等待输入</div></div>
+                            </div>
+                            <div class="compare-panel-stats" id="compareStatsB"></div>
+                        </div>
                     </div>
                 </div>
             </div>

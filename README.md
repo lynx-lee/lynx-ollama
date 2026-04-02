@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.9.0-blue)
+![Version](https://img.shields.io/badge/version-v2.0.0-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -323,6 +323,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v2.0.0 | 2026-04-02 | **全面功能升级**。🔸 **对话历史持久化**：SQLite 新增 `chat_sessions`/`chat_messages` 表，支持多会话切换、历史浏览、删除、重命名，对话完成后自动保存（标题从首条用户消息生成）；🔸 **对话导出**：支持 Markdown 和 JSON 格式导出，通过 `GET /api/chat/sessions/{id}/export` API 下载；🔸 **模型详情弹窗美化**：`showModelInfo` 从 `alert(JSON)` 改为模态框，结构化展示参数规模/量化/格式/模型族/上下文长度，折叠展示 Modelfile 参数、System Prompt、模板、许可证；🔸 **Thinking 模式**：设置面板新增思维链开关，后端透传 `think: true` 到 Ollama，前端区分 `thinking` token 和 `content` token，思维链以紫色折叠块展示；🔸 **模型对比页**：新增导航页面「⚖️ 模型对比」，选择两个模型输入同一 prompt 并排对比输出和性能指标（tokens/耗时/速率），各自独立 WebSocket 流式传输；🔸 **代码质量优化**：Dockerfile runtime 改 `alpine:3`；`enrichModelCapabilities` 消除 slice 数据竞争；`GetStatus` 从 `ListRunningModels` 推断 API 可达性减少冗余 probe；全量 `interface{}` → `any`；清理 unused 变量 |
 | v1.9.0 | 2026-04-02 | **SQLite 持久化存储 + 模型能力标签**。1️⃣ **新增 SQLite 数据库**（`console-data/console.db`）：`model_meta` 表持久化模型能力标签和类型，`translations` 表持久化模型描述翻译缓存（替代内存 `sync.Map`，重启不丢失）；2️⃣ **模型能力检测**：三级来源——从 Ollama `/api/show` 解析 `details.families`（clip→vision）和 `template`（tool→tools）、从模型市场 `tags` 同步、从模型名关键词推断；首次查询后写入 SQLite，后续直接读取；3️⃣ **模型列表增强**：已下载模型表格新增「类型」列（💬对话/👁视觉/📐嵌入/💻代码）和「能力」列（vision/tools/thinking/code/embedding 标签）；4️⃣ **翻译缓存持久化**：模型市场描述翻译结果存入 SQLite，相同英文描述直接返回缓存译文，不再重复调用 LLM；5️⃣ 依赖新增 `modernc.org/sqlite`（纯 Go，无需 CGO） |
 | v1.8.4 | 2026-04-02 | **对话停止修复 + 错误提示优化**。1️⃣ 修复停止按钮无法中止生成的 bug：`StreamChat` 重写为单一读 goroutine + channel 调度，解决 gorilla/websocket 并发读竞争和 `ReadBytes` 阻塞导致 cancel 无法生效的问题，`reader.Close()` 立即断开 Ollama 连接中止生成；2️⃣ 前端发送校验：上传图片时自动检测模型是否支持视觉能力（`isVisionModel` 匹配 llava/vision/minicpm-v 等关键词），不支持则阻止发送并提示选择视觉模型；3️⃣ 错误中文友好化：`friendlyChatError()` 识别 6 种常见错误（图片不支持/模型不存在/上下文过长/显存不足/连接失败/超时）返回中文提示 |
 | v1.8.3 | 2026-04-01 | **智能参数预设系统**。切换模型时自动填充最优参数，三级优先级：1️⃣ **用户自定义预设**（localStorage 持久化）— 设置面板底部新增「💾 保存预设」/「🗑 删除预设」按钮，用户调好参数后保存为该模型专属预设，下次选择自动加载；2️⃣ **Ollama 模型默认参数**（`/api/show`）— 从模型 Modelfile 的 `parameters` 字段解析 temperature/top_p/num_ctx/num_predict；3️⃣ **内置推荐预设**（11 个模型族）— Qwen(0.7/0.8/32K)、DeepSeek(0.6/0.9/64K)、CodeLlama/Coder(0.2/高ctx)、Llama(0.7/0.9/8K)、Mistral/Mixtral(32K)、Gemma、Phi、LLaVA、Command-R(0.3/128K) 等。设置面板底部显示当前参数来源标签（「用户预设」/「模型默认」/「Qwen 推荐」等） |

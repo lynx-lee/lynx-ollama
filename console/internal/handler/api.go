@@ -52,7 +52,7 @@ func NewAPIHandler(ollama *service.OllamaService, docker *service.DockerService,
 	return h
 }
 
-func jsonResponse(w http.ResponseWriter, data interface{}) {
+func jsonResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(model.APIResponse{Success: true, Data: data})
 }
@@ -99,7 +99,7 @@ func (h *APIHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // collectResult is used for parallel data collection in status endpoints.
 type collectResult struct {
 	key string
-	val interface{}
+	val any
 	err error
 }
 
@@ -154,8 +154,9 @@ func (h *APIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 				status.Models = r.val.([]model.ModelInfo)
 			}
 		case "running":
-			if r.val != nil {
+			if r.err == nil && r.val != nil {
 				status.RunningModels = r.val.([]model.RunningModel)
+				status.APIReachable = true
 			}
 		case "gpu":
 			if r.val != nil {
@@ -170,15 +171,16 @@ func (h *APIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Single IsAPIReady call (cached internally, avoids redundant probes)
-	apiReady := h.ollama.IsAPIReady()
-	status.APIReachable = apiReady
+	// If API was not reachable via running models, do a quick probe as fallback
+	if !status.APIReachable {
+		status.APIReachable = h.ollama.IsAPIReady()
+	}
 
 	// Correct health status based on actual API reachability:
 	// - Docker may report "starting" during start_period even if API is already up
 	// - Docker may report "unhealthy" due to transient probe failures
 	// - Health may be empty if container was started without healthcheck config
-	h.correctHealthStatus(&status.Container, apiReady)
+	h.correctHealthStatus(&status.Container, status.APIReachable)
 
 	status.ProjectVersion = h.version
 
@@ -751,7 +753,7 @@ func (h *APIHandler) StreamPull(w http.ResponseWriter, r *http.Request) {
 		line, err := buf.ReadBytes('\n')
 		if len(line) > 0 {
 			// Parse and add percent
-			var progress map[string]interface{}
+			var progress map[string]any
 			if json.Unmarshal(line, &progress) == nil {
 				if total, ok := progress["total"].(float64); ok && total > 0 {
 					if completed, ok := progress["completed"].(float64); ok {
@@ -806,7 +808,7 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Phase 1: Check versions
-	conn.WriteJSON(map[string]interface{}{
+	conn.WriteJSON(map[string]any{
 		"phase":  "checking",
 		"status": "正在获取版本信息...",
 	})
@@ -822,7 +824,7 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 			needsUpdate = true
 		}
 		if !needsUpdate {
-			conn.WriteJSON(map[string]interface{}{
+			conn.WriteJSON(map[string]any{
 				"phase":           "up_to_date",
 				"status":          "success",
 				"message":         "当前版本已是最新",
@@ -834,7 +836,7 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 		latestVersion = "未知（查询失败）"
 	} else if currentVersion == latestVersion {
 		// 版本号完全一致
-		conn.WriteJSON(map[string]interface{}{
+		conn.WriteJSON(map[string]any{
 			"phase":           "up_to_date",
 			"status":          "success",
 			"message":         "当前版本已是最新",
@@ -845,7 +847,7 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Phase 1.5: Notify client that update is available, wait for confirmation
-	conn.WriteJSON(map[string]interface{}{
+	conn.WriteJSON(map[string]any{
 		"phase":           "update_available",
 		"status":          "发现新版本",
 		"current_version": currentVersion,
@@ -858,7 +860,7 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	case msg := <-msgCh:
 		if msg != "confirm" {
-			conn.WriteJSON(map[string]interface{}{
+			conn.WriteJSON(map[string]any{
 				"phase":           "cancelled",
 				"status":          "用户取消更新",
 				"current_version": currentVersion,
@@ -869,20 +871,20 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Phase 2: Stream docker pull progress
-	conn.WriteJSON(map[string]interface{}{
+	conn.WriteJSON(map[string]any{
 		"phase":  "pulling",
 		"status": "开始拉取最新镜像...",
 	})
 
 	pullErr := h.docker.UpdateServiceStream(ctx, func(line string) {
-		conn.WriteJSON(map[string]interface{}{
+		conn.WriteJSON(map[string]any{
 			"phase":  "pulling",
 			"status": line,
 		})
 	})
 
 	if pullErr != nil {
-		conn.WriteJSON(map[string]interface{}{
+		conn.WriteJSON(map[string]any{
 			"phase":  "error",
 			"status": "error",
 			"error":  pullErr.Error(),
@@ -891,7 +893,7 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Phase 3: Wait for Ollama API to be ready
-	conn.WriteJSON(map[string]interface{}{
+	conn.WriteJSON(map[string]any{
 		"phase":  "waiting",
 		"status": "等待 Ollama 服务就绪...",
 	})
@@ -899,7 +901,7 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < 60; i++ {
 		select {
 		case <-ctx.Done():
-			conn.WriteJSON(map[string]interface{}{
+			conn.WriteJSON(map[string]any{
 				"phase": "error",
 				"error": "更新超时或请求已取消",
 			})
@@ -915,7 +917,7 @@ func (h *APIHandler) StreamUpdate(w http.ResponseWriter, r *http.Request) {
 	// Phase 4: Done
 	h.ollama.InvalidateVersionCache()
 	newVersion, _ := h.ollama.GetVersion()
-	conn.WriteJSON(map[string]interface{}{
+	conn.WriteJSON(map[string]any{
 		"phase":       "done",
 		"status":      "success",
 		"message":     "更新完成",
@@ -961,7 +963,7 @@ func (h *APIHandler) StreamServiceControl(w http.ResponseWriter, r *http.Request
 	actionName := actionNames[action]
 
 	// Phase 1: Starting operation
-	conn.WriteJSON(map[string]interface{}{
+	conn.WriteJSON(map[string]any{
 		"phase":  "operating",
 		"action": action,
 		"status": fmt.Sprintf("正在%s Ollama 服务...", actionName),
@@ -969,7 +971,7 @@ func (h *APIHandler) StreamServiceControl(w http.ResponseWriter, r *http.Request
 
 	// Execute the streaming service method
 	lineFn := func(line string) {
-		conn.WriteJSON(map[string]interface{}{
+		conn.WriteJSON(map[string]any{
 			"phase":  "operating",
 			"action": action,
 			"status": line,
@@ -987,7 +989,7 @@ func (h *APIHandler) StreamServiceControl(w http.ResponseWriter, r *http.Request
 	}
 
 	if opErr != nil {
-		conn.WriteJSON(map[string]interface{}{
+		conn.WriteJSON(map[string]any{
 			"phase":  "error",
 			"action": action,
 			"status": "error",
@@ -998,7 +1000,7 @@ func (h *APIHandler) StreamServiceControl(w http.ResponseWriter, r *http.Request
 
 	// Phase 2: For start/restart, wait for Ollama API to be ready
 	if action == "start" || action == "restart" {
-		conn.WriteJSON(map[string]interface{}{
+		conn.WriteJSON(map[string]any{
 			"phase":  "waiting",
 			"action": action,
 			"status": "等待 Ollama API 就绪...",
@@ -1008,7 +1010,7 @@ func (h *APIHandler) StreamServiceControl(w http.ResponseWriter, r *http.Request
 		for i := 0; i < 60; i++ {
 			select {
 			case <-ctx.Done():
-				conn.WriteJSON(map[string]interface{}{
+				conn.WriteJSON(map[string]any{
 					"phase":  "error",
 					"action": action,
 					"error":  fmt.Sprintf("%s超时或请求已取消", actionName),
@@ -1024,7 +1026,7 @@ func (h *APIHandler) StreamServiceControl(w http.ResponseWriter, r *http.Request
 		}
 
 		if !ready {
-			conn.WriteJSON(map[string]interface{}{
+			conn.WriteJSON(map[string]any{
 				"phase":  "error",
 				"action": action,
 				"error":  "Ollama API 未能在超时时间内就绪",
@@ -1034,7 +1036,7 @@ func (h *APIHandler) StreamServiceControl(w http.ResponseWriter, r *http.Request
 	}
 
 	// Phase 3: Done
-	conn.WriteJSON(map[string]interface{}{
+	conn.WriteJSON(map[string]any{
 		"phase":   "done",
 		"action":  action,
 		"status":  "success",
@@ -1401,7 +1403,7 @@ func (hub *StatusHub) onClientStateChange() {
 type statusWSMessage struct {
 	Type string      `json:"type"` // "status"
 	Mode string      `json:"mode"` // "full" or "lite"
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 }
 
 // statusWSCommand is a client→server control message.
@@ -1473,6 +1475,126 @@ func (h *APIHandler) StreamStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		client.mu.Unlock()
 	}
+}
+
+// ── Chat History ────────────────────────────────────────────────
+
+// ListChatSessions returns all saved sessions.
+func (h *APIHandler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
+	sessions := h.metaStore().ListChatSessions()
+	if sessions == nil {
+		sessions = []service.ChatSession{}
+	}
+	jsonResponse(w, sessions)
+}
+
+// CreateChatSession creates a new session.
+func (h *APIHandler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Title string `json:"title"`
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	idBytes := make([]byte, 8)
+	rand.Read(idBytes)
+	id := fmt.Sprintf("sess_%x", idBytes)
+	if req.Title == "" {
+		req.Title = "新对话"
+	}
+	h.metaStore().CreateChatSession(id, req.Title, req.Model)
+	jsonResponse(w, map[string]string{"id": id, "title": req.Title})
+}
+
+// GetChatSession returns a session with all messages.
+func (h *APIHandler) GetChatSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	msgs := h.metaStore().GetChatMessages(id)
+	if msgs == nil {
+		msgs = []service.ChatMsgRow{}
+	}
+	jsonResponse(w, msgs)
+}
+
+// DeleteChatSession deletes a session.
+func (h *APIHandler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	h.metaStore().DeleteChatSession(id)
+	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+// UpdateChatSessionTitle renames a session.
+func (h *APIHandler) UpdateChatSessionTitle(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Title string `json:"title"`
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	h.metaStore().UpdateChatSession(id, req.Title, req.Model)
+	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+// SaveChatMessage saves a message to a session.
+func (h *APIHandler) SaveChatMessage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Role    string   `json:"role"`
+		Content string   `json:"content"`
+		Files   []string `json:"files,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	h.metaStore().AddChatMessage(id, req.Role, req.Content, req.Files)
+	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+// ExportChatSession exports a session as Markdown or JSON.
+func (h *APIHandler) ExportChatSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	format := r.URL.Query().Get("format") // "md" or "json"
+	if format == "" {
+		format = "md"
+	}
+
+	msgs := h.metaStore().GetChatMessages(id)
+
+	if format == "json" {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"chat_%s.json\"", id))
+		json.NewEncoder(w).Encode(msgs)
+		return
+	}
+
+	// Markdown export
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"chat_%s.md\"", id))
+
+	fmt.Fprintf(w, "# 对话导出\n\n")
+	for _, msg := range msgs {
+		roleName := msg.Role
+		switch msg.Role {
+		case "user":
+			roleName = "用户"
+		case "assistant":
+			roleName = "助手"
+		case "system":
+			roleName = "系统"
+		}
+		fmt.Fprintf(w, "## %s\n\n%s\n\n---\n\n", roleName, msg.Content)
+	}
+}
+
+// metaStore is a convenience accessor for the metadata store.
+func (h *APIHandler) metaStore() *service.MetadataStore {
+	return h.ollama.MetaStore()
 }
 
 // ── Chat ────────────────────────────────────────────────────────
@@ -1555,7 +1677,7 @@ func (h *APIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		// Start streaming with cancellable context
 		ctx, cancel := context.WithCancel(r.Context())
 
-		reader, err := h.ollama.ChatStream(req.Model, ollamaMessages, req.Options, req.Format, req.KeepAlive)
+		reader, err := h.ollama.ChatStream(req.Model, ollamaMessages, req.Options, req.Format, req.KeepAlive, req.Think)
 		if err != nil {
 			conn.WriteJSON(map[string]any{"type": "error", "error": err.Error()})
 			cancel()
@@ -1577,6 +1699,10 @@ func (h *APIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 						if msgObj, ok := chunk["message"].(map[string]any); ok {
 							if content, ok := msgObj["content"].(string); ok && content != "" {
 								conn.WriteJSON(map[string]any{"type": "token", "content": content})
+							}
+							// Thinking/reasoning tokens (Ollama think mode)
+							if thinking, ok := msgObj["thinking"].(string); ok && thinking != "" {
+								conn.WriteJSON(map[string]any{"type": "thinking", "content": thinking})
 							}
 						}
 						if done, ok := chunk["done"].(bool); ok && done {

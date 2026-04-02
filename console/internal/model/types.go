@@ -238,6 +238,7 @@ type ChatRequest struct {
 	Options   map[string]any    `json:"options,omitempty"`
 	Format    string            `json:"format,omitempty"`    // "json" for JSON mode
 	KeepAlive string            `json:"keep_alive,omitempty"` // e.g. "5m", "1h", "-1"
+	Think     bool              `json:"think,omitempty"`      // enable thinking/reasoning mode
 }
 
 // UploadedFile holds a parsed uploaded file in memory.

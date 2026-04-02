@@ -68,6 +68,15 @@ func NewRouter(ollamaSvc *service.OllamaService, dockerSvc *service.DockerServic
 	mux.HandleFunc("POST /api/chat/upload", api.UploadChatFile)
 	mux.HandleFunc("GET /api/chat/files/{id}", api.DownloadChatFile)
 
+	// ── Chat History ────────────────────────────────────────────────
+	mux.HandleFunc("GET /api/chat/sessions", api.ListChatSessions)
+	mux.HandleFunc("POST /api/chat/sessions", api.CreateChatSession)
+	mux.HandleFunc("GET /api/chat/sessions/{id}", api.GetChatSession)
+	mux.HandleFunc("PUT /api/chat/sessions/{id}", api.UpdateChatSessionTitle)
+	mux.HandleFunc("DELETE /api/chat/sessions/{id}", api.DeleteChatSession)
+	mux.HandleFunc("POST /api/chat/sessions/{id}/messages", api.SaveChatMessage)
+	mux.HandleFunc("GET /api/chat/sessions/{id}/export", api.ExportChatSession)
+
 	// ── Static files (embedded SPA) ─────────────────────────────────
 	staticContent, _ := fs.Sub(staticFS, "static")
 	fileServer := http.FileServer(http.FS(staticContent))

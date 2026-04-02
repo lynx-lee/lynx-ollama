@@ -20,7 +20,7 @@ RUN if [ -z "$VERSION" ]; then \
     CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.Version=${VERSION}" -o ollama-console ./cmd/server/
 
 # ── Runtime ──────────────────────────────────────────────────────
-FROM alpine:3.20
+FROM alpine:3
 
 RUN apk add --no-cache \
     bash \

@@ -53,6 +53,9 @@ func NewOllamaService(cfg *config.Config, metaStore *MetadataStore) *OllamaServi
 	}
 }
 
+// MetaStore returns the metadata store for external access.
+func (s *OllamaService) MetaStore() *MetadataStore { return s.metaStore }
+
 // IsAPIReady checks if the Ollama API is reachable.
 // Results are cached for a short TTL to avoid redundant probes when called
 // multiple times within the same polling cycle.
@@ -167,7 +170,7 @@ func (s *OllamaService) ListModels() ([]model.ModelInfo, error) {
 	allMeta := s.metaStore.GetAllModelMeta()
 
 	models := make([]model.ModelInfo, 0, len(raw.Models))
-	var needEnrich []int // indices of models that need capability detection
+	var needEnrich []string // model names that need capability detection
 	for _, m := range raw.Models {
 		info := model.ModelInfo{
 			Name:         m.Name,
@@ -192,9 +195,7 @@ func (s *OllamaService) ListModels() ([]model.ModelInfo, error) {
 			info.Capabilities = meta.Capabilities
 			info.ModelType = meta.ModelType
 		} else {
-			// Mark for async enrichment
-			needEnrich = append(needEnrich, len(models))
-			// Quick fallback from name
+			needEnrich = append(needEnrich, m.Name)
 			caps, mt := InferCapabilitiesFromName(m.Name)
 			info.Capabilities = caps
 			info.ModelType = mt
@@ -205,32 +206,27 @@ func (s *OllamaService) ListModels() ([]model.ModelInfo, error) {
 
 	// Async: enrich unknown models via /api/show (non-blocking)
 	if len(needEnrich) > 0 {
-		go s.enrichModelCapabilities(models, needEnrich)
+		go s.enrichModelCapabilities(needEnrich)
 	}
 
 	return models, nil
 }
 
 // enrichModelCapabilities queries /api/show for models without cached capabilities.
-func (s *OllamaService) enrichModelCapabilities(models []model.ModelInfo, indices []int) {
-	for _, idx := range indices {
-		if idx >= len(models) {
-			continue
-		}
-		name := models[idx].Name
+// Only operates on model names (not slice indices) to avoid data races with the caller.
+func (s *OllamaService) enrichModelCapabilities(names []string) {
+	for _, name := range names {
 		info, err := s.ShowModel(name)
 		if err != nil {
 			continue
 		}
 		caps, modelType := InferCapabilitiesFromShowModel(info)
 		if len(caps) == 0 {
-			// Fall back to name-based inference
 			caps, modelType = InferCapabilitiesFromName(name)
 		}
-		// Store both full name and base name
 		s.metaStore.SetModelMeta(name, caps, modelType, "show")
-		if idx2 := strings.LastIndex(name, ":"); idx2 > 0 {
-			s.metaStore.SetModelMeta(name[:idx2], caps, modelType, "show")
+		if idx := strings.LastIndex(name, ":"); idx > 0 {
+			s.metaStore.SetModelMeta(name[:idx], caps, modelType, "show")
 		}
 	}
 }
@@ -277,7 +273,7 @@ func (s *OllamaService) ListRunningModels() ([]model.RunningModel, error) {
 // PullModel sends a pull request and returns a reader for streaming progress.
 // Uses a separate client without timeout since model downloads can take minutes/hours.
 func (s *OllamaService) PullModel(name string) (io.ReadCloser, error) {
-	payload, err := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]any{
 		"name":   name,
 		"stream": true,
 	})
@@ -328,8 +324,8 @@ func (s *OllamaService) DeleteModel(name string) error {
 }
 
 // GenerateChat sends a chat message for testing/benchmarking.
-func (s *OllamaService) GenerateChat(modelName, message string) (map[string]interface{}, error) {
-	payload, err := json.Marshal(map[string]interface{}{
+func (s *OllamaService) GenerateChat(modelName, message string) (map[string]any, error) {
+	payload, err := json.Marshal(map[string]any{
 		"model": modelName,
 		"messages": []map[string]string{
 			{"role": "user", "content": message},
@@ -350,7 +346,7 @@ func (s *OllamaService) GenerateChat(modelName, message string) (map[string]inte
 	}
 	defer resp.Body.Close()
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode chat response: %w", err)
 	}
@@ -358,7 +354,7 @@ func (s *OllamaService) GenerateChat(modelName, message string) (map[string]inte
 }
 
 // ShowModel returns detailed info about a model.
-func (s *OllamaService) ShowModel(name string) (map[string]interface{}, error) {
+func (s *OllamaService) ShowModel(name string) (map[string]any, error) {
 	payload, err := json.Marshal(map[string]string{"name": name})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal show request: %w", err)
@@ -373,7 +369,7 @@ func (s *OllamaService) ShowModel(name string) (map[string]interface{}, error) {
 	}
 	defer resp.Body.Close()
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode model info: %w", err)
 	}
@@ -589,7 +585,7 @@ func (s *OllamaService) batchTranslate(modelName string, items []uncachedItem) m
 3. 翻译要简洁准确，不超过原文长度
 4. 不要添加任何额外的键或内容`
 
-	payload, err := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]any{
 		"model": modelName,
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},
@@ -597,7 +593,7 @@ func (s *OllamaService) batchTranslate(modelName string, items []uncachedItem) m
 		},
 		"stream":  false,
 		"think":   false,
-		"options": map[string]interface{}{"temperature": 0.1, "num_predict": 4096},
+		"options": map[string]any{"temperature": 0.1, "num_predict": 4096},
 	})
 	if err != nil {
 		slog.Error("failed to marshal batch translation payload", "error", err)
@@ -1010,7 +1006,7 @@ func (s *OllamaService) findTranslationModel() string {
 // ollamaTranslate translates a single text from English to Chinese using the local Ollama model.
 // Used as fallback when batch translation fails.
 func (s *OllamaService) ollamaTranslate(client *http.Client, modelName, text string) string {
-	payload, err := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]any{
 		"model": modelName,
 		"messages": []map[string]string{
 			{"role": "system", "content": "你是翻译助手。将用户给出的英文翻译为简洁流畅的中文，只输出翻译结果，不要解释、不要前缀。"},
@@ -1018,7 +1014,7 @@ func (s *OllamaService) ollamaTranslate(client *http.Client, modelName, text str
 		},
 		"stream":  false,
 		"think":   false,
-		"options": map[string]interface{}{"temperature": 0.1, "num_predict": 256},
+		"options": map[string]any{"temperature": 0.1, "num_predict": 256},
 	})
 	if err != nil {
 		return ""
@@ -1091,7 +1087,7 @@ func formatBytes(b int64) string {
 
 // ChatStream sends a streaming chat request to Ollama and returns an io.ReadCloser
 // producing NDJSON lines. Caller must close the reader.
-func (s *OllamaService) ChatStream(modelName string, messages []map[string]any, options map[string]any, format string, keepAlive string) (io.ReadCloser, error) {
+func (s *OllamaService) ChatStream(modelName string, messages []map[string]any, options map[string]any, format string, keepAlive string, think bool) (io.ReadCloser, error) {
 	payload := map[string]any{
 		"model":    modelName,
 		"messages": messages,
@@ -1105,6 +1101,9 @@ func (s *OllamaService) ChatStream(modelName string, messages []map[string]any, 
 	}
 	if keepAlive != "" {
 		payload["keep_alive"] = keepAlive
+	}
+	if think {
+		payload["think"] = true
 	}
 
 	body, err := json.Marshal(payload)

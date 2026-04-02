@@ -56,6 +56,26 @@ func (s *MetadataStore) migrate() error {
 			translated    TEXT NOT NULL,
 			updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+
+		CREATE TABLE IF NOT EXISTS chat_sessions (
+			id         TEXT PRIMARY KEY,
+			title      TEXT NOT NULL DEFAULT '新对话',
+			model      TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS chat_messages (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			role       TEXT NOT NULL,
+			content    TEXT NOT NULL DEFAULT '',
+			files      TEXT DEFAULT '[]',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
 	`)
 	return err
 }
@@ -258,6 +278,125 @@ func (s *MetadataStore) SetTranslationBatch(translations map[string]string) {
 		stmt.Exec(orig, trans)
 	}
 	tx.Commit()
+}
+
+// ── Chat Sessions ──────────────────────────────────────────────
+
+// ChatSession represents a saved conversation.
+type ChatSession struct {
+	ID        string        `json:"id"`
+	Title     string        `json:"title"`
+	Model     string        `json:"model"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+	Messages  []ChatMsgRow  `json:"messages,omitempty"`
+}
+
+// ChatMsgRow represents a single message in a session.
+type ChatMsgRow struct {
+	ID        int64     `json:"id"`
+	Role      string    `json:"role"`
+	Content   string    `json:"content"`
+	Files     []string  `json:"files,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ListChatSessions returns all sessions ordered by updated_at desc.
+func (s *MetadataStore) ListChatSessions() []ChatSession {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query("SELECT id, title, model, created_at, updated_at FROM chat_sessions ORDER BY updated_at DESC")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var sessions []ChatSession
+	for rows.Next() {
+		var sess ChatSession
+		if rows.Scan(&sess.ID, &sess.Title, &sess.Model, &sess.CreatedAt, &sess.UpdatedAt) == nil {
+			sessions = append(sessions, sess)
+		}
+	}
+	return sessions
+}
+
+// CreateChatSession creates a new session and returns its ID.
+func (s *MetadataStore) CreateChatSession(id, title, modelName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(
+		"INSERT INTO chat_sessions (id, title, model) VALUES (?, ?, ?)",
+		id, title, modelName,
+	)
+	if err != nil {
+		slog.Warn("failed to create chat session", "error", err)
+	}
+}
+
+// UpdateChatSession updates session title and model.
+func (s *MetadataStore) UpdateChatSession(id, title, modelName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, _ = s.db.Exec(
+		"UPDATE chat_sessions SET title = ?, model = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		title, modelName, id,
+	)
+}
+
+// DeleteChatSession deletes a session and all its messages.
+func (s *MetadataStore) DeleteChatSession(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, _ = s.db.Exec("DELETE FROM chat_messages WHERE session_id = ?", id)
+	_, _ = s.db.Exec("DELETE FROM chat_sessions WHERE id = ?", id)
+}
+
+// GetChatMessages returns all messages for a session.
+func (s *MetadataStore) GetChatMessages(sessionID string) []ChatMsgRow {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(
+		"SELECT id, role, content, files, created_at FROM chat_messages WHERE session_id = ? ORDER BY id ASC",
+		sessionID,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var msgs []ChatMsgRow
+	for rows.Next() {
+		var msg ChatMsgRow
+		var filesJSON string
+		if rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.CreatedAt) == nil {
+			json.Unmarshal([]byte(filesJSON), &msg.Files)
+			msgs = append(msgs, msg)
+		}
+	}
+	return msgs
+}
+
+// AddChatMessage appends a message to a session.
+func (s *MetadataStore) AddChatMessage(sessionID, role, content string, files []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	filesJSON, _ := json.Marshal(files)
+	_, err := s.db.Exec(
+		"INSERT INTO chat_messages (session_id, role, content, files) VALUES (?, ?, ?, ?)",
+		sessionID, role, content, string(filesJSON),
+	)
+	if err != nil {
+		slog.Warn("failed to add chat message", "error", err)
+	}
+	// Touch session updated_at
+	_, _ = s.db.Exec("UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID)
 }
 
 // ── Capability Detection Helpers ────────────────────────────────
