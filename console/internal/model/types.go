@@ -252,3 +252,36 @@ type UploadedFile struct {
 	Preview   string    `json:"preview"`     // first 200 chars preview, or "image" for images
 	CreatedAt time.Time `json:"-"`
 }
+
+// BenchmarkDimension defines a single evaluation dimension.
+type BenchmarkDimension struct {
+	ID          string `json:"id"`          // e.g. "reasoning"
+	Name        string `json:"name"`        // 显示名称
+	Prompt      string `json:"prompt"`      // 发送给模型的 prompt
+	CheckPrompt string `json:"check_prompt"` // 评分 prompt（由评判模型执行）
+	MaxScore    int    `json:"max_score"`
+}
+
+// BenchmarkScore holds the score for a single dimension.
+type BenchmarkScore struct {
+	DimensionID string  `json:"dimension_id"`
+	Name        string  `json:"name"`
+	Score       float64 `json:"score"`
+	MaxScore    int     `json:"max_score"`
+	Response    string  `json:"response"`    // 模型原始回答（截断）
+	Reasoning   string  `json:"reasoning"`   // 评分理由
+	TokenCount  int     `json:"token_count"`
+	DurationMs  int64   `json:"duration_ms"` // 耗时毫秒
+	TokPerSec   float64 `json:"tok_per_sec"`
+}
+
+// BenchmarkResult holds the full evaluation result for a model.
+type BenchmarkModelResult struct {
+	ModelName   string           `json:"model_name"`
+	Scores      []BenchmarkScore `json:"scores"`
+	TotalScore  float64          `json:"total_score"`
+	MaxTotal    int              `json:"max_total"`
+	Percentage  float64          `json:"percentage"`  // 百分制
+	AvgTokSec   float64          `json:"avg_tok_sec"` // 平均 tok/s
+	RunAt       string           `json:"run_at"`
+}

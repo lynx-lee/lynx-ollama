@@ -1838,3 +1838,369 @@ func (h *APIHandler) DownloadChatFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", f.Name))
 	http.ServeFile(w, r, filePath)
 }
+
+// ── Benchmark ───────────────────────────────────────────────────
+
+// benchmarkDimensions defines the evaluation test suite.
+var benchmarkDimensions = []struct {
+	ID     string
+	Name   string
+	Prompt string
+	// Check function: returns score (0-10) and reasoning
+	Check func(response string) (float64, string)
+}{
+	{
+		ID:   "reasoning",
+		Name: "逻辑推理",
+		Prompt: `请解决以下逻辑推理题，给出完整的推理过程和最终答案：
+
+一个房间里有3个开关，每个开关控制隔壁房间的一盏灯。你只能进入隔壁房间一次。请问如何确定每个开关对应哪盏灯？
+
+要求：
+1. 给出详细的推理步骤
+2. 给出最终方案`,
+		Check: func(resp string) (float64, string) {
+			score := 0.0
+			lower := strings.ToLower(resp)
+			// 核心思路：利用灯泡的温度（开一段时间后关闭）
+			if strings.Contains(lower, "温度") || strings.Contains(lower, "热") || strings.Contains(lower, "warm") || strings.Contains(lower, "heat") {
+				score += 5
+			}
+			if strings.Contains(lower, "打开") && strings.Contains(lower, "关") {
+				score += 2
+			}
+			if len(resp) > 100 {
+				score += 2
+			}
+			if strings.Contains(resp, "步骤") || strings.Contains(resp, "方案") || strings.Contains(resp, "1") {
+				score += 1
+			}
+			if score > 10 {
+				score = 10
+			}
+			return score, fmt.Sprintf("推理完整性: %.0f/10", score)
+		},
+	},
+	{
+		ID:   "math",
+		Name: "数学计算",
+		Prompt: `请计算以下数学问题，写出详细的计算过程：
+
+1. 计算 17 × 23 + 45 ÷ 9 - 12² 的值
+2. 一个圆的半径为5，求其面积（精确到小数点后两位）
+
+要求给出每一步的计算过程。`,
+		Check: func(resp string) (float64, string) {
+			score := 0.0
+			// 17*23 = 391, 45/9 = 5, 12² = 144, result = 391+5-144 = 252
+			if strings.Contains(resp, "252") {
+				score += 5
+			} else if strings.Contains(resp, "391") || strings.Contains(resp, "144") {
+				score += 2
+			}
+			// π*5² = 78.54
+			if strings.Contains(resp, "78.5") {
+				score += 5
+			} else if strings.Contains(resp, "25π") || strings.Contains(resp, "25\\pi") {
+				score += 3
+			}
+			return score, fmt.Sprintf("计算准确度: %.0f/10", score)
+		},
+	},
+	{
+		ID:   "code",
+		Name: "代码能力",
+		Prompt: `请用 Python 实现一个函数 is_palindrome(s)，判断一个字符串是否是回文。
+
+要求：
+1. 忽略大小写和非字母数字字符
+2. 给出 3 个测试用例
+3. 简要解释算法思路`,
+		Check: func(resp string) (float64, string) {
+			score := 0.0
+			lower := strings.ToLower(resp)
+			if strings.Contains(lower, "def ") && strings.Contains(lower, "palindrome") {
+				score += 3
+			}
+			if strings.Contains(lower, "lower()") || strings.Contains(lower, "casefold") {
+				score += 2
+			}
+			if strings.Contains(lower, "isalnum") || strings.Contains(lower, "isalpha") {
+				score += 2
+			}
+			if strings.Contains(resp, "True") || strings.Contains(resp, "False") || strings.Contains(resp, "assert") {
+				score += 2
+			}
+			if strings.Contains(resp, "```") {
+				score += 1
+			}
+			if score > 10 {
+				score = 10
+			}
+			return score, fmt.Sprintf("代码质量: %.0f/10", score)
+		},
+	},
+	{
+		ID:   "writing",
+		Name: "创意写作",
+		Prompt: `请用不超过200字写一个微型故事，主题是"最后一盏路灯"。
+
+要求：
+1. 有完整的开头、发展和结尾
+2. 包含至少一个比喻或拟人修辞
+3. 营造出某种情感氛围`,
+		Check: func(resp string) (float64, string) {
+			score := 0.0
+			runes := []rune(resp)
+			if len(runes) > 50 {
+				score += 3
+			}
+			if len(runes) > 100 {
+				score += 2
+			}
+			// 检查修辞（比喻/拟人关键词）
+			if strings.Contains(resp, "像") || strings.Contains(resp, "如同") || strings.Contains(resp, "仿佛") || strings.Contains(resp, "似") {
+				score += 2
+			}
+			// 检查是否包含情感词汇
+			emotionWords := []string{"孤独", "温暖", "寂寞", "希望", "黑暗", "光", "守候", "等待", "记忆", "沉默"}
+			for _, w := range emotionWords {
+				if strings.Contains(resp, w) {
+					score += 0.5
+				}
+			}
+			if score > 10 {
+				score = 10
+			}
+			return score, fmt.Sprintf("创意与表达: %.0f/10", score)
+		},
+	},
+	{
+		ID:   "instruction",
+		Name: "指令遵循",
+		Prompt: `请严格按照以下格式输出信息：
+
+1. 用 JSON 格式输出一个包含3个中国城市的数组，每个城市包含 name（名称）和 population（人口，单位万）字段
+2. JSON 必须是有效的，可以被解析器直接解析
+3. 不要添加任何额外的解释文字，只输出 JSON`,
+		Check: func(resp string) (float64, string) {
+			score := 0.0
+			// 检查是否包含有效 JSON
+			cleaned := strings.TrimSpace(resp)
+			// 去除 markdown code block
+			if strings.HasPrefix(cleaned, "```") {
+				if idx := strings.Index(cleaned, "\n"); idx >= 0 {
+					cleaned = cleaned[idx+1:]
+				}
+				cleaned = strings.TrimSuffix(cleaned, "```")
+				cleaned = strings.TrimSpace(cleaned)
+			}
+			var arr []map[string]any
+			if json.Unmarshal([]byte(cleaned), &arr) == nil {
+				score += 4
+				if len(arr) == 3 {
+					score += 2
+				}
+				for _, item := range arr {
+					if _, ok := item["name"]; ok {
+						score += 1
+						break
+					}
+				}
+				for _, item := range arr {
+					if _, ok := item["population"]; ok {
+						score += 1
+						break
+					}
+				}
+			} else if strings.Contains(resp, "name") && strings.Contains(resp, "population") {
+				score += 2
+			}
+			// 检查是否有多余解释（应该只有 JSON）
+			lines := strings.Split(strings.TrimSpace(resp), "\n")
+			nonJsonLines := 0
+			for _, l := range lines {
+				l = strings.TrimSpace(l)
+				if l != "" && !strings.HasPrefix(l, "[") && !strings.HasPrefix(l, "{") && !strings.HasPrefix(l, "]") && !strings.HasPrefix(l, "}") && !strings.HasPrefix(l, "\"") && !strings.HasPrefix(l, "```") {
+					nonJsonLines++
+				}
+			}
+			if nonJsonLines <= 1 {
+				score += 2
+			}
+			if score > 10 {
+				score = 10
+			}
+			return score, fmt.Sprintf("指令遵循度: %.0f/10", score)
+		},
+	},
+	{
+		ID:   "chinese",
+		Name: "中文能力",
+		Prompt: `请完成以下中文语言任务：
+
+1. 解释成语"画蛇添足"的含义，并用它造一个句子
+2. 将以下句子改写为更加文雅的表达："这个东西很好用，我很喜欢"
+3. 用一句话概括《西游记》的主要内容`,
+		Check: func(resp string) (float64, string) {
+			score := 0.0
+			if strings.Contains(resp, "多余") || strings.Contains(resp, "多此一举") || strings.Contains(resp, "不必要") {
+				score += 3
+			}
+			if strings.Contains(resp, "画蛇添足") && len(resp) > 50 {
+				score += 1
+			}
+			// 检查是否有改写部分
+			if strings.Contains(resp, "甚") || strings.Contains(resp, "颇") || strings.Contains(resp, "爱不释手") || strings.Contains(resp, "青睐") || strings.Contains(resp, "钟爱") {
+				score += 3
+			}
+			// 检查西游记概括
+			if (strings.Contains(resp, "唐僧") || strings.Contains(resp, "师徒")) && (strings.Contains(resp, "取经") || strings.Contains(resp, "西天")) {
+				score += 3
+			}
+			if score > 10 {
+				score = 10
+			}
+			return score, fmt.Sprintf("中文理解与生成: %.0f/10", score)
+		},
+	},
+}
+
+// StreamBenchmark runs benchmark evaluation for selected models via WebSocket.
+// Client sends: {"models":["model1","model2",...]}
+// Server pushes: {"phase":"testing","model":"...","dimension":"...","progress":N,"total":M}
+// Server pushes: {"phase":"score","model":"...","dimension_id":"...","score":N,"max":M,...}
+// Server pushes: {"phase":"done","results":[...]}
+func (h *APIHandler) StreamBenchmark(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Error("benchmark websocket upgrade failed", "error", err)
+		return
+	}
+	defer conn.Close()
+
+	// Read model list from first message
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		return
+	}
+	var req struct {
+		Models []string `json:"models"`
+	}
+	if err := json.Unmarshal(msg, &req); err != nil || len(req.Models) == 0 {
+		conn.WriteJSON(map[string]any{"phase": "error", "error": "请选择至少一个模型"})
+		return
+	}
+
+	totalSteps := len(req.Models) * len(benchmarkDimensions)
+	step := 0
+	var allResults []map[string]any
+
+	for _, modelName := range req.Models {
+		var scores []map[string]any
+		var totalScore float64
+		var totalTokSec float64
+
+		for _, dim := range benchmarkDimensions {
+			step++
+			conn.WriteJSON(map[string]any{
+				"phase":     "testing",
+				"model":     modelName,
+				"dimension": dim.Name,
+				"progress":  step,
+				"total":     totalSteps,
+			})
+
+			startTime := time.Now()
+			resp, err := h.ollama.GenerateChat(modelName, dim.Prompt)
+			elapsed := time.Since(startTime).Milliseconds()
+
+			var response string
+			var tokenCount int
+			var tokPerSec float64
+
+			if err != nil {
+				response = "ERROR: " + err.Error()
+			} else {
+				if msgObj, ok := resp["message"].(map[string]any); ok {
+					response, _ = msgObj["content"].(string)
+				}
+				if ec, ok := resp["eval_count"].(float64); ok {
+					tokenCount = int(ec)
+				}
+				if ed, ok := resp["eval_duration"].(float64); ok && ed > 0 {
+					tokPerSec = float64(tokenCount) / (ed / 1e9)
+				}
+			}
+
+			score, reasoning := dim.Check(response)
+
+			// Truncate response for storage
+			respPreview := response
+			if len([]rune(respPreview)) > 500 {
+				respPreview = string([]rune(respPreview)[:500]) + "..."
+			}
+
+			scoreEntry := map[string]any{
+				"dimension_id": dim.ID,
+				"name":         dim.Name,
+				"score":        score,
+				"max_score":    10,
+				"response":     respPreview,
+				"reasoning":    reasoning,
+				"token_count":  tokenCount,
+				"duration_ms":  elapsed,
+				"tok_per_sec":  tokPerSec,
+			}
+			scores = append(scores, scoreEntry)
+			totalScore += score
+			totalTokSec += tokPerSec
+
+			conn.WriteJSON(map[string]any{
+				"phase":        "score",
+				"model":        modelName,
+				"dimension_id": dim.ID,
+				"name":         dim.Name,
+				"score":        score,
+				"max_score":    10,
+				"reasoning":    reasoning,
+				"token_count":  tokenCount,
+				"duration_ms":  elapsed,
+				"tok_per_sec":  tokPerSec,
+				"progress":     step,
+				"total":        totalSteps,
+			})
+		}
+
+		maxTotal := len(benchmarkDimensions) * 10
+		percentage := (totalScore / float64(maxTotal)) * 100
+		avgTokSec := totalTokSec / float64(len(benchmarkDimensions))
+
+		scoresJSON, _ := json.Marshal(scores)
+		h.metaStore().SaveBenchmarkResult(modelName, string(scoresJSON), totalScore, maxTotal, percentage, avgTokSec)
+
+		result := map[string]any{
+			"model_name":  modelName,
+			"scores":      scores,
+			"total_score":  totalScore,
+			"max_total":    maxTotal,
+			"percentage":   percentage,
+			"avg_tok_sec":  avgTokSec,
+		}
+		allResults = append(allResults, result)
+	}
+
+	conn.WriteJSON(map[string]any{
+		"phase":   "done",
+		"results": allResults,
+	})
+}
+
+// ListBenchmarkResults returns the latest benchmark result for each model.
+func (h *APIHandler) ListBenchmarkResults(w http.ResponseWriter, r *http.Request) {
+	results := h.metaStore().ListBenchmarkResults()
+	if results == nil {
+		results = []map[string]any{}
+	}
+	jsonResponse(w, results)
+}

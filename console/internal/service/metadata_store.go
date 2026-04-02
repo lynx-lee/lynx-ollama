@@ -76,6 +76,18 @@ func (s *MetadataStore) migrate() error {
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
+
+		CREATE TABLE IF NOT EXISTS benchmark_results (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			model_name TEXT NOT NULL,
+			scores     TEXT NOT NULL DEFAULT '[]',
+			total_score REAL DEFAULT 0,
+			max_total  INTEGER DEFAULT 0,
+			percentage REAL DEFAULT 0,
+			avg_tok_sec REAL DEFAULT 0,
+			run_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_benchmark_model ON benchmark_results(model_name);
 	`)
 	return err
 }
@@ -499,4 +511,59 @@ func containsAny(s string, substrs ...string) bool {
 		}
 	}
 	return false
+}
+
+// ── Benchmark Results ──────────────────────────────────────────
+
+// SaveBenchmarkResult stores a benchmark result.
+func (s *MetadataStore) SaveBenchmarkResult(modelName string, scoresJSON string, totalScore float64, maxTotal int, percentage float64, avgTokSec float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		INSERT INTO benchmark_results (model_name, scores, total_score, max_total, percentage, avg_tok_sec)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, modelName, scoresJSON, totalScore, maxTotal, percentage, avgTokSec)
+	if err != nil {
+		slog.Warn("failed to save benchmark result", "model", modelName, "error", err)
+	}
+}
+
+// ListBenchmarkResults returns the latest benchmark result for each model.
+func (s *MetadataStore) ListBenchmarkResults() []map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT model_name, scores, total_score, max_total, percentage, avg_tok_sec, run_at
+		FROM benchmark_results
+		WHERE id IN (SELECT MAX(id) FROM benchmark_results GROUP BY model_name)
+		ORDER BY percentage DESC
+	`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var results []map[string]any
+	for rows.Next() {
+		var modelName, scoresJSON, runAt string
+		var totalScore, percentage, avgTokSec float64
+		var maxTotal int
+		if rows.Scan(&modelName, &scoresJSON, &totalScore, &maxTotal, &percentage, &avgTokSec, &runAt) != nil {
+			continue
+		}
+		var scores []any
+		json.Unmarshal([]byte(scoresJSON), &scores)
+		results = append(results, map[string]any{
+			"model_name":  modelName,
+			"scores":      scores,
+			"total_score":  totalScore,
+			"max_total":    maxTotal,
+			"percentage":   percentage,
+			"avg_tok_sec":  avgTokSec,
+			"run_at":       runAt,
+		})
+	}
+	return results
 }

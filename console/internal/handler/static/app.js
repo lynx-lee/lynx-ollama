@@ -164,6 +164,7 @@ function switchPage(page) {
         case 'models': loadModels(); break;
         case 'chat': initChat(); break;
         case 'compare': initCompare(); break;
+        case 'benchmark': initBenchmark(); break;
         case 'health': break; // Manual trigger
         case 'logs': loadLogs(); break;
         case 'config': loadConfig(); break;
@@ -743,6 +744,7 @@ function renderModels() {
                                 <td>${m.quantization || '--'}</td>
                                 <td>${formatTime(m.modified_at)}</td>
                                 <td>
+                                    <button class="btn btn-sm" onclick="testModel('${escapeAttr(m.name)}')" title="测试">💬</button>
                                     <button class="btn btn-sm" onclick="showModelInfo('${escapeAttr(m.name)}')" title="详情">📋</button>
                                     <button class="btn btn-sm btn-danger" onclick="deleteModel('${escapeAttr(m.name)}')" title="删除">🗑</button>
                                 </td>
@@ -832,6 +834,26 @@ async function deleteModel(name) {
     } catch (err) {
         showToast('删除失败: ' + err.message, 'error');
     }
+}
+
+// testModel navigates to chat page and pre-selects the given model.
+function testModel(name) {
+    switchPage('chat');
+    // Wait a tick for initChat to populate the select options
+    setTimeout(() => {
+        const sel = document.getElementById('chatModelSelect');
+        sel.value = name;
+        if (sel.value !== name) {
+            // Model might not be in options yet; add it
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            sel.appendChild(opt);
+            sel.value = name;
+        }
+        // Trigger model change to load presets
+        if (typeof onChatModelChange === 'function') onChatModelChange();
+    }, 100);
 }
 
 // ── Model Tab Switching ─────────────────────────────────────────
@@ -1703,22 +1725,200 @@ function exportChatSession(id, format) {
 
 async function exportCurrentChat() {
     if (chatMessages.length === 0) { showToast('当前无对话内容', 'info'); return; }
-    await autoSaveSession();
-    if (currentSessionId) {
-        exportChatSession(currentSessionId, 'md');
-    } else {
-        // Fallback: client-side export
-        let md = '# 对话导出\\n\\n';
-        for (const m of chatMessages) {
+    // Show format picker
+    showExportMenu();
+}
+
+function showExportMenu() {
+    // Remove existing menu
+    const old = document.getElementById('chatExportMenu');
+    if (old) { old.remove(); return; }
+
+    const btn = document.getElementById('chatExportBtn');
+    const menu = document.createElement('div');
+    menu.id = 'chatExportMenu';
+    menu.className = 'chat-export-menu';
+    menu.innerHTML = `
+        <button onclick="doChatExport('text')">📋 复制为文本</button>
+        <button onclick="doChatExport('md')">📝 复制为 Markdown</button>
+        <button onclick="doChatExport('md-file')">💾 下载 Markdown</button>
+        <button onclick="doChatExport('json-file')">💾 下载 JSON</button>
+        <button onclick="doChatExport('image')">🖼 截图为图片</button>
+    `;
+    btn.parentElement.style.position = 'relative';
+    btn.parentElement.appendChild(menu);
+    // Close on outside click
+    setTimeout(() => {
+        document.addEventListener('click', function closeMenu(e) {
+            if (!menu.contains(e.target) && e.target !== btn) {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+            }
+        });
+    }, 10);
+}
+
+async function doChatExport(format) {
+    const menu = document.getElementById('chatExportMenu');
+    if (menu) menu.remove();
+
+    if (format === 'text') {
+        const text = chatMessages.map(m => {
             const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : '系统';
-            md += `## ${role}\\n\\n${m.content}\\n\\n---\\n\\n`;
+            return `【${role}】\n${m.content}`;
+        }).join('\n\n');
+        await navigator.clipboard.writeText(text);
+        showToast('已复制为文本', 'success');
+    } else if (format === 'md') {
+        const md = chatMessages.map(m => {
+            const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : '系统';
+            return `## ${role}\n\n${m.content}`;
+        }).join('\n\n---\n\n');
+        await navigator.clipboard.writeText('# 对话记录\n\n' + md);
+        showToast('已复制为 Markdown', 'success');
+    } else if (format === 'md-file') {
+        await autoSaveSession();
+        if (currentSessionId) {
+            exportChatSession(currentSessionId, 'md');
+        } else {
+            let md = '# 对话导出\n\n';
+            for (const m of chatMessages) {
+                const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : '系统';
+                md += `## ${role}\n\n${m.content}\n\n---\n\n`;
+            }
+            downloadBlob(md, 'chat_export.md', 'text/markdown');
         }
-        const blob = new Blob([md], { type: 'text/markdown' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'chat_export.md';
-        a.click();
+    } else if (format === 'json-file') {
+        await autoSaveSession();
+        if (currentSessionId) {
+            exportChatSession(currentSessionId, 'json');
+        } else {
+            const json = JSON.stringify(chatMessages, null, 2);
+            downloadBlob(json, 'chat_export.json', 'application/json');
+        }
+    } else if (format === 'image') {
+        captureChat();
     }
+}
+
+function downloadBlob(content, filename, type) {
+    const blob = new Blob([content], { type });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+// Capture chat area as image using canvas
+function captureChat() {
+    const el = document.getElementById('chatMessages');
+    if (!el || el.children.length === 0) { showToast('无内容可截图', 'info'); return; }
+    showToast('正在生成截图...', 'info');
+
+    // Use a simple approach: serialize to canvas via html2canvas-like technique
+    // Since we can't import external libs, we'll create a styled HTML and convert via SVG foreignObject
+    const clone = el.cloneNode(true);
+    clone.style.position = 'absolute';
+    clone.style.left = '-9999px';
+    clone.style.width = el.offsetWidth + 'px';
+    clone.style.height = 'auto';
+    clone.style.maxHeight = 'none';
+    clone.style.overflow = 'visible';
+    document.body.appendChild(clone);
+
+    // Get computed styles
+    const styles = document.querySelectorAll('style, link[rel="stylesheet"]');
+    let cssText = '';
+    styles.forEach(s => {
+        if (s.tagName === 'STYLE') cssText += s.textContent;
+    });
+
+    const width = el.offsetWidth;
+    const height = clone.scrollHeight;
+
+    const svgData = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+        <foreignObject width="100%" height="100%">
+            <div xmlns="http://www.w3.org/1999/xhtml">
+                <style>${cssText}</style>
+                ${clone.outerHTML}
+            </div>
+        </foreignObject>
+    </svg>`;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width * 2;
+    canvas.height = height * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+
+    const img = new Image();
+    img.onload = () => {
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(blob => {
+            if (blob) {
+                // Copy to clipboard if supported
+                if (navigator.clipboard && navigator.clipboard.write) {
+                    navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(
+                        () => showToast('截图已复制到剪贴板', 'success'),
+                        () => {
+                            // Fallback: download
+                            const a = document.createElement('a');
+                            a.href = URL.createObjectURL(blob);
+                            a.download = 'chat_screenshot.png';
+                            a.click();
+                            showToast('截图已下载', 'success');
+                        }
+                    );
+                } else {
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'chat_screenshot.png';
+                    a.click();
+                    showToast('截图已下载', 'success');
+                }
+            }
+            clone.remove();
+        }, 'image/png');
+    };
+    img.onerror = () => {
+        showToast('截图生成失败，已切换为下载 Markdown', 'warning');
+        clone.remove();
+        doChatExport('md-file');
+    };
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData);
+}
+
+// Copy a single chat bubble content
+function copyChatBubble(btn, format) {
+    const bubble = btn.closest('.chat-bubble');
+    const textEl = bubble.querySelector('.chat-bubble-text');
+    if (!textEl) return;
+
+    // Find the message index from the DOM
+    const msgEl = btn.closest('.chat-message');
+    const container = document.getElementById('chatMessages');
+    const allMsgs = Array.from(container.querySelectorAll('.chat-message'));
+    const idx = allMsgs.indexOf(msgEl);
+    const msg = idx >= 0 && idx < chatMessages.length ? chatMessages[idx] : null;
+
+    let text;
+    if (format === 'md' && msg) {
+        text = msg.content; // raw markdown
+    } else if (msg) {
+        text = msg.content;
+    } else {
+        text = textEl.innerText;
+    }
+
+    navigator.clipboard.writeText(text).then(
+        () => {
+            const orig = btn.textContent;
+            btn.textContent = '✅';
+            setTimeout(() => btn.textContent = orig, 1500);
+        },
+        () => showToast('复制失败', 'error')
+    );
 }
 
 function toggleChatSettings() {
@@ -2230,9 +2430,9 @@ function appendChatBubble(role, content, fileInfos) {
     }
 
     if (role === 'user') {
-        bubble.innerHTML = `<div class="chat-bubble chat-bubble-user">${filesHtml}<div class="chat-bubble-text">${escapeHtml(content)}</div></div>`;
+        bubble.innerHTML = `<div class="chat-bubble chat-bubble-user">${filesHtml}<div class="chat-bubble-text">${escapeHtml(content)}</div><div class="chat-bubble-actions"><button class="chat-copy-btn" onclick="copyChatBubble(this,'text')" title="复制文本">📋</button></div></div>`;
     } else {
-        bubble.innerHTML = `<div class="chat-bubble chat-bubble-assistant"><div class="chat-bubble-text chat-md-content">${content ? renderChatMarkdown(content) : '<span class="chat-typing">●●●</span>'}</div></div>`;
+        bubble.innerHTML = `<div class="chat-bubble chat-bubble-assistant"><div class="chat-bubble-text chat-md-content">${content ? renderChatMarkdown(content) : '<span class="chat-typing">●●●</span>'}</div><div class="chat-bubble-actions"><button class="chat-copy-btn" onclick="copyChatBubble(this,'text')" title="复制文本">📋</button><button class="chat-copy-btn" onclick="copyChatBubble(this,'md')" title="复制 Markdown">📝</button></div></div>`;
     }
     container.appendChild(bubble);
     container.scrollTop = container.scrollHeight;
@@ -2369,9 +2569,156 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     // Show auth screen (already visible by default)
 
+// ── Benchmark Module ────────────────────────────────────────────
+let benchmarkWs = null;
+
+function initBenchmark() {
+    const models = (currentStatus && currentStatus.models) || _allModels || [];
+    const container = document.getElementById('benchmarkModelSelect');
+    if (!models.length) {
+        container.innerHTML = '<div class="empty-state">暂无模型</div>';
+        return;
+    }
+    container.innerHTML = models
+        .filter(m => m.name && !m.name.includes(':cloud') && !m.name.toLowerCase().includes('embed'))
+        .map(m => `<label class="benchmark-model-check"><input type="checkbox" value="${escapeAttr(m.name)}"><span>${escapeHtml(m.name)}</span><span style="color:var(--text-muted);font-size:11px;margin-left:8px">${m.size_human || ''}</span></label>`)
+        .join('');
+
+    // Load existing results
+    loadBenchmarkResults();
+}
+
+async function loadBenchmarkResults() {
+    try {
+        const results = await api('/api/benchmark/results');
+        if (results && results.length > 0) {
+            renderBenchmarkResults(results);
+        }
+    } catch { /* ignore */ }
+}
+
+function startBenchmark() {
+    const checkboxes = document.querySelectorAll('#benchmarkModelSelect input[type="checkbox"]:checked');
+    const models = Array.from(checkboxes).map(cb => cb.value);
+    if (models.length === 0) { showToast('请至少选择一个模型', 'error'); return; }
+
+    document.getElementById('benchmarkStartBtn').disabled = true;
+    document.getElementById('benchmarkProgressCard').style.display = '';
+    document.getElementById('benchmarkProgressFill').style.width = '0%';
+    document.getElementById('benchmarkProgressText').textContent = '正在连接...';
+
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    benchmarkWs = new WebSocket(`${wsProtocol}//${location.host}/api/ws/benchmark?key=${encodeURIComponent(getApiKey())}`);
+
+    benchmarkWs.onopen = () => {
+        benchmarkWs.send(JSON.stringify({ models }));
+    };
+
+    benchmarkWs.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            switch (data.phase) {
+                case 'testing':
+                    document.getElementById('benchmarkProgressFill').style.width = `${(data.progress / data.total) * 100}%`;
+                    document.getElementById('benchmarkProgressText').textContent = `正在测试 ${data.model} — ${data.dimension} (${data.progress}/${data.total})`;
+                    break;
+                case 'score':
+                    document.getElementById('benchmarkProgressFill').style.width = `${(data.progress / data.total) * 100}%`;
+                    break;
+                case 'done':
+                    document.getElementById('benchmarkProgressFill').style.width = '100%';
+                    document.getElementById('benchmarkProgressText').textContent = '评测完成！';
+                    document.getElementById('benchmarkStartBtn').disabled = false;
+                    renderBenchmarkResults(data.results);
+                    benchmarkWs.close();
+                    break;
+                case 'error':
+                    showToast('评测错误: ' + data.error, 'error');
+                    document.getElementById('benchmarkStartBtn').disabled = false;
+                    benchmarkWs.close();
+                    break;
+            }
+        } catch { /* ignore */ }
+    };
+
+    benchmarkWs.onerror = () => {
+        showToast('评测连接失败', 'error');
+        document.getElementById('benchmarkStartBtn').disabled = false;
+    };
+    benchmarkWs.onclose = () => { benchmarkWs = null; };
+}
+
+function renderBenchmarkResults(results) {
+    if (!results || results.length === 0) return;
+    const body = document.getElementById('benchmarkResultsBody');
+
+    // Dimension icons
+    const dimIcons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳' };
+
+    // Leaderboard table
+    let html = `<div class="table-container"><table class="benchmark-table">
+        <thead><tr><th>排名</th><th>模型</th><th>总分</th><th>百分比</th><th>平均速度</th>`;
+
+    // Add dimension columns from first result
+    if (results[0].scores) {
+        results[0].scores.forEach(s => {
+            const icon = dimIcons[s.dimension_id] || '📋';
+            html += `<th title="${s.name || s.dimension_id}">${icon}</th>`;
+        });
+    }
+    html += `<th>时间</th></tr></thead><tbody>`;
+
+    // Sort by percentage desc
+    const sorted = [...results].sort((a, b) => (b.percentage || 0) - (a.percentage || 0));
+    sorted.forEach((r, i) => {
+        const pct = (r.percentage || 0).toFixed(1);
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
+        const barColor = pct >= 80 ? 'var(--accent-green)' : pct >= 60 ? 'var(--accent-yellow,#f0ad4e)' : 'var(--accent-red)';
+        html += `<tr>
+            <td style="text-align:center">${medal}</td>
+            <td><strong>${escapeHtml(r.model_name)}</strong></td>
+            <td>${(r.total_score || 0).toFixed(1)} / ${r.max_total || 60}</td>
+            <td><div style="display:flex;align-items:center;gap:6px"><div style="flex:1;height:6px;background:var(--bg-secondary);border-radius:3px"><div style="width:${pct}%;height:100%;background:${barColor};border-radius:3px"></div></div><span style="min-width:40px">${pct}%</span></div></td>
+            <td>${(r.avg_tok_sec || 0).toFixed(1)} tok/s</td>`;
+        if (r.scores) {
+            r.scores.forEach(s => {
+                const sc = (s.score || 0).toFixed(0);
+                const clr = s.score >= 8 ? 'var(--accent-green)' : s.score >= 5 ? 'var(--accent-yellow,#f0ad4e)' : 'var(--accent-red)';
+                html += `<td style="text-align:center"><span style="color:${clr};font-weight:600" title="${s.reasoning || ''}">${sc}</span></td>`;
+            });
+        }
+        html += `<td style="font-size:11px;color:var(--text-muted)">${r.run_at ? new Date(r.run_at).toLocaleString('zh-CN') : '--'}</td></tr>`;
+    });
+
+    html += '</tbody></table></div>';
+
+    // Detail cards for each model
+    sorted.forEach(r => {
+        if (!r.scores) return;
+        html += `<div class="card" style="margin-top:12px">
+            <div class="card-header"><h3>${escapeHtml(r.model_name)} — 详细评分</h3></div>
+            <div class="benchmark-detail-grid">`;
+        r.scores.forEach(s => {
+            const icon = dimIcons[s.dimension_id] || '📋';
+            const pct = ((s.score / (s.max_score || 10)) * 100).toFixed(0);
+            html += `<div class="benchmark-dim-card">
+                <div class="benchmark-dim-header">${icon} ${s.name || s.dimension_id} <span style="float:right;font-weight:600">${(s.score||0).toFixed(1)}/10</span></div>
+                <div class="progress-bar" style="height:4px;margin:6px 0"><div class="progress-fill" style="width:${pct}%"></div></div>
+                <div style="font-size:11px;color:var(--text-muted)">${s.reasoning || ''}</div>
+                ${s.tok_per_sec ? `<div style="font-size:11px;color:var(--text-muted)">${s.token_count || 0} tokens · ${((s.duration_ms||0)/1000).toFixed(1)}s · ${(s.tok_per_sec||0).toFixed(1)} tok/s</div>` : ''}
+            </div>`;
+        });
+        html += '</div></div>';
+    });
+
+    body.innerHTML = html;
+}
+
 // ── Model Compare Module ────────────────────────────────────────
 let compareWsA = null, compareWsB = null;
 let compareResponseA = '', compareResponseB = '';
+let compareThinkingA = '', compareThinkingB = '';
+let compareStreaming = false;
 
 function initCompare() {
     const models = (currentStatus && currentStatus.models) || _allModels || [];
@@ -2391,6 +2738,11 @@ function initCompare() {
     });
 }
 
+function toggleCompareSettings() {
+    const panel = document.getElementById('compareSettingsPanel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
 function sendCompare() {
     const modelA = document.getElementById('compareModelA').value;
     const modelB = document.getElementById('compareModelB').value;
@@ -2402,14 +2754,37 @@ function sendCompare() {
     document.getElementById('compareLabelA').textContent = modelA;
     document.getElementById('compareLabelB').textContent = modelB;
 
-    // Start both streams
+    // Collect settings
+    const systemPrompt = document.getElementById('compareSystemPrompt').value.trim();
+    const temperature = parseFloat(document.getElementById('compareTemperature').value);
+    const think = document.getElementById('compareThinkMode').checked;
+
     compareResponseA = '';
     compareResponseB = '';
-    startCompareStream('A', modelA, prompt);
-    startCompareStream('B', modelB, prompt);
+    compareThinkingA = '';
+    compareThinkingB = '';
+    compareStreaming = true;
+
+    // Toggle buttons
+    document.getElementById('compareSendBtn').style.display = 'none';
+    document.getElementById('compareStopBtn').style.display = '';
+
+    startCompareStream('A', modelA, prompt, systemPrompt, temperature, think);
+    startCompareStream('B', modelB, prompt, systemPrompt, temperature, think);
 }
 
-function startCompareStream(side, model, prompt) {
+let compareDoneCount = 0;
+function onCompareStreamEnd() {
+    compareDoneCount++;
+    if (compareDoneCount >= 2) {
+        compareStreaming = false;
+        compareDoneCount = 0;
+        document.getElementById('compareSendBtn').style.display = '';
+        document.getElementById('compareStopBtn').style.display = 'none';
+    }
+}
+
+function startCompareStream(side, model, prompt, systemPrompt, temperature, think) {
     const outputEl = document.getElementById(`compareOutput${side}`);
     const statsEl = document.getElementById(`compareStats${side}`);
     outputEl.innerHTML = '<span class="chat-typing">●●●</span>';
@@ -2422,47 +2797,119 @@ function startCompareStream(side, model, prompt) {
     else { if (compareWsB) compareWsB.close(); compareWsB = ws; }
 
     let response = '';
+    let thinking = '';
+    const startTime = Date.now();
+
     ws.onopen = () => {
-        ws.send(JSON.stringify({
-            type: 'chat', model: model,
-            messages: [{ role: 'user', content: prompt }],
-            options: {},
-        }));
+        const messages = [];
+        if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+        messages.push({ role: 'user', content: prompt });
+
+        const payload = {
+            type: 'chat', model,
+            messages,
+            options: { temperature },
+        };
+        if (think) payload.think = true;
+        ws.send(JSON.stringify(payload));
     };
+
     ws.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
             switch (data.type) {
                 case 'token':
                     response += data.content;
+                    if (side === 'A') compareResponseA = response; else compareResponseB = response;
                     outputEl.innerHTML = renderChatMarkdown(response) + '<span class="chat-typing-cursor">▌</span>';
+                    outputEl.scrollTop = outputEl.scrollHeight;
                     break;
-                case 'done':
-                    outputEl.innerHTML = renderChatMarkdown(response);
-                    if (data.eval_count && data.total_duration) {
-                        const secs = data.total_duration / 1e9;
+                case 'thinking':
+                    thinking += data.content;
+                    if (side === 'A') compareThinkingA = thinking; else compareThinkingB = thinking;
+                    break;
+                case 'done': {
+                    let thinkHtml = '';
+                    if (thinking) {
+                        thinkHtml = `<details class="chat-thinking-block"><summary>🧠 思维链 (${thinking.length} 字符)</summary><div class="chat-thinking-content">${renderChatMarkdown(thinking)}</div></details>`;
+                    }
+                    outputEl.innerHTML = thinkHtml + renderChatMarkdown(response);
+                    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                    if (data.eval_count && data.eval_duration) {
                         const tps = (data.eval_count / (data.eval_duration / 1e9)).toFixed(1);
-                        statsEl.textContent = `${data.eval_count} tokens · ${secs.toFixed(1)}s · ${tps} tok/s`;
+                        statsEl.innerHTML = `<span class="compare-stat-item">📊 ${data.eval_count} tokens</span><span class="compare-stat-item">⏱ ${elapsed}s</span><span class="compare-stat-item">⚡ ${tps} tok/s</span>`;
+                    } else {
+                        statsEl.innerHTML = `<span class="compare-stat-item">⏱ ${elapsed}s</span>`;
                     }
                     ws.close();
+                    onCompareStreamEnd();
+                    break;
+                }
+                case 'stopped':
+                    outputEl.innerHTML = renderChatMarkdown(response) + '<div style="color:var(--text-muted);font-style:italic;margin-top:8px">⏹ 已停止</div>';
+                    onCompareStreamEnd();
                     break;
                 case 'error':
                     outputEl.innerHTML = `<span style="color:var(--accent-red)">${friendlyChatError(data.error)}</span>`;
                     ws.close();
+                    onCompareStreamEnd();
                     break;
             }
         } catch { /* ignore */ }
     };
-    ws.onerror = () => { outputEl.innerHTML = '<span style="color:var(--accent-red)">连接失败</span>'; };
+    ws.onerror = () => {
+        outputEl.innerHTML = '<span style="color:var(--accent-red)">连接失败</span>';
+        onCompareStreamEnd();
+    };
+}
+
+function stopCompare() {
+    [compareWsA, compareWsB].forEach(ws => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'stop' }));
+        }
+    });
 }
 
 function clearCompare() {
-    if (compareWsA) { compareWsA.close(); compareWsA = null; }
-    if (compareWsB) { compareWsB.close(); compareWsB = null; }
+    stopCompare();
+    compareWsA = null;
+    compareWsB = null;
+    compareResponseA = '';
+    compareResponseB = '';
+    compareThinkingA = '';
+    compareThinkingB = '';
+    compareDoneCount = 0;
+    compareStreaming = false;
+    document.getElementById('compareSendBtn').style.display = '';
+    document.getElementById('compareStopBtn').style.display = 'none';
     document.getElementById('compareOutputA').innerHTML = '<div class="chat-empty-state"><div class="chat-empty-text">等待输入</div></div>';
     document.getElementById('compareOutputB').innerHTML = '<div class="chat-empty-state"><div class="chat-empty-text">等待输入</div></div>';
     document.getElementById('compareStatsA').textContent = '';
     document.getElementById('compareStatsB').textContent = '';
     document.getElementById('compareInput').value = '';
+}
+
+function copySingleCompare(side) {
+    const resp = side === 'A' ? compareResponseA : compareResponseB;
+    if (!resp) { showToast('无内容可复制', 'info'); return; }
+    navigator.clipboard.writeText(resp).then(
+        () => showToast('已复制', 'success'),
+        () => showToast('复制失败', 'error')
+    );
+}
+
+function copyCompareResult() {
+    const modelA = document.getElementById('compareModelA').value || '模型 A';
+    const modelB = document.getElementById('compareModelB').value || '模型 B';
+    const prompt = document.getElementById('compareInput').value.trim();
+    if (!compareResponseA && !compareResponseB) { showToast('无内容可复制', 'info'); return; }
+    const statsA = document.getElementById('compareStatsA').textContent;
+    const statsB = document.getElementById('compareStatsB').textContent;
+    const md = `# 模型对比\n\n**Prompt:** ${prompt}\n\n---\n\n## ${modelA}\n${statsA ? `> ${statsA}\n\n` : ''}${compareResponseA}\n\n---\n\n## ${modelB}\n${statsB ? `> ${statsB}\n\n` : ''}${compareResponseB}`;
+    navigator.clipboard.writeText(md).then(
+        () => showToast('对比结果已复制为 Markdown', 'success'),
+        () => showToast('复制失败', 'error')
+    );
 }
 });

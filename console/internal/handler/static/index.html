@@ -72,6 +72,10 @@
                     <span class="nav-icon">⚖️</span>
                     <span>模型对比</span>
                 </li>
+                <li class="nav-item" data-page="benchmark">
+                    <span class="nav-icon">📊</span>
+                    <span>能力评测</span>
+                </li>
                 <li class="nav-item" data-page="health">
                     <span class="nav-icon">🩺</span>
                     <span>健康检查</span>
@@ -379,6 +383,27 @@
             <!-- Model Compare Page -->
             <div class="page" id="page-compare">
                 <div class="compare-page">
+                    <div class="page-header" style="padding:12px 16px 0">
+                        <h2>模型对比</h2>
+                        <div class="header-actions">
+                            <button class="btn btn-sm" onclick="toggleCompareSettings()" title="对比设置" id="compareSettingsBtn">⚙️ 设置</button>
+                            <button class="btn btn-sm" onclick="copyCompareResult()" title="复制对比结果">📋 复制结果</button>
+                        </div>
+                    </div>
+                    <!-- Settings panel (collapsible) -->
+                    <div class="compare-settings" id="compareSettingsPanel" style="display:none">
+                        <div class="compare-setting-row">
+                            <label>System Prompt</label>
+                            <textarea id="compareSystemPrompt" class="chat-setting-textarea" rows="2" placeholder="可选：设置系统角色提示词..."></textarea>
+                        </div>
+                        <div class="compare-setting-row">
+                            <label>Temperature <span id="compareTempVal" class="chat-setting-val">0.7</span></label>
+                            <input type="range" id="compareTemperature" min="0" max="2" step="0.1" value="0.7" oninput="document.getElementById('compareTempVal').textContent=this.value">
+                        </div>
+                        <div class="compare-setting-row">
+                            <label class="chat-setting-toggle"><input type="checkbox" id="compareThinkMode"><span>Thinking 模式</span></label>
+                        </div>
+                    </div>
                     <div class="compare-toolbar">
                         <select id="compareModelA" class="chat-model-select" style="max-width:200px">
                             <option value="">模型 A</option>
@@ -387,26 +412,71 @@
                         <select id="compareModelB" class="chat-model-select" style="max-width:200px">
                             <option value="">模型 B</option>
                         </select>
-                        <button class="btn btn-primary btn-sm" onclick="sendCompare()">发送对比</button>
-                        <button class="btn btn-sm" onclick="clearCompare()">清空</button>
+                        <button class="btn btn-primary btn-sm" id="compareSendBtn" onclick="sendCompare()">▶ 发送对比</button>
+                        <button class="btn btn-danger btn-sm" id="compareStopBtn" onclick="stopCompare()" style="display:none">⏹ 停止</button>
+                        <button class="btn btn-sm" onclick="clearCompare()">🗑 清空</button>
                     </div>
                     <div class="compare-input-area">
-                        <textarea id="compareInput" class="chat-input" placeholder="输入相同的 prompt 发送到两个模型..." rows="2" style="width:100%"></textarea>
+                        <textarea id="compareInput" class="chat-input" placeholder="输入相同的 prompt 发送到两个模型...（Enter 发送，Shift+Enter 换行）" rows="2" style="width:100%" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendCompare()}"></textarea>
                     </div>
                     <div class="compare-panels">
                         <div class="compare-panel">
-                            <div class="compare-panel-header" id="compareLabelA">模型 A</div>
+                            <div class="compare-panel-header">
+                                <span id="compareLabelA">模型 A</span>
+                                <button class="chat-copy-btn" onclick="copySingleCompare('A')" title="复制此模型输出">📋</button>
+                            </div>
                             <div class="compare-panel-body chat-md-content" id="compareOutputA">
                                 <div class="chat-empty-state"><div class="chat-empty-text">等待输入</div></div>
                             </div>
                             <div class="compare-panel-stats" id="compareStatsA"></div>
                         </div>
                         <div class="compare-panel">
-                            <div class="compare-panel-header" id="compareLabelB">模型 B</div>
+                            <div class="compare-panel-header">
+                                <span id="compareLabelB">模型 B</span>
+                                <button class="chat-copy-btn" onclick="copySingleCompare('B')" title="复制此模型输出">📋</button>
+                            </div>
                             <div class="compare-panel-body chat-md-content" id="compareOutputB">
                                 <div class="chat-empty-state"><div class="chat-empty-text">等待输入</div></div>
                             </div>
                             <div class="compare-panel-stats" id="compareStatsB"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Benchmark Page -->
+            <div class="page" id="page-benchmark">
+                <div class="page-header">
+                    <h2>能力评测</h2>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="startBenchmark()" id="benchmarkStartBtn">🚀 开始评测</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><h3>📋 选择评测模型</h3></div>
+                    <div class="benchmark-model-select" id="benchmarkModelSelect">
+                        <div class="empty-state">加载中...</div>
+                    </div>
+                </div>
+
+                <!-- Progress -->
+                <div class="card" id="benchmarkProgressCard" style="display:none">
+                    <div class="card-header"><h3>⏳ 评测进度</h3></div>
+                    <div class="progress-bar" style="margin:12px"><div class="progress-fill" id="benchmarkProgressFill"></div></div>
+                    <div class="progress-text" id="benchmarkProgressText" style="padding:0 12px 12px;font-size:13px">准备中...</div>
+                </div>
+
+                <!-- Results -->
+                <div id="benchmarkResults">
+                    <div class="card">
+                        <div class="card-header"><h3>📊 评测结果</h3></div>
+                        <div id="benchmarkResultsBody">
+                            <div class="empty-state">选择模型后点击「开始评测」<br><br>
+                                <strong>评测维度（6 项，每项 10 分）：</strong><br>
+                                🧠 逻辑推理 · 🔢 数学计算 · 💻 代码能力<br>
+                                ✍️ 创意写作 · 📏 指令遵循 · 🇨🇳 中文能力
+                            </div>
                         </div>
                     </div>
                 </div>

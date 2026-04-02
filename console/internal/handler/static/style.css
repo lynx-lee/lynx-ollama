@@ -1705,14 +1705,6 @@ tbody tr:hover { background: var(--bg-hover); }
     border-right: 1px solid var(--border-color);
 }
 .compare-panel:last-child { border-right: none; }
-.compare-panel-header {
-    padding: 8px 12px;
-    font-size: 13px;
-    font-weight: 600;
-    background: var(--bg-card);
-    border-bottom: 1px solid var(--border-color);
-    flex-shrink: 0;
-}
 .compare-panel-body {
     flex: 1;
     overflow-y: auto;
@@ -1721,17 +1713,164 @@ tbody tr:hover { background: var(--bg-hover); }
     line-height: 1.7;
 }
 .compare-panel-stats {
-    padding: 4px 12px;
-    font-size: 11px;
+    padding: 6px 12px;
+    font-size: 12px;
     color: var(--text-muted);
     border-top: 1px solid var(--border-color);
     flex-shrink: 0;
-    min-height: 20px;
+    min-height: 24px;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.compare-stat-item { white-space: nowrap; }
+
+.compare-settings {
+    padding: 8px 16px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-card);
+}
+.compare-setting-row {
+    margin-bottom: 8px;
+}
+.compare-setting-row label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+}
+.compare-setting-row textarea {
+    width: 100%;
+    font-size: 13px;
+}
+.compare-setting-row input[type="range"] {
+    width: 200px;
+}
+
+.compare-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+    background: var(--bg-card);
+}
+
+/* ── Chat bubble copy actions ──────────────────────────────────── */
+.chat-bubble {
+    position: relative;
+}
+.chat-bubble-actions {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: none;
+    gap: 2px;
+}
+.chat-bubble:hover .chat-bubble-actions {
+    display: flex;
+}
+.chat-copy-btn {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 11px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+}
+.chat-copy-btn:hover {
+    opacity: 1;
+}
+
+/* ── Chat export menu ──────────────────────────────────────────── */
+.chat-export-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 100;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    min-width: 180px;
+    padding: 4px 0;
+}
+.chat-export-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 16px;
+    border: none;
+    background: none;
+    color: var(--text-primary);
+    font-size: 13px;
+    cursor: pointer;
+}
+.chat-export-menu button:hover {
+    background: var(--bg-hover);
 }
 
 @media (max-width: 768px) {
     .compare-panels { grid-template-columns: 1fr; }
     .compare-panel { border-right: none; border-bottom: 1px solid var(--border-color); }
+}
+
+/* ── Benchmark ───────────────────────────────────────────────── */
+.benchmark-model-select {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px;
+}
+.benchmark-model-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 13px;
+    transition: border-color 0.15s;
+}
+.benchmark-model-check:hover {
+    border-color: var(--accent-blue);
+}
+.benchmark-model-check input:checked + span {
+    color: var(--accent-blue);
+    font-weight: 600;
+}
+.benchmark-table {
+    width: 100%;
+    font-size: 13px;
+}
+.benchmark-table th {
+    font-size: 12px;
+    white-space: nowrap;
+}
+.benchmark-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+    padding: 12px;
+}
+.benchmark-dim-card {
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+}
+.benchmark-dim-header {
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 4px;
 }
 
 /* ── Chat responsive ─────────────────────────────────────────── */
