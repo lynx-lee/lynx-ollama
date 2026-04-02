@@ -710,13 +710,16 @@ function renderModels() {
                 <div class="card-header"><h3>☁️ 云端模型 (${cloudModels.length})</h3></div>
                 <div class="table-container">
                     <table>
-                        <thead><tr>${sortableHdr('名称','name')}${sortableHdr('大小','size')}${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
+                        <thead><tr>${sortableHdr('名称','name')}<th>类型</th><th>能力</th>${sortableHdr('大小','size')}${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
                         <tbody>${cloudModels.map(m => `
                             <tr>
                                 <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || '云端推理'}</span></td>
+                                <td>${renderModelType(m.model_type || 'chat')}</td>
+                                <td>${renderModelCaps(m.capabilities || ['cloud'])}</td>
                                 <td>${m.size_human}</td>
                                 <td>${formatTime(m.modified_at)}</td>
                                 <td>
+                                    <button class="btn btn-sm" onclick="testModel('${escapeAttr(m.name)}')" title="测试">💬</button>
                                     <button class="btn btn-sm" onclick="showModelInfo('${escapeAttr(m.name)}')" title="详情">📋</button>
                                     <button class="btn btn-sm btn-danger" onclick="deleteModel('${escapeAttr(m.name)}')" title="删除">🗑</button>
                                 </td>
@@ -770,9 +773,55 @@ async function loadModels() {
     try {
         _allModels = await api('/api/models') || [];
         renderModels();
+        // Async: check model compatibility
+        checkModelCompatibility();
     } catch (err) {
         showToast('加载模型列表失败: ' + err.message, 'error');
     }
+}
+
+async function checkModelCompatibility() {
+    try {
+        const incompatible = await api('/api/models/check');
+        const container = document.getElementById('modelsContainer');
+        // Remove old alert if exists
+        const old = document.getElementById('modelCompatAlert');
+        if (old) old.remove();
+        if (!incompatible || incompatible.length === 0) return;
+
+        const alertHtml = `<div id="modelCompatAlert" class="card" style="border-color:var(--accent-red);background:rgba(239,68,68,0.05)">
+            <div class="card-header"><h3 style="color:var(--accent-red)">⚠️ ${incompatible.length} 个模型需要重新下载</h3></div>
+            <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">以下模型与当前 Ollama 版本不兼容，需要重新拉取才能使用：</p>
+            <div class="table-container"><table>
+                <thead><tr><th>模型名称</th><th>大小</th><th>错误信息</th><th>操作</th></tr></thead>
+                <tbody>${incompatible.map(m => `<tr>
+                    <td><strong style="color:var(--accent-red)">${escapeHtml(m.name)}</strong></td>
+                    <td>${m.size_human || '--'}</td>
+                    <td style="font-size:12px;color:var(--text-muted);max-width:300px">${escapeHtml(m.error)}</td>
+                    <td><button class="btn btn-sm btn-primary" onclick="repullModel('${escapeAttr(m.name)}')">🔄 重新拉取</button></td>
+                </tr>`).join('')}</tbody>
+            </table></div>
+            <div style="margin-top:10px"><button class="btn btn-sm btn-warning" onclick="repullAllIncompatible()">🔄 全部重新拉取</button></div>
+        </div>`;
+        container.insertAdjacentHTML('afterbegin', alertHtml);
+    } catch { /* ignore */ }
+}
+
+function repullModel(name) {
+    document.getElementById('pullModelName').value = name;
+    showPullDialog();
+}
+
+async function repullAllIncompatible() {
+    const rows = document.querySelectorAll('#modelCompatAlert tbody tr');
+    for (const row of rows) {
+        const name = row.querySelector('strong').textContent;
+        showToast(`正在重新拉取 ${name}...`, 'info');
+        try {
+            await api('/api/models/pull', { method: 'POST', body: JSON.stringify({ name }) });
+        } catch { /* ignore, use WS pull for progress */ }
+    }
+    showToast('已提交全部重新拉取请求', 'success');
 }
 
 async function showModelInfo(name) {
@@ -1065,7 +1114,12 @@ function showPullDialog() {
     document.getElementById('pullDialog').style.display = 'flex';
     document.getElementById('pullModelName').focus();
     document.getElementById('pullProgress').style.display = 'none';
-    document.getElementById('pullBtn').disabled = false;
+    const pullBtn = document.getElementById('pullBtn');
+    pullBtn.disabled = false;
+    pullBtn.textContent = '开始拉取';
+    pullBtn.classList.remove('btn-success');
+    pullBtn.classList.add('btn-primary');
+    pullBtn.onclick = startPull;
 }
 
 function closePullDialog() {
@@ -1110,7 +1164,12 @@ async function startPull() {
                     progressFill.style.width = '100%';
                     progressText.textContent = '✅ ' + (data.message || '完成');
                     showToast(`模型 ${name} 下载完成`, 'success');
-                    document.getElementById('pullBtn').disabled = false;
+                    const pullBtn = document.getElementById('pullBtn');
+                    pullBtn.disabled = false;
+                    pullBtn.textContent = '✅ 完成';
+                    pullBtn.classList.remove('btn-primary');
+                    pullBtn.classList.add('btn-success');
+                    pullBtn.onclick = closePullDialog;
                     loadModels();
                     return;
                 }
@@ -1895,7 +1954,7 @@ function copyChatBubble(btn, format) {
     const textEl = bubble.querySelector('.chat-bubble-text');
     if (!textEl) return;
 
-    // Find the message index from the DOM
+    // Find the message index — count only .chat-message elements (skip stats/empty)
     const msgEl = btn.closest('.chat-message');
     const container = document.getElementById('chatMessages');
     const allMsgs = Array.from(container.querySelectorAll('.chat-message'));
@@ -1903,13 +1962,14 @@ function copyChatBubble(btn, format) {
     const msg = idx >= 0 && idx < chatMessages.length ? chatMessages[idx] : null;
 
     let text;
-    if (format === 'md' && msg) {
-        text = msg.content; // raw markdown
-    } else if (msg) {
+    if (msg) {
         text = msg.content;
     } else {
-        text = textEl.innerText;
+        // Fallback: extract visible text from DOM
+        text = textEl.innerText || textEl.textContent || '';
     }
+
+    if (!text) { showToast('无内容可复制', 'info'); return; }
 
     navigator.clipboard.writeText(text).then(
         () => {
@@ -1917,8 +1977,45 @@ function copyChatBubble(btn, format) {
             btn.textContent = '✅';
             setTimeout(() => btn.textContent = orig, 1500);
         },
-        () => showToast('复制失败', 'error')
+        () => {
+            // Fallback for non-HTTPS
+            fallbackCopy(text);
+            const orig = btn.textContent;
+            btn.textContent = '✅';
+            setTimeout(() => btn.textContent = orig, 1500);
+        }
     );
+}
+
+// Copy code block content
+function copyCodeBlock(btn) {
+    const codeEl = btn.parentElement.querySelector('code');
+    if (!codeEl) return;
+    const text = codeEl.textContent || '';
+    navigator.clipboard.writeText(text).then(
+        () => {
+            btn.textContent = '已复制';
+            setTimeout(() => btn.textContent = '复制', 2000);
+        },
+        () => {
+            fallbackCopy(text);
+            btn.textContent = '已复制';
+            setTimeout(() => btn.textContent = '复制', 2000);
+        }
+    );
+}
+
+// Fallback copy for non-HTTPS environments using textarea
+function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta);
+}
 }
 
 function toggleChatSettings() {
@@ -2195,7 +2292,7 @@ function initChat() {
     const currentVal = select.value;
     select.innerHTML = '<option value="">选择模型...</option>';
     models.forEach(m => {
-        if (m.name && !m.name.includes(':cloud') && !m.name.toLowerCase().includes('embed')) {
+        if (m.name && !m.name.toLowerCase().includes('embed')) {
             const opt = document.createElement('option');
             opt.value = m.name;
             opt.textContent = `${m.name} (${m.size_human || ''})`;
@@ -2208,7 +2305,7 @@ function initChat() {
         api('/api/models').then(list => {
             if (list && list.length) {
                 list.forEach(m => {
-                    if (m.name && !m.name.includes(':cloud') && !m.name.toLowerCase().includes('embed')) {
+                    if (m.name && !m.name.toLowerCase().includes('embed')) {
                         const opt = document.createElement('option');
                         opt.value = m.name;
                         opt.textContent = `${m.name} (${m.size_human || ''})`;
@@ -2482,8 +2579,9 @@ function renderChatMarkdown(text) {
 
     // Code blocks: ```lang\n...\n```
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-        const langLabel = lang ? `<span class="chat-code-lang">${lang}</span>` : '';
-        return `<div class="chat-code-block">${langLabel}<pre><code>${code}</code></pre><button class="chat-code-copy" onclick="this.textContent='已复制';navigator.clipboard.writeText(this.parentElement.querySelector('code').textContent);setTimeout(()=>this.textContent='复制',2000)">复制</button></div>`;
+        const langLabel = lang ? `<span class="chat-code-lang">${lang.toUpperCase()}</span>` : '';
+        const highlighted = highlightCode(code, lang);
+        return `<div class="chat-code-block">${langLabel}<pre><code>${highlighted}</code></pre><button class="chat-code-copy" onclick="copyCodeBlock(this)">复制</button></div>`;
     });
 
     // Inline code: `code`
@@ -2546,6 +2644,37 @@ function renderChatMarkdown(text) {
     return html;
 }
 
+// Lightweight syntax highlighting (no external deps)
+function highlightCode(code, lang) {
+    if (!code) return code;
+    lang = (lang || '').toLowerCase();
+    const kwSets = {
+        py: 'def|class|import|from|return|if|elif|else|for|while|in|not|and|or|is|with|as|try|except|finally|raise|yield|lambda|pass|break|continue|True|False|None|self|print|async|await',
+        js: 'function|const|let|var|return|if|else|for|while|do|switch|case|break|continue|class|new|this|import|export|from|default|async|await|try|catch|finally|throw|typeof|instanceof|null|undefined|true|false|of|in|yield',
+        go: 'func|package|import|return|if|else|for|range|switch|case|break|continue|type|struct|interface|map|chan|go|defer|select|var|const|nil|true|false|make|append|len|cap|error|string|int|bool|byte|float64',
+        java: 'public|private|protected|static|final|class|interface|extends|implements|return|if|else|for|while|do|switch|case|break|continue|new|this|super|try|catch|finally|throw|throws|null|true|false|void|int|long|double|boolean|String|import|package',
+        sh: 'if|then|else|elif|fi|for|do|done|while|until|case|esac|function|return|exit|echo|export|source|local|readonly|set|unset|true|false',
+        sql: 'SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|TABLE|INDEX|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AND|OR|NOT|IN|EXISTS|NULL|AS|ORDER|BY|GROUP|HAVING|LIMIT|OFFSET|SET|INTO|VALUES|COUNT|SUM|AVG|MAX|MIN|DISTINCT|UNION',
+    };
+    const langMap = { python: 'py', javascript: 'js', typescript: 'js', golang: 'go', bash: 'sh', shell: 'sh', zsh: 'sh', c: 'java', cpp: 'java', rust: 'go', ruby: 'py', php: 'js', swift: 'go', kotlin: 'java', mysql: 'sql', postgresql: 'sql' };
+    const mapped = langMap[lang] || lang;
+    const kw = kwSets[mapped] || kwSets['js'] || '';
+    let result = code;
+    const tokens = [];
+    let ti = 0;
+    // Protect strings
+    result = result.replace(/(["'])(?:(?!\1|\\).|\\.)*\1/g, m => { const ph = `__TK${ti}__`; tokens.push(`<span class="hl-str">${m}</span>`); ti++; return ph; });
+    // Protect comments
+    result = result.replace(/(#[^\n]*|\/\/[^\n]*)/g, m => { const ph = `__TK${ti}__`; tokens.push(`<span class="hl-cmt">${m}</span>`); ti++; return ph; });
+    // Keywords
+    if (kw) result = result.replace(new RegExp(`\\b(${kw})\\b`, 'g'), '<span class="hl-kw">$1</span>');
+    // Numbers
+    result = result.replace(/\b(\d+\.?\d*)\b/g, '<span class="hl-num">$1</span>');
+    // Restore
+    for (let i = 0; i < tokens.length; i++) result = result.replace(`__TK${i}__`, tokens[i]);
+    return result;
+}
+
 // ── Init ────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
     const savedKey = getApiKey();
@@ -2573,19 +2702,35 @@ document.addEventListener('DOMContentLoaded', async () => {
 let benchmarkWs = null;
 
 function initBenchmark() {
-    const models = (currentStatus && currentStatus.models) || _allModels || [];
+    let models = (currentStatus && currentStatus.models) || _allModels || [];
+    if (models.length > 0) {
+        renderBenchmarkModels(models);
+    } else {
+        // Fetch models if not yet loaded
+        api('/api/models').then(list => {
+            if (list && list.length) {
+                _allModels = list;
+                renderBenchmarkModels(list);
+            } else {
+                document.getElementById('benchmarkModelSelect').innerHTML = '<div class="empty-state">暂无模型</div>';
+            }
+        }).catch(() => {
+            document.getElementById('benchmarkModelSelect').innerHTML = '<div class="empty-state">加载模型失败</div>';
+        });
+    }
+    loadBenchmarkResults();
+}
+
+function renderBenchmarkModels(models) {
     const container = document.getElementById('benchmarkModelSelect');
-    if (!models.length) {
-        container.innerHTML = '<div class="empty-state">暂无模型</div>';
+    const filtered = models.filter(m => m.name && !m.name.toLowerCase().includes('embed'));
+    if (!filtered.length) {
+        container.innerHTML = '<div class="empty-state">暂无可评测的模型</div>';
         return;
     }
-    container.innerHTML = models
-        .filter(m => m.name && !m.name.includes(':cloud') && !m.name.toLowerCase().includes('embed'))
+    container.innerHTML = filtered
         .map(m => `<label class="benchmark-model-check"><input type="checkbox" value="${escapeAttr(m.name)}"><span>${escapeHtml(m.name)}</span><span style="color:var(--text-muted);font-size:11px;margin-left:8px">${m.size_human || ''}</span></label>`)
         .join('');
-
-    // Load existing results
-    loadBenchmarkResults();
 }
 
 async function loadBenchmarkResults() {
@@ -2739,13 +2884,26 @@ let compareThinkingA = '', compareThinkingB = '';
 let compareStreaming = false;
 
 function initCompare() {
-    const models = (currentStatus && currentStatus.models) || _allModels || [];
+    let models = (currentStatus && currentStatus.models) || _allModels || [];
+    populateCompareSelects(models);
+    // If empty, fetch
+    if (models.length === 0) {
+        api('/api/models').then(list => {
+            if (list && list.length) {
+                _allModels = list;
+                populateCompareSelects(list);
+            }
+        }).catch(() => {});
+    }
+}
+
+function populateCompareSelects(models) {
     ['compareModelA', 'compareModelB'].forEach(id => {
         const sel = document.getElementById(id);
         const cur = sel.value;
         sel.innerHTML = `<option value="">${id.includes('A') ? '模型 A' : '模型 B'}</option>`;
         models.forEach(m => {
-            if (m.name && !m.name.includes(':cloud') && !m.name.toLowerCase().includes('embed')) {
+            if (m.name && !m.name.toLowerCase().includes('embed')) {
                 const opt = document.createElement('option');
                 opt.value = m.name;
                 opt.textContent = `${m.name} (${m.size_human || ''})`;

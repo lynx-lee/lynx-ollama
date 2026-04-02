@@ -459,6 +459,19 @@ func (h *APIHandler) ShowModel(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, info)
 }
 
+// CheckModelsCompatibility checks all downloaded models for Ollama version compatibility.
+func (h *APIHandler) CheckModelsCompatibility(w http.ResponseWriter, r *http.Request) {
+	incompatible, err := h.ollama.CheckModelsCompatibility()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if incompatible == nil {
+		incompatible = []service.IncompatibleModel{}
+	}
+	jsonResponse(w, incompatible)
+}
+
 // SearchMarketModels searches the Ollama website for models.
 func (h *APIHandler) SearchMarketModels(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")

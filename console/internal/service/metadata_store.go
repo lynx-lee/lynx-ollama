@@ -162,6 +162,15 @@ func (s *MetadataStore) SetModelMeta(name string, capabilities []string, modelTy
 	}
 }
 
+// InvalidateShowMeta deletes all model_meta entries with source="show",
+// forcing re-detection on next ListModels call.
+func (s *MetadataStore) InvalidateShowMeta() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, _ = s.db.Exec("DELETE FROM model_meta WHERE source = 'show'")
+	slog.Info("invalidated show-source model metadata cache")
+}
+
 // GetAllModelMeta returns all stored model metadata as a map[name]→ModelMeta.
 func (s *MetadataStore) GetAllModelMeta() map[string]*ModelMeta {
 	s.mu.RLock()
@@ -454,11 +463,17 @@ func InferCapabilitiesFromShowModel(info map[string]any) (caps []string, modelTy
 		}
 	}
 
-	// Check model_info for architecture clues
+	// Check model_info for architecture clues (weak signal only).
+	// vision/clip/projector keys in model_info alone are NOT sufficient to mark as vision —
+	// many text-only variants (e.g. gemma3:27b, devstral-small-2:24b) carry these keys
+	// in their architecture metadata even though they lack the actual vision projector weights.
+	// Only mark vision if families already confirmed it (via clip/mmproj above).
 	if modelInfo, ok := info["model_info"].(map[string]any); ok {
 		for k := range modelInfo {
 			kLower := strings.ToLower(k)
-			if strings.Contains(kLower, "vision") || strings.Contains(kLower, "clip") || strings.Contains(kLower, "projector") {
+			// Only use model_info to confirm vision if we see a dedicated projector block
+			// AND it contains actual tensor count/size (not just architecture definition)
+			if strings.Contains(kLower, "mmproj") || strings.Contains(kLower, "projector.block_count") {
 				if !seen["vision"] {
 					caps = append(caps, "vision")
 					seen["vision"] = true

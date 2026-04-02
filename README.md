@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v2.1.0-blue)
+![Version](https://img.shields.io/badge/version-v2.1.1-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -324,6 +324,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v2.1.1 | 2026-04-03 | **Bug 修复与体验优化**。🔸 **复制功能修复**：代码块复制按钮改为独立 `copyCodeBlock()` 函数解决 HTML 实体转义问题，气泡复制按钮改用 `innerText` 兜底 + `fallbackCopy()` textarea 方案兼容非 HTTPS 环境；🔸 **代码语法高亮**：内置轻量级语法高亮引擎（`highlightCode`），支持 20+ 语言关键词/字符串/注释/数字着色，暗色和亮色主题各有独立配色；🔸 **云端模型增强**：云端模型表格新增类型、能力列和💬测试按钮，Chat/对比模型选择器不再过滤云端模型；🔸 **模型对比数据加载**：`initCompare()` 增加 fallback API fetch，解决首次进入对比页面下拉框为空的问题，工具栏 select 改为 CSS flex 响应式宽度；🔸 **能力评测数据加载**：`initBenchmark()` 增加 fallback API fetch，解决模型列表显示「加载中」不消失的问题；🔸 **拉取完成按钮状态**：模型下载完成后「开始拉取」按钮变为绿色「✅ 完成」，点击关闭弹窗，下次打开自动恢复；🔸 **模型兼容性检测**：新增 `GET /api/models/check` 端点 + `ShowModel` HTTP 500 处理，模型管理页自动检测不兼容模型并显示红色告警卡片，支持一键重新拉取；🔸 **Vision 误判修复**：`model_info` 键名扫描收紧（仅 `mmproj`/`projector.block_count` 才标记 vision），启动时清除旧 show 缓存 |
 | v2.1.0 | 2026-04-02 | **模型管理增强 + 对话拷贝 + 模型对比完善 + 能力评测系统**。🔸 **模型列表快捷测试**：已下载模型操作列新增「💬 测试」按钮，点击跳转到模型测试页并自动选中该模型；🔸 **对话拷贝功能**：每条消息气泡 hover 显示复制按钮（📋 文本 / 📝 Markdown），工具栏「导出」按钮改为多格式菜单（复制文本/Markdown、下载 MD/JSON、截图为图片）；🔸 **模型对比界面完善**：新增页面标题和设置面板（System Prompt、Temperature、Thinking 模式），支持 Enter 快捷发送，对比生成中显示停止按钮，每个面板支持单独复制输出，新增「复制对比结果」按钮（Markdown 格式），统计指标改为结构化标签显示，支持 Thinking 推理链折叠展示；🔸 **模型能力评测系统**：新增「📊 能力评测」页面，支持多模型并发评测 6 个维度（逻辑推理/数学计算/代码能力/创意写作/指令遵循/中文能力），每项 10 分共 60 分，基于规则引擎自动评分（关键词匹配 + JSON 格式验证 + 长度检查），WebSocket 流式进度推送，评测结果排行榜含百分比进度条/维度雷达分/详细评分卡片，结果持久化到 SQLite（`benchmark_results` 表），支持历史结果查看；🔸 **Go 版本升级**：go.mod + Dockerfile 统一升级到 Go 1.25（匹配本地 go1.25.5） |
 | v2.0.0 | 2026-04-02 | **全面功能升级**。🔸 **对话历史持久化**：SQLite 新增 `chat_sessions`/`chat_messages` 表，支持多会话切换、历史浏览、删除、重命名，对话完成后自动保存（标题从首条用户消息生成）；🔸 **对话导出**：支持 Markdown 和 JSON 格式导出，通过 `GET /api/chat/sessions/{id}/export` API 下载；🔸 **模型详情弹窗美化**：`showModelInfo` 从 `alert(JSON)` 改为模态框，结构化展示参数规模/量化/格式/模型族/上下文长度，折叠展示 Modelfile 参数、System Prompt、模板、许可证；🔸 **Thinking 模式**：设置面板新增思维链开关，后端透传 `think: true` 到 Ollama，前端区分 `thinking` token 和 `content` token，思维链以紫色折叠块展示；🔸 **模型对比页**：新增导航页面「⚖️ 模型对比」，选择两个模型输入同一 prompt 并排对比输出和性能指标（tokens/耗时/速率），各自独立 WebSocket 流式传输；🔸 **代码质量优化**：Dockerfile runtime 改 `alpine:3`；`enrichModelCapabilities` 消除 slice 数据竞争；`GetStatus` 从 `ListRunningModels` 推断 API 可达性减少冗余 probe；全量 `interface{}` → `any`；清理 unused 变量；🔸 **Go 版本升级**：go.mod + Dockerfile 统一升级到 Go 1.25（匹配本地 go1.25.5） |
 | v1.9.0 | 2026-04-02 | **SQLite 持久化存储 + 模型能力标签**。1️⃣ **新增 SQLite 数据库**（`console-data/console.db`）：`model_meta` 表持久化模型能力标签和类型，`translations` 表持久化模型描述翻译缓存（替代内存 `sync.Map`，重启不丢失）；2️⃣ **模型能力检测**：三级来源——从 Ollama `/api/show` 解析 `details.families`（clip→vision）和 `template`（tool→tools）、从模型市场 `tags` 同步、从模型名关键词推断；首次查询后写入 SQLite，后续直接读取；3️⃣ **模型列表增强**：已下载模型表格新增「类型」列（💬对话/👁视觉/📐嵌入/💻代码）和「能力」列（vision/tools/thinking/code/embedding 标签）；4️⃣ **翻译缓存持久化**：模型市场描述翻译结果存入 SQLite，相同英文描述直接返回缓存译文，不再重复调用 LLM；5️⃣ 依赖新增 `modernc.org/sqlite`（纯 Go，无需 CGO） |

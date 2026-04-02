@@ -17,7 +17,7 @@ import (
 )
 
 // Version is set at build time via -ldflags.
-var Version = "v2.1.0"
+var Version = "v2.1.1"
 
 func main() {
 	showVersion := flag.Bool("version", false, "Show version and exit")
@@ -69,6 +69,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer metaStore.Close()
+
+	// Invalidate stale show-source capability cache on startup.
+	// This ensures capability detection fixes take effect immediately.
+	metaStore.InvalidateShowMeta()
 
 	ollamaSvc := service.NewOllamaService(cfg, metaStore)
 	dockerSvc := service.NewDockerService(cfg)

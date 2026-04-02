@@ -379,7 +379,49 @@ func (s *OllamaService) ShowModel(name string) (map[string]any, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode model info: %w", err)
 	}
+	// Ollama returns 500 with {"error":"..."} for incompatible models
+	if resp.StatusCode != http.StatusOK {
+		if errMsg, ok := result["error"].(string); ok {
+			return nil, fmt.Errorf("%s", errMsg)
+		}
+		return nil, fmt.Errorf("show model failed (status %d)", resp.StatusCode)
+	}
 	return result, nil
+}
+
+// IncompatibleModel holds info about a model that needs re-downloading.
+type IncompatibleModel struct {
+	Name    string `json:"name"`
+	Error   string `json:"error"`
+	SizeHuman string `json:"size_human"`
+}
+
+// CheckModelsCompatibility probes each downloaded model via /api/show and returns
+// those that are no longer compatible with the current Ollama version.
+func (s *OllamaService) CheckModelsCompatibility() ([]IncompatibleModel, error) {
+	models, err := s.ListModels()
+	if err != nil {
+		return nil, err
+	}
+
+	var incompatible []IncompatibleModel
+	for _, m := range models {
+		_, err := s.ShowModel(m.Name)
+		if err != nil {
+			errStr := err.Error()
+			// Only flag compatibility errors, not network/timeout errors
+			if strings.Contains(errStr, "no longer compatible") ||
+				strings.Contains(errStr, "replaced by") ||
+				strings.Contains(errStr, "unsupported model") {
+				incompatible = append(incompatible, IncompatibleModel{
+					Name:      m.Name,
+					Error:     errStr,
+					SizeHuman: m.SizeHuman,
+				})
+			}
+		}
+	}
+	return incompatible, nil
 }
 
 // SearchModels searches the Ollama website for models by scraping all pages.
