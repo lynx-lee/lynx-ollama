@@ -15,6 +15,7 @@ type Config struct {
 	ProjectDir   string // Path to the ollama project directory
 	ScriptPath   string // Path to ollama.sh
 	ChatFilesDir string // Path to chat files storage directory
+	DataDir      string // Path to persistent data directory (SQLite, etc.)
 	LogLevel     string // Log level: debug, info, warn, error
 	APIKey       string // API key for authentication (empty = auto-generate)
 	CORSOrigin   string // Allowed CORS origin ("*" for all, empty = same-origin only)
@@ -29,6 +30,7 @@ func New() *Config {
 		ProjectDir:   projectDir,
 		ScriptPath:   envOrDefault("OLLAMA_SCRIPT_PATH", filepath.Join(projectDir, "ollama.sh")),
 		ChatFilesDir: envOrDefault("CHAT_FILES_DIR", filepath.Join(projectDir, "chat-files")),
+		DataDir:      envOrDefault("CONSOLE_DATA_DIR", filepath.Join(projectDir, "console-data")),
 		LogLevel:     envOrDefault("WEB_LOG_LEVEL", "info"),
 		APIKey:       os.Getenv("WEB_API_KEY"),
 		CORSOrigin:   os.Getenv("WEB_CORS_ORIGIN"),

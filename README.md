@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v1.8.3-blue)
+![Version](https://img.shields.io/badge/version-v1.9.0-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -310,6 +310,7 @@ lynx-ollama/
 ├── ollama.sh                    # 管理脚本（服务/模型/GPU/维护）
 ├── console/                     # Web 管理界面（Go + 嵌入式 SPA）
 ├── chat-files/                  # 对话文件持久化目录（按日期子目录，运行时生成）
+├── console-data/                # 持久化数据目录（SQLite 数据库，运行时生成）
 ├── docker-compose.yaml.template # Docker Compose 模板（纳入版本管理，source of truth）
 ├── docker-compose.yaml          # 运行时配置（从模板生成，不纳入 Git）
 ├── .env                         # 环境变量配置（由 init/optimize 生成，不纳入 Git）
@@ -322,6 +323,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.9.0 | 2026-04-02 | **SQLite 持久化存储 + 模型能力标签**。1️⃣ **新增 SQLite 数据库**（`console-data/console.db`）：`model_meta` 表持久化模型能力标签和类型，`translations` 表持久化模型描述翻译缓存（替代内存 `sync.Map`，重启不丢失）；2️⃣ **模型能力检测**：三级来源——从 Ollama `/api/show` 解析 `details.families`（clip→vision）和 `template`（tool→tools）、从模型市场 `tags` 同步、从模型名关键词推断；首次查询后写入 SQLite，后续直接读取；3️⃣ **模型列表增强**：已下载模型表格新增「类型」列（💬对话/👁视觉/📐嵌入/💻代码）和「能力」列（vision/tools/thinking/code/embedding 标签）；4️⃣ **翻译缓存持久化**：模型市场描述翻译结果存入 SQLite，相同英文描述直接返回缓存译文，不再重复调用 LLM；5️⃣ 依赖新增 `modernc.org/sqlite`（纯 Go，无需 CGO） |
 | v1.8.4 | 2026-04-02 | **对话停止修复 + 错误提示优化**。1️⃣ 修复停止按钮无法中止生成的 bug：`StreamChat` 重写为单一读 goroutine + channel 调度，解决 gorilla/websocket 并发读竞争和 `ReadBytes` 阻塞导致 cancel 无法生效的问题，`reader.Close()` 立即断开 Ollama 连接中止生成；2️⃣ 前端发送校验：上传图片时自动检测模型是否支持视觉能力（`isVisionModel` 匹配 llava/vision/minicpm-v 等关键词），不支持则阻止发送并提示选择视觉模型；3️⃣ 错误中文友好化：`friendlyChatError()` 识别 6 种常见错误（图片不支持/模型不存在/上下文过长/显存不足/连接失败/超时）返回中文提示 |
 | v1.8.3 | 2026-04-01 | **智能参数预设系统**。切换模型时自动填充最优参数，三级优先级：1️⃣ **用户自定义预设**（localStorage 持久化）— 设置面板底部新增「💾 保存预设」/「🗑 删除预设」按钮，用户调好参数后保存为该模型专属预设，下次选择自动加载；2️⃣ **Ollama 模型默认参数**（`/api/show`）— 从模型 Modelfile 的 `parameters` 字段解析 temperature/top_p/num_ctx/num_predict；3️⃣ **内置推荐预设**（11 个模型族）— Qwen(0.7/0.8/32K)、DeepSeek(0.6/0.9/64K)、CodeLlama/Coder(0.2/高ctx)、Llama(0.7/0.9/8K)、Mistral/Mixtral(32K)、Gemma、Phi、LLaVA、Command-R(0.3/128K) 等。设置面板底部显示当前参数来源标签（「用户预设」/「模型默认」/「Qwen 推荐」等） |
 | v1.8.2 | 2026-04-01 | **对话设置面板**。1️⃣ **System Prompt**：工具栏新增「⚙️ 设置」按钮，打开右侧滑入式设置面板，支持配置系统角色提示词（自动注入为 messages 首条 system 消息）；2️⃣ **参数调节**：Temperature（0-2）、Top P（0-1）滑块实时显示数值，上下文长度（num_ctx 2K-128K）、最大生成长度（num_predict 256-8K/无限制）下拉选择；3️⃣ **JSON 模式**：开关切换，开启后通过 Ollama `format: "json"` 强制模型输出有效 JSON；4️⃣ **keep_alive**：模型选择旁新增驻留时间下拉（5m/30m/1h/4h/24h/永久），控制模型在显存中的保持时间；后端 `ChatStream` 新增 `format`/`keep_alive` 参数透传 |

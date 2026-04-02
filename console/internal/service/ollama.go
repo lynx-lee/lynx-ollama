@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/lynxlee/lynx-ollama-console/internal/config"
@@ -34,14 +33,12 @@ type OllamaService struct {
 	versionCacheAt  time.Time
 	versionCacheTTL time.Duration
 
-	// Translation cache: English description → Chinese translation.
-	// Persists in memory for the lifetime of the process — avoids redundant LLM calls
-	// when the user refreshes the model market or navigates back to it.
-	translateCache sync.Map // map[string]string
+	// Persistent metadata store (SQLite) — model capabilities + translation cache.
+	metaStore *MetadataStore
 }
 
 // NewOllamaService creates a new OllamaService.
-func NewOllamaService(cfg *config.Config) *OllamaService {
+func NewOllamaService(cfg *config.Config, metaStore *MetadataStore) *OllamaService {
 	return &OllamaService{
 		cfg: cfg,
 		client: &http.Client{
@@ -52,6 +49,7 @@ func NewOllamaService(cfg *config.Config) *OllamaService {
 		},
 		apiReadyCacheTTL: 5 * time.Second,
 		versionCacheTTL:  1 * time.Hour,
+		metaStore:        metaStore,
 	}
 }
 
@@ -152,7 +150,7 @@ type ollamaTagsResponse struct {
 	} `json:"models"`
 }
 
-// ListModels returns all downloaded models.
+// ListModels returns all downloaded models with capabilities enrichment.
 func (s *OllamaService) ListModels() ([]model.ModelInfo, error) {
 	resp, err := s.client.Get(s.cfg.OllamaAPIURL + "/api/tags")
 	if err != nil {
@@ -165,9 +163,13 @@ func (s *OllamaService) ListModels() ([]model.ModelInfo, error) {
 		return nil, fmt.Errorf("failed to decode models: %w", err)
 	}
 
+	// Load all cached metadata in one batch
+	allMeta := s.metaStore.GetAllModelMeta()
+
 	models := make([]model.ModelInfo, 0, len(raw.Models))
+	var needEnrich []int // indices of models that need capability detection
 	for _, m := range raw.Models {
-		models = append(models, model.ModelInfo{
+		info := model.ModelInfo{
 			Name:         m.Name,
 			Size:         m.Size,
 			SizeHuman:    formatBytes(m.Size),
@@ -176,9 +178,61 @@ func (s *OllamaService) ListModels() ([]model.ModelInfo, error) {
 			Family:       m.Details.Family,
 			Parameters:   m.Details.ParameterSize,
 			Quantization: m.Details.QuantizationLevel,
-		})
+		}
+
+		// Try to get capabilities from metadata store
+		baseName := m.Name
+		if idx := strings.LastIndex(m.Name, ":"); idx > 0 {
+			baseName = m.Name[:idx]
+		}
+		if meta, ok := allMeta[m.Name]; ok {
+			info.Capabilities = meta.Capabilities
+			info.ModelType = meta.ModelType
+		} else if meta, ok := allMeta[baseName]; ok {
+			info.Capabilities = meta.Capabilities
+			info.ModelType = meta.ModelType
+		} else {
+			// Mark for async enrichment
+			needEnrich = append(needEnrich, len(models))
+			// Quick fallback from name
+			caps, mt := InferCapabilitiesFromName(m.Name)
+			info.Capabilities = caps
+			info.ModelType = mt
+		}
+
+		models = append(models, info)
 	}
+
+	// Async: enrich unknown models via /api/show (non-blocking)
+	if len(needEnrich) > 0 {
+		go s.enrichModelCapabilities(models, needEnrich)
+	}
+
 	return models, nil
+}
+
+// enrichModelCapabilities queries /api/show for models without cached capabilities.
+func (s *OllamaService) enrichModelCapabilities(models []model.ModelInfo, indices []int) {
+	for _, idx := range indices {
+		if idx >= len(models) {
+			continue
+		}
+		name := models[idx].Name
+		info, err := s.ShowModel(name)
+		if err != nil {
+			continue
+		}
+		caps, modelType := InferCapabilitiesFromShowModel(info)
+		if len(caps) == 0 {
+			// Fall back to name-based inference
+			caps, modelType = InferCapabilitiesFromName(name)
+		}
+		// Store both full name and base name
+		s.metaStore.SetModelMeta(name, caps, modelType, "show")
+		if idx2 := strings.LastIndex(name, ":"); idx2 > 0 {
+			s.metaStore.SetModelMeta(name[:idx2], caps, modelType, "show")
+		}
+	}
 }
 
 // ollamaPsResponse is the raw response from /api/ps.
@@ -409,6 +463,22 @@ func (s *OllamaService) SearchModels(query, category, sort string) (*model.Marke
 		}
 	}
 
+	// Persist market model capabilities to metadata store
+	for _, m := range allModels {
+		if len(m.Tags) > 0 {
+			modelType := "chat"
+			for _, t := range m.Tags {
+				tl := strings.ToLower(t)
+				if tl == "vision" {
+					modelType = "vision"
+				} else if tl == "embedding" {
+					modelType = "embedding"
+				}
+			}
+			s.metaStore.SetModelMeta(m.Name, m.Tags, modelType, "market")
+		}
+	}
+
 	return &model.MarketSearchResult{
 		Models: allModels,
 		Query:  query,
@@ -418,12 +488,10 @@ func (s *OllamaService) SearchModels(query, category, sort string) (*model.Marke
 
 // TranslateDescriptions translates the given model descriptions to Chinese using the local Ollama model.
 // Optimized strategy:
-//  1. Check in-memory cache first — return cached translations immediately.
+//  1. Check SQLite cache first — return cached translations immediately.
 //  2. Collect uncached items and pack them into a single JSON payload.
 //  3. Call the LLM once with a batch translation prompt (JSON in → JSON out).
-//  4. Parse the returned JSON and populate results + cache.
-//
-// This reduces N individual LLM calls to at most 1 batch call per request.
+//  4. Parse the returned JSON and populate results + persistent cache.
 func (s *OllamaService) TranslateDescriptions(items []model.TranslateRequest) []model.TranslateResponse {
 	results := make([]model.TranslateResponse, len(items))
 	for i, item := range items {
@@ -434,24 +502,26 @@ func (s *OllamaService) TranslateDescriptions(items []model.TranslateRequest) []
 		return results
 	}
 
-	// Phase 1: Resolve from cache — collect indices of uncached items
-	var uncached []uncachedItem
+	// Phase 1: Resolve from persistent cache — collect indices of uncached items
+	originals := make([]string, len(items))
+	for i, item := range items {
+		originals[i] = item.Description
+	}
+	cachedTranslations := s.metaStore.GetTranslationBatch(originals)
 
+	var uncached []uncachedItem
 	for i, item := range items {
 		desc := item.Description
 		if desc == "" || len(desc) < 10 || containsChinese(desc) {
-			continue // Skip empty, too short, or already Chinese
+			continue
 		}
-
-		// Check cache
-		if cached, ok := s.translateCache.Load(desc); ok {
-			results[i].Description = cached.(string)
+		if cached, ok := cachedTranslations[desc]; ok && cached != "" {
+			results[i].Description = cached
 			continue
 		}
 		uncached = append(uncached, uncachedItem{index: i, name: item.Name, desc: desc})
 	}
 
-	// All translations found in cache — return immediately
 	if len(uncached) == 0 {
 		slog.Info("translation batch fully served from cache", "total", len(items))
 		return results
@@ -473,13 +543,16 @@ func (s *OllamaService) TranslateDescriptions(items []model.TranslateRequest) []
 	// Phase 3: Batch translate uncached items via single LLM call
 	translated := s.batchTranslate(translationModel, uncached)
 
-	// Phase 4: Populate results and cache
+	// Phase 4: Populate results and persistent cache
+	newTranslations := make(map[string]string)
 	for _, uc := range uncached {
 		if t, ok := translated[uc.name]; ok && t != "" && t != uc.desc {
 			results[uc.index].Description = t
-			// Store in cache: key = original English description
-			s.translateCache.Store(uc.desc, t)
+			newTranslations[uc.desc] = t
 		}
+	}
+	if len(newTranslations) > 0 {
+		s.metaStore.SetTranslationBatch(newTranslations)
 	}
 
 	return results

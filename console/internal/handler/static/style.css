@@ -815,6 +815,18 @@ tbody tr:hover { background: var(--bg-hover); }
 
 .sortable-th:hover { color: var(--accent-blue); }
 
+.model-cap-tag {
+    display: inline-block;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: rgba(91, 141, 239, 0.1);
+    border: 1px solid rgba(91, 141, 239, 0.2);
+    color: var(--accent-blue);
+    white-space: nowrap;
+    margin: 1px 2px;
+}
+
 /* ── Model Tab Bar ────────────────────────────────────────────── */
 .tab-bar {
     display: flex;

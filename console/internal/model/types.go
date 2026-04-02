@@ -45,14 +45,16 @@ type ResourceUsage struct {
 
 // ModelInfo represents a downloaded model.
 type ModelInfo struct {
-	Name       string    `json:"name"`
-	Size       int64     `json:"size"`
-	SizeHuman  string    `json:"size_human"`
-	Digest     string    `json:"digest"`
-	ModifiedAt time.Time `json:"modified_at"`
-	Family     string    `json:"family,omitempty"`
-	Parameters string    `json:"parameters,omitempty"`
-	Quantization string  `json:"quantization,omitempty"`
+	Name         string    `json:"name"`
+	Size         int64     `json:"size"`
+	SizeHuman    string    `json:"size_human"`
+	Digest       string    `json:"digest"`
+	ModifiedAt   time.Time `json:"modified_at"`
+	Family       string    `json:"family,omitempty"`
+	Parameters   string    `json:"parameters,omitempty"`
+	Quantization string    `json:"quantization,omitempty"`
+	Capabilities []string  `json:"capabilities,omitempty"` // vision, tools, thinking, code, embedding, cloud
+	ModelType    string    `json:"model_type,omitempty"`    // chat, vision, embedding, code
 }
 
 // RunningModel represents a currently loaded model.

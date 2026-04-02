@@ -678,6 +678,17 @@ function onModelSearchInput(e) {
     renderModels();
 }
 
+function renderModelCaps(caps) {
+    if (!caps || !caps.length) return '<span style="color:var(--text-muted)">--</span>';
+    const emoji = { vision: '👁', tools: '🛠', thinking: '🧠', embedding: '📐', code: '💻', cloud: '☁️' };
+    return caps.map(c => `<span class="model-cap-tag">${emoji[c.toLowerCase()] || '🏷'} ${escapeHtml(c)}</span>`).join(' ');
+}
+
+function renderModelType(type) {
+    const map = { chat: '💬 对话', vision: '👁 视觉', embedding: '📐 嵌入', code: '💻 代码' };
+    return map[type] || type || '--';
+}
+
 function renderModels() {
     const container = document.getElementById('modelsContainer');
     if (!_allModels || _allModels.length === 0) {
@@ -720,10 +731,12 @@ function renderModels() {
                 <div class="card-header"><h3>💻 本地模型 (${localModels.length})</h3></div>
                 <div class="table-container">
                     <table>
-                        <thead><tr>${sortableHdr('名称','name')}${sortableHdr('大小','size')}<th>参数</th><th>量化</th>${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
+                        <thead><tr>${sortableHdr('名称','name')}<th>类型</th><th>能力</th>${sortableHdr('大小','size')}<th>参数</th><th>量化</th>${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
                         <tbody>${localModels.map(m => `
                             <tr>
                                 <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || ''}</span></td>
+                                <td>${renderModelType(m.model_type)}</td>
+                                <td>${renderModelCaps(m.capabilities)}</td>
                                 <td>${m.size_human}</td>
                                 <td>${m.parameters || '--'}</td>
                                 <td>${m.quantization || '--'}</td>

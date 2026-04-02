@@ -18,5 +18,6 @@
 /backups/
 /logs/
 /chat-files/
+/console-data/
 *.bak
 *.bak.*

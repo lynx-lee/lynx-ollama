@@ -17,7 +17,7 @@ import (
 )
 
 // Version is set at build time via -ldflags.
-var Version = "v1.8.4"
+var Version = "v1.9.0"
 
 func main() {
 	showVersion := flag.Bool("version", false, "Show version and exit")
@@ -63,7 +63,14 @@ func main() {
 	}
 
 	// Initialize services
-	ollamaSvc := service.NewOllamaService(cfg)
+	metaStore, err := service.NewMetadataStore(cfg.DataDir)
+	if err != nil {
+		slog.Error("failed to initialize metadata store", "error", err)
+		os.Exit(1)
+	}
+	defer metaStore.Close()
+
+	ollamaSvc := service.NewOllamaService(cfg, metaStore)
 	dockerSvc := service.NewDockerService(cfg)
 	systemSvc := service.NewSystemService(cfg)
 
