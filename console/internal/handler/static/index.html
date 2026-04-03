@@ -251,7 +251,7 @@
                             </svg>
                             <div class="perf-time-axis" id="perfMemTime"></div>
                         </div>
-                        <div class="perf-panel" id="perfNet">
+                        <div class="perf-panel perf-panel-half" id="perfNet">
                             <div class="perf-panel-head"><span class="perf-title">网络 IO</span><span class="perf-value" id="perfNetVal">-- KB/s</span></div>
                             <svg class="perf-svg" viewBox="0 0 300 120" preserveAspectRatio="none">
                                 <defs>
@@ -262,8 +262,12 @@
                                 <polyline class="perf-line" style="stroke:#f97316" id="perfNetTxLine" points=""/>
                             </svg>
                             <div class="perf-time-axis" id="perfNetTime"></div>
+                            <div class="perf-panel-legend">
+                                <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#22d3ee"></span>入</span>
+                                <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#f97316"></span>出</span>
+                            </div>
                         </div>
-                        <div class="perf-panel" id="perfDisk">
+                        <div class="perf-panel perf-panel-half" id="perfDisk">
                             <div class="perf-panel-head"><span class="perf-title">磁盘 IO</span><span class="perf-value" id="perfDiskVal">-- MB/s</span></div>
                             <svg class="perf-svg" viewBox="0 0 300 120" preserveAspectRatio="none">
                                 <defs>
@@ -274,6 +278,10 @@
                                 <polyline class="perf-line" style="stroke:#ef4444" id="perfDiskWLine" points=""/>
                             </svg>
                             <div class="perf-time-axis" id="perfDiskTime"></div>
+                            <div class="perf-panel-legend">
+                                <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#facc15"></span>读</span>
+                                <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#ef4444"></span>写</span>
+                            </div>
                         </div>
                         <div class="perf-panel perf-panel-wide" id="perfInfer">
                             <div class="perf-panel-head"><span class="perf-title">推理耗时</span><span class="perf-value" id="perfInferVal">-- ms</span></div>
@@ -286,13 +294,12 @@
                                     <tbody id="perfInferBody"><tr><td colspan="5" style="text-align:center;color:var(--text-muted)">等待推理请求...</td></tr></tbody>
                                 </table>
                             </div>
+                            <div class="perf-panel-legend">
+                                <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#8b5cf6"></span>console</span>
+                                <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#f97316"></span>external</span>
+                                <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#22d3ee"></span>其他</span>
+                            </div>
                         </div>
-                    </div>
-                    <div class="perf-legend">
-                        <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#22d3ee"></span>网络入</span>
-                        <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#f97316"></span>网络出</span>
-                        <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#facc15"></span>磁盘读</span>
-                        <span class="perf-legend-item"><span class="perf-legend-dot" style="background:#ef4444"></span>磁盘写</span>
                     </div>
                 </div>
             </div>
