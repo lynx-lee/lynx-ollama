@@ -78,18 +78,37 @@ func (s *MetadataStore) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
 
 		CREATE TABLE IF NOT EXISTS benchmark_results (
-			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			model_name TEXT NOT NULL,
-			scores     TEXT NOT NULL DEFAULT '[]',
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			model_name  TEXT NOT NULL,
+			model_digest TEXT DEFAULT '',
+			scores      TEXT NOT NULL DEFAULT '[]',
 			total_score REAL DEFAULT 0,
-			max_total  INTEGER DEFAULT 0,
-			percentage REAL DEFAULT 0,
+			max_total   INTEGER DEFAULT 0,
+			percentage  REAL DEFAULT 0,
 			avg_tok_sec REAL DEFAULT 0,
-			run_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+			status      TEXT DEFAULT 'completed',
+			completed_dims INTEGER DEFAULT 0,
+			total_dims  INTEGER DEFAULT 6,
+			run_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_benchmark_model ON benchmark_results(model_name);
+
+		-- Migrate: add columns if missing (SQLite ALTER TABLE is safe for adding columns)
+		-- These will silently fail if columns already exist
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Safe column additions for existing databases
+	for _, col := range []string{
+		"ALTER TABLE benchmark_results ADD COLUMN model_digest TEXT DEFAULT ''",
+		"ALTER TABLE benchmark_results ADD COLUMN status TEXT DEFAULT 'completed'",
+		"ALTER TABLE benchmark_results ADD COLUMN completed_dims INTEGER DEFAULT 0",
+		"ALTER TABLE benchmark_results ADD COLUMN total_dims INTEGER DEFAULT 6",
+	} {
+		s.db.Exec(col) // ignore errors (column may already exist)
+	}
+	return nil
 }
 
 // Close closes the database.
@@ -530,54 +549,101 @@ func containsAny(s string, substrs ...string) bool {
 
 // ── Benchmark Results ──────────────────────────────────────────
 
-// SaveBenchmarkResult stores a benchmark result.
+// CreateBenchmarkTask inserts a "running" benchmark row. Returns task ID.
+func (s *MetadataStore) CreateBenchmarkTask(modelName, modelDigest string, totalDims int) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, err := s.db.Exec(`
+		INSERT INTO benchmark_results (model_name, model_digest, scores, total_score, max_total, percentage, avg_tok_sec, status, completed_dims, total_dims)
+		VALUES (?, ?, '[]', 0, ?, 0, 0, 'running', 0, ?)`,
+		modelName, modelDigest, totalDims*10, totalDims)
+	if err != nil {
+		slog.Warn("failed to create benchmark task", "model", modelName, "error", err)
+		return 0
+	}
+	id, _ := r.LastInsertId()
+	return id
+}
+
+// UpdateBenchmarkProgress saves incremental progress (断点续跑).
+func (s *MetadataStore) UpdateBenchmarkProgress(taskID int64, scoresJSON string, totalScore float64, completedDims int, avgTokSec float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	maxT := completedDims * 10
+	pct := 0.0
+	if maxT > 0 {
+		pct = (totalScore / float64(maxT)) * 100
+	}
+	s.db.Exec(`UPDATE benchmark_results SET scores=?, total_score=?, max_total=?, percentage=?, avg_tok_sec=?, completed_dims=? WHERE id=?`,
+		scoresJSON, totalScore, maxT, pct, avgTokSec, completedDims, taskID)
+}
+
+// CompleteBenchmarkTask marks a task as completed with final scores.
+func (s *MetadataStore) CompleteBenchmarkTask(taskID int64, scoresJSON string, totalScore float64, maxTotal int, pct, avgTok float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.Exec(`UPDATE benchmark_results SET scores=?, total_score=?, max_total=?, percentage=?, avg_tok_sec=?, status='completed', completed_dims=total_dims, run_at=CURRENT_TIMESTAMP WHERE id=?`,
+		scoresJSON, totalScore, maxTotal, pct, avgTok, taskID)
+}
+
+// FailBenchmarkTask marks as cancelled/failed.
+func (s *MetadataStore) FailBenchmarkTask(taskID int64, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.Exec(`UPDATE benchmark_results SET status=? WHERE id=?`, status, taskID)
+}
+
+// GetRunningBenchmarks returns tasks with status='running'.
+func (s *MetadataStore) GetRunningBenchmarks() []map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.queryBenchmarks(`SELECT id, model_name, model_digest, scores, total_score, max_total, percentage, avg_tok_sec, status, completed_dims, total_dims, run_at FROM benchmark_results WHERE status='running' ORDER BY id DESC`)
+}
+
+// SaveBenchmarkResult stores a completed result (legacy compat).
 func (s *MetadataStore) SaveBenchmarkResult(modelName string, scoresJSON string, totalScore float64, maxTotal int, percentage float64, avgTokSec float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	_, err := s.db.Exec(`
-		INSERT INTO benchmark_results (model_name, scores, total_score, max_total, percentage, avg_tok_sec)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, modelName, scoresJSON, totalScore, maxTotal, percentage, avgTokSec)
-	if err != nil {
-		slog.Warn("failed to save benchmark result", "model", modelName, "error", err)
-	}
+	s.db.Exec(`INSERT INTO benchmark_results (model_name, scores, total_score, max_total, percentage, avg_tok_sec, status, completed_dims, total_dims) VALUES (?,?,?,?,?,?,'completed',?,?)`,
+		modelName, scoresJSON, totalScore, maxTotal, percentage, avgTokSec, maxTotal/10, maxTotal/10)
 }
 
-// ListBenchmarkResults returns the latest benchmark result for each model.
+// ListBenchmarkResults returns the latest completed result for each model.
 func (s *MetadataStore) ListBenchmarkResults() []map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.queryBenchmarks(`SELECT id, model_name, model_digest, scores, total_score, max_total, percentage, avg_tok_sec, status, completed_dims, total_dims, run_at FROM benchmark_results WHERE id IN (SELECT MAX(id) FROM benchmark_results WHERE status='completed' GROUP BY model_name) ORDER BY percentage DESC`)
+}
 
-	rows, err := s.db.Query(`
-		SELECT model_name, scores, total_score, max_total, percentage, avg_tok_sec, run_at
-		FROM benchmark_results
-		WHERE id IN (SELECT MAX(id) FROM benchmark_results GROUP BY model_name)
-		ORDER BY percentage DESC
-	`)
+// ListAllBenchmarkResults returns ALL benchmark records (including running/failed).
+func (s *MetadataStore) ListAllBenchmarkResults() []map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.queryBenchmarks(`SELECT id, model_name, model_digest, scores, total_score, max_total, percentage, avg_tok_sec, status, completed_dims, total_dims, run_at FROM benchmark_results ORDER BY id DESC LIMIT 100`)
+}
+
+func (s *MetadataStore) queryBenchmarks(query string) []map[string]any {
+	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
-
 	var results []map[string]any
 	for rows.Next() {
-		var modelName, scoresJSON, runAt string
+		var id int64
+		var modelName, modelDigest, scoresJSON, runAt, status string
 		var totalScore, percentage, avgTokSec float64
-		var maxTotal int
-		if rows.Scan(&modelName, &scoresJSON, &totalScore, &maxTotal, &percentage, &avgTokSec, &runAt) != nil {
+		var maxTotal, completedDims, totalDims int
+		if rows.Scan(&id, &modelName, &modelDigest, &scoresJSON, &totalScore, &maxTotal, &percentage, &avgTokSec, &status, &completedDims, &totalDims, &runAt) != nil {
 			continue
 		}
 		var scores []any
 		json.Unmarshal([]byte(scoresJSON), &scores)
 		results = append(results, map[string]any{
-			"model_name":  modelName,
-			"scores":      scores,
-			"total_score":  totalScore,
-			"max_total":    maxTotal,
-			"percentage":   percentage,
-			"avg_tok_sec":  avgTokSec,
-			"run_at":       runAt,
+			"id": id, "model_name": modelName, "model_digest": modelDigest,
+			"scores": scores, "total_score": totalScore, "max_total": maxTotal,
+			"percentage": percentage, "avg_tok_sec": avgTokSec, "status": status,
+			"completed_dims": completedDims, "total_dims": totalDims, "run_at": runAt,
 		})
 	}
 	return results

@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v2.3.0-blue)
+![Version](https://img.shields.io/badge/version-v2.4.0-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -286,7 +286,10 @@ WEB_CORS_ORIGIN="https://admin.example.com" ./ollama.sh start
 | `GET,PUT /api/config` | 读取/更新配置 | ✅ |
 | `GET /api/gpu` | GPU 信息 | ✅ |
 | `GET /api/logs` | 服务日志 | ✅ |
-| `GET /api/benchmark/results` | 查询历史评测结果 | ✅ |
+| `GET /api/benchmark/results` | 查询已完成评测结果 | ✅ |
+| `POST /api/benchmark/start` | 提交离线评测任务 | ✅ |
+| `POST /api/benchmark/stop` | 取消运行中评测 | ✅ |
+| `GET /api/benchmark/tasks` | 查询所有评测任务 | ✅ |
 | `GET /api/ws/perf` | WebSocket 实时性能监控 | ✅ |
 
 ## 数据目录
@@ -325,6 +328,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v2.4.0 | 2026-04-03 | **能力评测系统全面重构**。🔸 **离线评测**：评测任务通过 `POST /api/benchmark/start` 提交后在后端 goroutine 离线执行，不依赖前端在线状态，关闭浏览器后评测继续进行；🔸 **断点续跑**：每完成一个维度立即持久化进度到 SQLite（`UpdateBenchmarkProgress`），服务重启后可从上次中断的维度继续评测；🔸 **模型版本记录**：`benchmark_results` 表新增 `model_digest`/`status`/`completed_dims`/`total_dims` 字段，记录评测时的模型版本 digest，支持 running/completed/cancelled/superseded 状态；🔸 **模型管理评分列**：本地模型列表新增「评测」列，显示百分比总分 + 6 项维度小图标评分（颜色标识：≥8 绿/≥5 黄/<5 红）；🔸 **评分规则说明**：评测页面顶部新增📖评分规则按钮，点击展开详细规则表格（6 个维度的测试内容和评分标准）；🔸 **表格选择模型**：选择评测模型从 checkbox 卡片改为结构化表格，显示模型名称/大小/历史评分/评测时间，支持全选；🔸 **评测结果表格增强**：结果表新增「详情」列，点击📄按钮弹出模态框显示完整评测报告（每个维度的分数/评分依据/token 统计/模型原始回答可折叠展开）；🔸 **运行中任务面板**：评测页显示正在运行的任务进度条，支持单个取消；🔸 **新增 API**：`POST /api/benchmark/start`（提交评测）、`POST /api/benchmark/stop`（取消评测）、`GET /api/benchmark/tasks`（查询所有任务） |
 | v2.3.0 | 2026-04-03 | **性能监控三态模式 + 推理耗时采集**。🔸 **三态监控模式**：开关从二态 checkbox 改为三态选择器 —— 🟢 **实时**（默认，页面可见时推送，离开页面暂停）、⏸ **暂停**（停止采集和推送）、📌 **常驻**（始终采集，前端不可达时服务端缓冲最多 1000 帧，前端恢复后批量 flush）；🔸 **状态指示灯**：绿色闪亮 = 采集中，灰色 = 空闲/暂停，红色 = 断开；旁边文字实时显示"采集中/已暂停/常驻采集中/已断开"；🔸 **WS 断线自动重连**：`onclose` 后 3 秒自动重连（非暂停模式），重连后 `resume` 命令触发服务端 flush 缓冲区并恢复推送；🔸 **推理耗时数据采集**：`StreamChat` 的 `done` 消息中提取 `total_duration`（ns→ms）存入 `APIHandler.lastInferMs`（`atomic.Int64`），`GetPerfMetrics` → `StreamPerf` 每帧注入该值，前端推理耗时面板不再显示 `-- ms`；🔸 **CPU 动态上限**：多核 CPU 使用率可超 100%（如 205%），图表 Y 轴上限改为 `max(100, 实际最大值) × 1.1` 自适应；🔸 **服务端缓冲协议**：新增 `perf_batch` 消息类型（数组），`resume` 命令，`mode` 命令（前端切换模式无需重连） |
 | v2.2.2 | 2026-04-03 | **模型对比界面自适应满屏 + 可拖拽分隔线**。🔸 对比面板从 CSS Grid 改为 Flex 布局，两个输出面板中间新增 5px 可拖拽分隔线（`compare-resizer`），鼠标拖拽或触摸滑动可左右调整两侧比例（15%-85% 范围），拖拽时分隔线高亮蓝色；🔸 `#page-compare.active` 改为 `display:flex; height:calc(100vh-48px)` 满屏，`.compare-page` 用 `flex:1; height:100%` 填满；🔸 移动端自动隐藏 resizer 并切换为上下堆叠 |
 | v2.2.1 | 2026-04-03 | **关键 Bug 修复 + 交互优化**。🔸 **DOMContentLoaded 闭合修复**（根因）：`app.js` 第 2678 行的 `DOMContentLoaded` 回调缺少 `});` 闭合，导致性能监控、模型对比、能力评测、对比复制等约 600 行代码被意外嵌套在异步回调作用域内，`switchPage` 调用这些函数时在严格模式浏览器中报 undefined，修复后所有模块恢复到全局作用域正常工作；🔸 **防误发送机制**：聊天输入框从 Enter 发送改为 Ctrl+Enter / Cmd+Enter 发送，Enter 键仅换行；对比页同步更新；🔸 **全选支持**：聊天输入框 Ctrl+A / Cmd+A 全选文本内容；🔸 **不兼容模型行内标注**：从顶部独立告警卡片改为直接在模型列表行内添加红色「⚠ 需重新下载」标签 + 🔄 重新拉取按钮，hover 显示错误详情，不兼容行背景高亮；🔸 **复制功能全面兜底**：所有 `navigator.clipboard.writeText` 调用（聊天导出文本/Markdown、对比页单侧复制/全局复制）统一添加 `fallbackCopy()` textarea 降级方案，兼容非 HTTPS 环境 |

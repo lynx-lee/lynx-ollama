@@ -2322,11 +2322,209 @@ var benchmarkDimensions = []struct {
 	},
 }
 
-// StreamBenchmark runs benchmark evaluation for selected models via WebSocket.
-// Client sends: {"models":["model1","model2",...]}
-// Server pushes: {"phase":"testing","model":"...","dimension":"...","progress":N,"total":M}
-// Server pushes: {"phase":"score","model":"...","dimension_id":"...","score":N,"max":M,...}
-// Server pushes: {"phase":"done","results":[...]}
+// ── Benchmark: Offline task runner ───────────────────────────────
+// Benchmark tasks run as background goroutines, independent of client connection.
+// Progress is saved to SQLite after each dimension (断点续跑).
+
+// benchmarkRunners tracks running benchmark goroutines (modelName → cancel func).
+var benchmarkRunners = struct {
+	sync.Mutex
+	m map[string]context.CancelFunc
+}{m: make(map[string]context.CancelFunc)}
+
+// StartBenchmarkTask starts offline benchmark for given models.
+// POST /api/benchmark/start  body: {"models":["model1","model2",...]}
+func (h *APIHandler) StartBenchmarkTask(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Models []string `json:"models"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Models) == 0 {
+		jsonError(w, http.StatusBadRequest, "请选择至少一个模型")
+		return
+	}
+
+	started := []map[string]any{}
+	for _, modelName := range req.Models {
+		// Check if already running
+		benchmarkRunners.Lock()
+		if _, ok := benchmarkRunners.m[modelName]; ok {
+			benchmarkRunners.Unlock()
+			continue // skip already running
+		}
+		benchmarkRunners.Unlock()
+
+		// Get model digest for version tracking
+		digest := ""
+		if info, err := h.ollama.ShowModel(modelName); err == nil {
+			if d, ok := info["digest"].(string); ok {
+				digest = d
+			}
+		}
+
+		totalDims := len(benchmarkDimensions)
+		taskID := h.metaStore().CreateBenchmarkTask(modelName, digest, totalDims)
+		if taskID == 0 {
+			continue
+		}
+
+		// Check for resumable: find completed dimensions from a previous running task
+		resumeScores := []map[string]any{}
+		resumeFromDim := 0
+		// Check if there's a previous incomplete run for this model
+		running := h.metaStore().GetRunningBenchmarks()
+		for _, t := range running {
+			if t["model_name"] == modelName && t["id"] != taskID {
+				if sc, ok := t["scores"].([]any); ok && len(sc) > 0 {
+					for _, s := range sc {
+						if sm, ok := s.(map[string]any); ok {
+							resumeScores = append(resumeScores, sm)
+						}
+					}
+					resumeFromDim = len(resumeScores)
+				}
+				// Cancel old task
+				h.metaStore().FailBenchmarkTask(int64(t["id"].(float64)), "superseded")
+			}
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		benchmarkRunners.Lock()
+		benchmarkRunners.m[modelName] = cancel
+		benchmarkRunners.Unlock()
+
+		go h.runBenchmarkOffline(ctx, taskID, modelName, resumeScores, resumeFromDim)
+
+		started = append(started, map[string]any{"id": taskID, "model": modelName})
+	}
+
+	jsonResponse(w, map[string]any{"started": started})
+}
+
+// runBenchmarkOffline executes benchmark in background goroutine.
+func (h *APIHandler) runBenchmarkOffline(ctx context.Context, taskID int64, modelName string, resumeScores []map[string]any, resumeFromDim int) {
+	defer func() {
+		benchmarkRunners.Lock()
+		delete(benchmarkRunners.m, modelName)
+		benchmarkRunners.Unlock()
+	}()
+
+	scores := resumeScores
+	var totalScore, totalTokSec float64
+	for _, s := range scores {
+		if sc, ok := s["score"].(float64); ok {
+			totalScore += sc
+		}
+		if ts, ok := s["tok_per_sec"].(float64); ok {
+			totalTokSec += ts
+		}
+	}
+
+	for i, dim := range benchmarkDimensions {
+		if i < resumeFromDim {
+			continue // skip already completed dimensions (断点续跑)
+		}
+
+		select {
+		case <-ctx.Done():
+			h.metaStore().FailBenchmarkTask(taskID, "cancelled")
+			return
+		default:
+		}
+
+		slog.Info("benchmark: testing dimension", "model", modelName, "dim", dim.Name, "progress", i+1)
+
+		dimCtx, dimCancel := context.WithTimeout(ctx, 5*time.Minute)
+		startTime := time.Now()
+		resp, err := h.ollama.GenerateChatWithContext(dimCtx, modelName, dim.Prompt)
+		elapsed := time.Since(startTime).Milliseconds()
+		dimCancel()
+
+		var response string
+		var tokenCount int
+		var tokPerSec float64
+
+		if err != nil {
+			if ctx.Err() != nil {
+				h.metaStore().FailBenchmarkTask(taskID, "cancelled")
+				return
+			}
+			response = "ERROR: " + err.Error()
+		} else {
+			if msgObj, ok := resp["message"].(map[string]any); ok {
+				response, _ = msgObj["content"].(string)
+			}
+			if ec, ok := resp["eval_count"].(float64); ok {
+				tokenCount = int(ec)
+			}
+			if ed, ok := resp["eval_duration"].(float64); ok && ed > 0 {
+				tokPerSec = float64(tokenCount) / (ed / 1e9)
+			}
+		}
+
+		score, reasoning := dim.Check(response)
+
+		// Store full response (up to 2000 chars for detail report)
+		respFull := response
+		if len([]rune(respFull)) > 2000 {
+			respFull = string([]rune(respFull)[:2000]) + "..."
+		}
+
+		scoreEntry := map[string]any{
+			"dimension_id": dim.ID, "name": dim.Name,
+			"score": score, "max_score": 10,
+			"response": respFull, "reasoning": reasoning,
+			"token_count": tokenCount, "duration_ms": elapsed, "tok_per_sec": tokPerSec,
+		}
+		scores = append(scores, scoreEntry)
+		totalScore += score
+		totalTokSec += tokPerSec
+
+		// Save progress after each dimension (断点续跑)
+		scoresJSON, _ := json.Marshal(scores)
+		avgTok := totalTokSec / float64(len(scores))
+		h.metaStore().UpdateBenchmarkProgress(taskID, string(scoresJSON), totalScore, len(scores), avgTok)
+	}
+
+	// Mark completed
+	maxTotal := len(benchmarkDimensions) * 10
+	pct := (totalScore / float64(maxTotal)) * 100
+	avgTok := totalTokSec / float64(len(scores))
+	scoresJSON, _ := json.Marshal(scores)
+	h.metaStore().CompleteBenchmarkTask(taskID, string(scoresJSON), totalScore, maxTotal, pct, avgTok)
+
+	slog.Info("benchmark: completed", "model", modelName, "score", totalScore, "pct", pct)
+}
+
+// StopBenchmarkTask cancels a running benchmark task.
+// POST /api/benchmark/stop  body: {"model":"model_name"}
+func (h *APIHandler) StopBenchmarkTask(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Model string `json:"model"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Model == "" {
+		jsonError(w, http.StatusBadRequest, "model required")
+		return
+	}
+	benchmarkRunners.Lock()
+	if cancel, ok := benchmarkRunners.m[req.Model]; ok {
+		cancel()
+	}
+	benchmarkRunners.Unlock()
+	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+// GetBenchmarkTasks returns running + recent completed tasks.
+// GET /api/benchmark/tasks
+func (h *APIHandler) GetBenchmarkTasks(w http.ResponseWriter, r *http.Request) {
+	all := h.metaStore().ListAllBenchmarkResults()
+	if all == nil {
+		all = []map[string]any{}
+	}
+	jsonResponse(w, all)
+}
+
+// StreamBenchmark is kept for backward compat (WebSocket real-time).
+// New approach: just polls /api/benchmark/tasks periodically from frontend.
 func (h *APIHandler) StreamBenchmark(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

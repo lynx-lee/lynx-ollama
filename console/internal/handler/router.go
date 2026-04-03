@@ -82,8 +82,11 @@ func NewRouter(ollamaSvc *service.OllamaService, dockerSvc *service.DockerServic
 	mux.HandleFunc("GET /api/chat/sessions/{id}/export", api.ExportChatSession)
 
 	// ── Benchmark ───────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/ws/benchmark", api.StreamBenchmark)
+	mux.HandleFunc("POST /api/benchmark/start", api.StartBenchmarkTask)
+	mux.HandleFunc("POST /api/benchmark/stop", api.StopBenchmarkTask)
+	mux.HandleFunc("GET /api/benchmark/tasks", api.GetBenchmarkTasks)
 	mux.HandleFunc("GET /api/benchmark/results", api.ListBenchmarkResults)
+	mux.HandleFunc("GET /api/ws/benchmark", api.StreamBenchmark)
 
 	// ── Static files (embedded SPA) ─────────────────────────────────
 	staticContent, _ := fs.Sub(staticFS, "static")

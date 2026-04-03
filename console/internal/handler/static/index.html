@@ -548,23 +548,43 @@
                 <div class="page-header">
                     <h2>能力评测</h2>
                     <div class="header-actions">
-                        <button class="btn btn-primary" onclick="startBenchmark()" id="benchmarkStartBtn">🚀 开始评测</button>
-                        <button class="btn btn-danger" onclick="stopBenchmark()" id="benchmarkStopBtn" style="display:none">⏹ 取消评测</button>
+                        <button class="btn btn-sm" onclick="toggleBenchmarkRules()" title="评分规则">📖 评分规则</button>
+                        <button class="btn btn-primary" onclick="startBenchmarkOffline()" id="benchmarkStartBtn">🚀 开始评测</button>
                     </div>
                 </div>
 
+                <!-- Scoring Rules (collapsible) -->
+                <div class="card" id="benchmarkRulesCard" style="display:none">
+                    <div class="card-header"><h3>📖 评分规则说明</h3></div>
+                    <div style="padding:12px;font-size:13px;line-height:1.8">
+                        <p>评测系统对每个模型进行 <strong>6 个维度</strong> 的能力测试，每项满分 <strong>10 分</strong>，总分 <strong>60 分</strong>。评测任务在后端离线执行，支持断点续跑。</p>
+                        <table class="benchmark-table" style="margin:12px 0">
+                            <thead><tr><th>维度</th><th>测试内容</th><th>评分标准</th></tr></thead>
+                            <tbody>
+                                <tr><td>🧠 逻辑推理</td><td>经典「3 开关 3 灯」推理题</td><td>核心思路（温度法）+5，操作描述+2，完整性+3</td></tr>
+                                <tr><td>🔢 数学计算</td><td>四则运算 + 圆面积计算</td><td>计算结果 252 +5，面积 78.54 +5</td></tr>
+                                <tr><td>💻 代码能力</td><td>Python 回文判断函数</td><td>函数定义+3，大小写处理+2，过滤+2，测试用例+2，代码块+1</td></tr>
+                                <tr><td>✍️ 创意写作</td><td>200 字微型故事「最后一盏路灯」</td><td>篇幅+5，修辞（比喻/拟人）+2，情感词汇 ×0.5</td></tr>
+                                <tr><td>📏 指令遵循</td><td>输出 3 个中国城市 JSON 数组</td><td>有效 JSON+4，3 条+2，字段完整+2，无多余文字+2</td></tr>
+                                <tr><td>🇨🇳 中文能力</td><td>成语解释 + 句子改写 + 西游记概括</td><td>成语含义+3，造句+1，文雅改写+3，概括+3</td></tr>
+                            </tbody>
+                        </table>
+                        <p style="color:var(--text-muted)">评分采用<strong>规则引擎</strong>自动打分（关键词匹配 + JSON 格式验证 + 语义检查），不依赖外部评判模型。每个维度测试完成后自动保存进度到 SQLite，支持断点续跑。</p>
+                    </div>
+                </div>
+
+                <!-- Model Selection Table -->
                 <div class="card">
                     <div class="card-header"><h3>📋 选择评测模型</h3></div>
-                    <div class="benchmark-model-select" id="benchmarkModelSelect">
+                    <div class="table-container" id="benchmarkModelSelect">
                         <div class="empty-state">加载中...</div>
                     </div>
                 </div>
 
-                <!-- Progress -->
-                <div class="card" id="benchmarkProgressCard" style="display:none">
-                    <div class="card-header"><h3>⏳ 评测进度</h3></div>
-                    <div class="progress-bar" style="margin:12px"><div class="progress-fill" id="benchmarkProgressFill"></div></div>
-                    <div class="progress-text" id="benchmarkProgressText" style="padding:0 12px 12px;font-size:13px">准备中...</div>
+                <!-- Running Tasks -->
+                <div class="card" id="benchmarkRunningCard" style="display:none">
+                    <div class="card-header"><h3>⏳ 运行中的评测任务</h3></div>
+                    <div id="benchmarkRunningBody"></div>
                 </div>
 
                 <!-- Results -->
@@ -572,12 +592,19 @@
                     <div class="card">
                         <div class="card-header"><h3>📊 评测结果</h3></div>
                         <div id="benchmarkResultsBody">
-                            <div class="empty-state">选择模型后点击「开始评测」<br><br>
-                                <strong>评测维度（6 项，每项 10 分）：</strong><br>
-                                🧠 逻辑推理 · 🔢 数学计算 · 💻 代码能力<br>
-                                ✍️ 创意写作 · 📏 指令遵循 · 🇨🇳 中文能力
-                            </div>
+                            <div class="empty-state">选择模型后点击「开始评测」，评测任务将在后端离线执行</div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Detail Modal -->
+                <div class="modal-overlay" id="benchmarkDetailModal" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+                    <div class="modal-content modal-lg">
+                        <div class="modal-header">
+                            <h3 id="benchmarkDetailTitle">评测详情</h3>
+                            <button class="modal-close" onclick="document.getElementById('benchmarkDetailModal').style.display='none'">&times;</button>
+                        </div>
+                        <div class="modal-body" id="benchmarkDetailBody"></div>
                     </div>
                 </div>
             </div>

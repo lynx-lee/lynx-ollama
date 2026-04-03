@@ -691,6 +691,27 @@ function renderModelType(type) {
     return map[type] || type || '--';
 }
 
+// Benchmark score cache for model list display
+let _benchmarkScoreCache = {};
+function loadBenchmarkScoreCache() {
+    api('/api/benchmark/results').then(results => {
+        _benchmarkScoreCache = {};
+        if (results) results.forEach(r => { _benchmarkScoreCache[r.model_name] = r; });
+    }).catch(() => {});
+}
+
+function renderModelBenchmark(modelName) {
+    const r = _benchmarkScoreCache[modelName];
+    if (!r || !r.scores) return '<span style="color:var(--text-muted);font-size:11px">--</span>';
+    const icons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳' };
+    const badges = r.scores.map(s => {
+        const ic = icons[s.dimension_id] || '';
+        const clr = s.score >= 8 ? 'var(--accent-green)' : s.score >= 5 ? 'var(--accent-yellow,#f0ad4e)' : 'var(--accent-red)';
+        return `<span title="${s.name}:${(s.score||0).toFixed(0)}" style="color:${clr};font-size:10px;font-weight:600">${ic}${(s.score||0).toFixed(0)}</span>`;
+    }).join(' ');
+    return `<div style="white-space:nowrap"><span style="font-weight:600;font-size:12px">${(r.percentage||0).toFixed(0)}%</span><br>${badges}</div>`;
+}
+
 function renderModels() {
     const container = document.getElementById('modelsContainer');
     if (!_allModels || _allModels.length === 0) {
@@ -736,12 +757,13 @@ function renderModels() {
                 <div class="card-header"><h3>💻 本地模型 (${localModels.length})</h3></div>
                 <div class="table-container">
                     <table>
-                        <thead><tr>${sortableHdr('名称','name')}<th>类型</th><th>能力</th>${sortableHdr('大小','size')}<th>参数</th><th>量化</th>${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
+                        <thead><tr>${sortableHdr('名称','name')}<th>类型</th><th>能力</th><th>评测</th>${sortableHdr('大小','size')}<th>参数</th><th>量化</th>${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
                         <tbody>${localModels.map(m => `
                             <tr>
                                 <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || ''}</span></td>
                                 <td>${renderModelType(m.model_type)}</td>
                                 <td>${renderModelCaps(m.capabilities)}</td>
+                                <td>${renderModelBenchmark(m.name)}</td>
                                 <td>${m.size_human}</td>
                                 <td>${m.parameters || '--'}</td>
                                 <td>${m.quantization || '--'}</td>
@@ -771,9 +793,10 @@ function renderModels() {
 
 async function loadModels() {
     try {
+        // Load benchmark scores first for inline display
+        await loadBenchmarkScoreCache();
         _allModels = await api('/api/models') || [];
         renderModels();
-        // Async: check model compatibility
         checkModelCompatibility();
     } catch (err) {
         showToast('加载模型列表失败: ' + err.message, 'error');
@@ -2996,139 +3019,157 @@ function formatRate(bytesPerSec) {
 }
 
 // ── Benchmark Module ────────────────────────────────────────────
-let benchmarkWs = null;
+let benchmarkPollTimer = null;
 
 function initBenchmark() {
     let models = (currentStatus && currentStatus.models) || _allModels || [];
     if (models.length > 0) {
-        renderBenchmarkModels(models);
+        renderBenchmarkModelTable(models);
     } else {
-        // Fetch models if not yet loaded
         api('/api/models').then(list => {
-            if (list && list.length) {
-                _allModels = list;
-                renderBenchmarkModels(list);
-            } else {
-                document.getElementById('benchmarkModelSelect').innerHTML = '<div class="empty-state">暂无模型</div>';
-            }
-        }).catch(() => {
-            document.getElementById('benchmarkModelSelect').innerHTML = '<div class="empty-state">加载模型失败</div>';
-        });
+            if (list && list.length) { _allModels = list; renderBenchmarkModelTable(list); }
+            else document.getElementById('benchmarkModelSelect').innerHTML = '<div class="empty-state">暂无模型</div>';
+        }).catch(() => { document.getElementById('benchmarkModelSelect').innerHTML = '<div class="empty-state">加载模型失败</div>'; });
     }
-    loadBenchmarkResults();
+    loadBenchmarkTasks();
 }
 
-function renderBenchmarkModels(models) {
+function renderBenchmarkModelTable(models) {
     const container = document.getElementById('benchmarkModelSelect');
     const filtered = models.filter(m => m.name && !m.name.toLowerCase().includes('embed'));
-    if (!filtered.length) {
-        container.innerHTML = '<div class="empty-state">暂无可评测的模型</div>';
-        return;
-    }
-    container.innerHTML = filtered
-        .map(m => `<label class="benchmark-model-check"><input type="checkbox" value="${escapeAttr(m.name)}"><span>${escapeHtml(m.name)}</span><span style="color:var(--text-muted);font-size:11px;margin-left:8px">${m.size_human || ''}</span></label>`)
-        .join('');
+    if (!filtered.length) { container.innerHTML = '<div class="empty-state">暂无可评测的模型</div>'; return; }
+
+    // Load benchmark results to show scores inline
+    api('/api/benchmark/results').then(results => {
+        const scoreMap = {};
+        if (results) results.forEach(r => { scoreMap[r.model_name] = r; });
+
+        const dimIcons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳' };
+        let html = `<table class="benchmark-table"><thead><tr><th style="width:30px"><input type="checkbox" id="benchmarkSelectAll" onchange="toggleBenchmarkSelectAll(this.checked)"></th><th>模型名称</th><th>大小</th><th>评测评分</th><th>评测时间</th></tr></thead><tbody>`;
+        filtered.forEach(m => {
+            const r = scoreMap[m.name];
+            let scoreHtml = '<span style="color:var(--text-muted)">未评测</span>';
+            let timeHtml = '--';
+            if (r && r.scores) {
+                const badges = r.scores.map(s => {
+                    const icon = dimIcons[s.dimension_id] || '📋';
+                    const clr = s.score >= 8 ? 'var(--accent-green)' : s.score >= 5 ? 'var(--accent-yellow,#f0ad4e)' : 'var(--accent-red)';
+                    return `<span title="${s.name}: ${(s.score||0).toFixed(0)}/10" style="color:${clr};font-weight:600;font-size:11px">${icon}${(s.score||0).toFixed(0)}</span>`;
+                }).join(' ');
+                scoreHtml = `<span style="font-weight:600">${(r.percentage||0).toFixed(0)}%</span> <span style="font-size:11px">(${(r.total_score||0).toFixed(1)}/${r.max_total||60})</span><br>${badges}`;
+                timeHtml = r.run_at ? new Date(r.run_at).toLocaleString('zh-CN') : '--';
+            }
+            html += `<tr><td><input type="checkbox" class="benchmark-model-cb" value="${escapeAttr(m.name)}"></td><td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || ''} ${m.parameters || ''}</span></td><td>${m.size_human || '--'}</td><td>${scoreHtml}</td><td style="font-size:11px">${timeHtml}</td></tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    }).catch(() => {
+        // Fallback without scores
+        let html = `<table class="benchmark-table"><thead><tr><th style="width:30px"><input type="checkbox" id="benchmarkSelectAll" onchange="toggleBenchmarkSelectAll(this.checked)"></th><th>模型名称</th><th>大小</th></tr></thead><tbody>`;
+        filtered.forEach(m => {
+            html += `<tr><td><input type="checkbox" class="benchmark-model-cb" value="${escapeAttr(m.name)}"></td><td><strong>${escapeHtml(m.name)}</strong></td><td>${m.size_human || '--'}</td></tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    });
 }
 
-async function loadBenchmarkResults() {
+function toggleBenchmarkSelectAll(checked) {
+    document.querySelectorAll('.benchmark-model-cb').forEach(cb => cb.checked = checked);
+}
+
+function toggleBenchmarkRules() {
+    const card = document.getElementById('benchmarkRulesCard');
+    card.style.display = card.style.display === 'none' ? '' : 'none';
+}
+
+async function startBenchmarkOffline() {
+    const checkboxes = document.querySelectorAll('.benchmark-model-cb:checked');
+    const models = Array.from(checkboxes).map(cb => cb.value);
+    if (models.length === 0) { showToast('请至少选择一个模型', 'error'); return; }
+
+    document.getElementById('benchmarkStartBtn').disabled = true;
     try {
-        const results = await api('/api/benchmark/results');
-        if (results && results.length > 0) {
-            renderBenchmarkResults(results);
+        const result = await api('/api/benchmark/start', { method: 'POST', body: JSON.stringify({ models }) });
+        if (result && result.started && result.started.length > 0) {
+            showToast(`已提交 ${result.started.length} 个评测任务（后端离线执行）`, 'success');
+        } else {
+            showToast('评测任务可能已在运行中', 'info');
+        }
+    } catch (e) {
+        showToast('提交评测失败: ' + e.message, 'error');
+    }
+    document.getElementById('benchmarkStartBtn').disabled = false;
+
+    // Start polling for progress
+    startBenchmarkPolling();
+}
+
+function startBenchmarkPolling() {
+    if (benchmarkPollTimer) return;
+    loadBenchmarkTasks();
+    benchmarkPollTimer = setInterval(loadBenchmarkTasks, 5000);
+}
+
+function stopBenchmarkPolling() {
+    if (benchmarkPollTimer) { clearInterval(benchmarkPollTimer); benchmarkPollTimer = null; }
+}
+
+async function loadBenchmarkTasks() {
+    try {
+        const tasks = await api('/api/benchmark/tasks');
+        if (!tasks) return;
+
+        // Show running tasks
+        const running = tasks.filter(t => t.status === 'running');
+        const runCard = document.getElementById('benchmarkRunningCard');
+        if (running.length > 0) {
+            runCard.style.display = '';
+            let html = '<div class="table-container"><table class="benchmark-table"><thead><tr><th>模型</th><th>进度</th><th>当前得分</th><th>操作</th></tr></thead><tbody>';
+            running.forEach(t => {
+                const pct = t.total_dims > 0 ? ((t.completed_dims / t.total_dims) * 100).toFixed(0) : 0;
+                html += `<tr><td><strong>${escapeHtml(t.model_name)}</strong></td><td><div style="display:flex;align-items:center;gap:6px"><div class="progress-bar" style="flex:1;height:6px"><div class="progress-fill" style="width:${pct}%"></div></div><span>${t.completed_dims}/${t.total_dims}</span></div></td><td>${(t.total_score||0).toFixed(1)}</td><td><button class="btn btn-sm btn-danger" onclick="stopBenchmarkModel('${escapeAttr(t.model_name)}')">⏹</button></td></tr>`;
+            });
+            html += '</tbody></table></div>';
+            document.getElementById('benchmarkRunningBody').innerHTML = html;
+            if (!benchmarkPollTimer) startBenchmarkPolling();
+        } else {
+            runCard.style.display = 'none';
+            stopBenchmarkPolling();
+        }
+
+        // Show completed results
+        const completed = tasks.filter(t => t.status === 'completed');
+        if (completed.length > 0) {
+            renderBenchmarkResults(completed);
         }
     } catch { /* ignore */ }
 }
 
-function startBenchmark() {
-    const checkboxes = document.querySelectorAll('#benchmarkModelSelect input[type="checkbox"]:checked');
-    const models = Array.from(checkboxes).map(cb => cb.value);
-    if (models.length === 0) { showToast('请至少选择一个模型', 'error'); return; }
-
-    document.getElementById('benchmarkStartBtn').style.display = 'none';
-    document.getElementById('benchmarkStopBtn').style.display = '';
-    document.getElementById('benchmarkProgressCard').style.display = '';
-    document.getElementById('benchmarkProgressFill').style.width = '0%';
-    document.getElementById('benchmarkProgressText').textContent = '正在连接...';
-
-    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    benchmarkWs = new WebSocket(`${wsProtocol}//${location.host}/api/ws/benchmark?key=${encodeURIComponent(getApiKey())}`);
-
-    benchmarkWs.onopen = () => {
-        benchmarkWs.send(JSON.stringify({ models }));
-    };
-
-    benchmarkWs.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            switch (data.phase) {
-                case 'testing':
-                    document.getElementById('benchmarkProgressFill').style.width = `${(data.progress / data.total) * 100}%`;
-                    document.getElementById('benchmarkProgressText').textContent = `正在测试 ${data.model} — ${data.dimension} (${data.progress}/${data.total})`;
-                    break;
-                case 'score':
-                    document.getElementById('benchmarkProgressFill').style.width = `${(data.progress / data.total) * 100}%`;
-                    break;
-                case 'done':
-                    document.getElementById('benchmarkProgressFill').style.width = '100%';
-                    document.getElementById('benchmarkProgressText').textContent = '评测完成！';
-                    benchmarkFinish();
-                    renderBenchmarkResults(data.results);
-                    benchmarkWs.close();
-                    break;
-                case 'stopped':
-                    document.getElementById('benchmarkProgressText').textContent = '评测已取消（已完成部分已保存）';
-                    benchmarkFinish();
-                    if (data.results && data.results.length) renderBenchmarkResults(data.results);
-                    benchmarkWs.close();
-                    break;
-                case 'error':
-                    showToast('评测错误: ' + data.error, 'error');
-                    benchmarkFinish();
-                    benchmarkWs.close();
-                    break;
-            }
-        } catch { /* ignore */ }
-    };
-
-    benchmarkWs.onerror = () => {
-        showToast('评测连接失败', 'error');
-        benchmarkFinish();
-    };
-    benchmarkWs.onclose = () => { benchmarkWs = null; };
+async function stopBenchmarkModel(model) {
+    try {
+        await api('/api/benchmark/stop', { method: 'POST', body: JSON.stringify({ model }) });
+        showToast(`已取消 ${model} 的评测`, 'info');
+        loadBenchmarkTasks();
+    } catch {}
 }
 
-function stopBenchmark() {
-    if (benchmarkWs && benchmarkWs.readyState === WebSocket.OPEN) {
-        benchmarkWs.send(JSON.stringify({ type: 'stop' }));
-    }
-}
-
-function benchmarkFinish() {
-    document.getElementById('benchmarkStartBtn').style.display = '';
-    document.getElementById('benchmarkStopBtn').style.display = 'none';
-}
+const dimIcons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳' };
 
 function renderBenchmarkResults(results) {
     if (!results || results.length === 0) return;
     const body = document.getElementById('benchmarkResultsBody');
 
-    // Dimension icons
-    const dimIcons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳' };
-
-    // Leaderboard table
     let html = `<div class="table-container"><table class="benchmark-table">
         <thead><tr><th>排名</th><th>模型</th><th>总分</th><th>百分比</th><th>平均速度</th>`;
-
-    // Add dimension columns from first result
     if (results[0].scores) {
         results[0].scores.forEach(s => {
             const icon = dimIcons[s.dimension_id] || '📋';
             html += `<th title="${s.name || s.dimension_id}">${icon}</th>`;
         });
     }
-    html += `<th>时间</th></tr></thead><tbody>`;
+    html += `<th>评测时间</th><th>详情</th></tr></thead><tbody>`;
 
-    // Sort by percentage desc
     const sorted = [...results].sort((a, b) => (b.percentage || 0) - (a.percentage || 0));
     sorted.forEach((r, i) => {
         const pct = (r.percentage || 0).toFixed(1);
@@ -3147,31 +3188,46 @@ function renderBenchmarkResults(results) {
                 html += `<td style="text-align:center"><span style="color:${clr};font-weight:600" title="${s.reasoning || ''}">${sc}</span></td>`;
             });
         }
-        html += `<td style="font-size:11px;color:var(--text-muted)">${r.run_at ? new Date(r.run_at).toLocaleString('zh-CN') : '--'}</td></tr>`;
+        html += `<td style="font-size:11px;color:var(--text-muted)">${r.run_at ? new Date(r.run_at).toLocaleString('zh-CN') : '--'}</td>`;
+        html += `<td><button class="btn btn-sm" onclick="showBenchmarkDetail('${escapeAttr(r.model_name)}', ${i})" title="查看详细报告">📄</button></td></tr>`;
     });
-
     html += '</tbody></table></div>';
+    body.innerHTML = html;
 
-    // Detail cards for each model
-    sorted.forEach(r => {
-        if (!r.scores) return;
-        html += `<div class="card" style="margin-top:12px">
-            <div class="card-header"><h3>${escapeHtml(r.model_name)} — 详细评分</h3></div>
-            <div class="benchmark-detail-grid">`;
+    // Store results for detail modal access
+    window._benchmarkResults = sorted;
+}
+
+function showBenchmarkDetail(modelName, idx) {
+    const results = window._benchmarkResults;
+    if (!results || !results[idx]) return;
+    const r = results[idx];
+
+    document.getElementById('benchmarkDetailTitle').textContent = `${modelName} — 评测详细报告`;
+    let html = `<div style="margin-bottom:16px">
+        <strong>总分：</strong>${(r.total_score||0).toFixed(1)} / ${r.max_total||60}（${(r.percentage||0).toFixed(1)}%）<br>
+        <strong>平均速度：</strong>${(r.avg_tok_sec||0).toFixed(1)} tok/s<br>
+        <strong>评测时间：</strong>${r.run_at ? new Date(r.run_at).toLocaleString('zh-CN') : '--'}<br>
+        ${r.model_digest ? `<strong>模型版本：</strong><code style="font-size:11px">${escapeHtml(r.model_digest.substring(0,16))}...</code>` : ''}
+    </div>`;
+
+    if (r.scores) {
         r.scores.forEach(s => {
             const icon = dimIcons[s.dimension_id] || '📋';
-            const pct = ((s.score / (s.max_score || 10)) * 100).toFixed(0);
-            html += `<div class="benchmark-dim-card">
-                <div class="benchmark-dim-header">${icon} ${s.name || s.dimension_id} <span style="float:right;font-weight:600">${(s.score||0).toFixed(1)}/10</span></div>
-                <div class="progress-bar" style="height:4px;margin:6px 0"><div class="progress-fill" style="width:${pct}%"></div></div>
-                <div style="font-size:11px;color:var(--text-muted)">${s.reasoning || ''}</div>
-                ${s.tok_per_sec ? `<div style="font-size:11px;color:var(--text-muted)">${s.token_count || 0} tokens · ${((s.duration_ms||0)/1000).toFixed(1)}s · ${(s.tok_per_sec||0).toFixed(1)} tok/s</div>` : ''}
+            const pctBar = ((s.score / (s.max_score || 10)) * 100).toFixed(0);
+            const clr = s.score >= 8 ? 'var(--accent-green)' : s.score >= 5 ? 'var(--accent-yellow,#f0ad4e)' : 'var(--accent-red)';
+            html += `<div class="benchmark-detail-section">
+                <div class="benchmark-dim-header">${icon} ${s.name || s.dimension_id} <span style="float:right;font-weight:700;color:${clr}">${(s.score||0).toFixed(1)} / 10</span></div>
+                <div class="progress-bar" style="height:4px;margin:6px 0"><div class="progress-fill" style="width:${pctBar}%;background:${clr}"></div></div>
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px"><strong>评分依据：</strong>${escapeHtml(s.reasoning || '--')}</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${s.token_count ? `${s.token_count} tokens · ${((s.duration_ms||0)/1000).toFixed(1)}s · ${(s.tok_per_sec||0).toFixed(1)} tok/s` : ''}</div>
+                <details style="margin-top:4px"><summary style="font-size:12px;cursor:pointer;color:var(--accent-blue)">查看模型原始回答</summary><pre style="font-size:11px;white-space:pre-wrap;max-height:300px;overflow-y:auto;padding:8px;background:var(--bg-secondary);border-radius:4px;margin-top:4px">${escapeHtml(s.response || '无')}</pre></details>
             </div>`;
         });
-        html += '</div></div>';
-    });
+    }
 
-    body.innerHTML = html;
+    document.getElementById('benchmarkDetailBody').innerHTML = html;
+    document.getElementById('benchmarkDetailModal').style.display = 'flex';
 }
 
 // ── Model Compare Module ────────────────────────────────────────
