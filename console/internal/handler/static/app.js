@@ -3126,6 +3126,77 @@ function populateCompareSelects(models) {
     });
 }
 
+// ── Compare Resizer (draggable split) ───────────────────────────
+(function initCompareResizer() {
+    const resizer = document.getElementById('compareResizer');
+    const panelA = document.getElementById('comparePanelA');
+    const panelB = document.getElementById('comparePanelB');
+    const container = document.getElementById('comparePanels');
+    if (!resizer || !panelA || !panelB || !container) return;
+
+    let dragging = false;
+
+    resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        dragging = true;
+        resizer.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const rect = container.getBoundingClientRect();
+        const offset = e.clientX - rect.left;
+        const totalW = rect.width;
+        const resizerW = resizer.offsetWidth;
+        // Clamp between 15% and 85%
+        const minPx = totalW * 0.15;
+        const maxPx = totalW * 0.85;
+        const clamped = Math.max(minPx, Math.min(maxPx, offset));
+        const pctA = (clamped / totalW) * 100;
+        const pctB = ((totalW - clamped - resizerW) / totalW) * 100;
+        panelA.style.flex = `0 0 ${pctA}%`;
+        panelB.style.flex = `0 0 ${pctB}%`;
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        resizer.classList.remove('active');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+    });
+
+    // Touch support for mobile/tablet
+    resizer.addEventListener('touchstart', (e) => {
+        dragging = true;
+        resizer.classList.add('active');
+    }, { passive: true });
+
+    document.addEventListener('touchmove', (e) => {
+        if (!dragging) return;
+        const touch = e.touches[0];
+        const rect = container.getBoundingClientRect();
+        const offset = touch.clientX - rect.left;
+        const totalW = rect.width;
+        const resizerW = resizer.offsetWidth;
+        const minPx = totalW * 0.15;
+        const maxPx = totalW * 0.85;
+        const clamped = Math.max(minPx, Math.min(maxPx, offset));
+        const pctA = (clamped / totalW) * 100;
+        const pctB = ((totalW - clamped - resizerW) / totalW) * 100;
+        panelA.style.flex = `0 0 ${pctA}%`;
+        panelB.style.flex = `0 0 ${pctB}%`;
+    }, { passive: true });
+
+    document.addEventListener('touchend', () => {
+        if (!dragging) return;
+        dragging = false;
+        resizer.classList.remove('active');
+    });
+})();
+
 function toggleCompareSettings() {
     const panel = document.getElementById('compareSettingsPanel');
     panel.style.display = panel.style.display === 'none' ? 'block' : 'none';

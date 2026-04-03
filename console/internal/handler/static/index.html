@@ -513,8 +513,8 @@
                     <div class="compare-input-area">
                         <textarea id="compareInput" class="chat-input" placeholder="输入相同的 prompt 发送到两个模型...（Ctrl+Enter 发送）" rows="2" style="width:100%" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();sendCompare()}"></textarea>
                     </div>
-                    <div class="compare-panels">
-                        <div class="compare-panel">
+                    <div class="compare-panels" id="comparePanels">
+                        <div class="compare-panel" id="comparePanelA">
                             <div class="compare-panel-header">
                                 <span id="compareLabelA">模型 A</span>
                                 <button class="chat-copy-btn" onclick="copySingleCompare('A')" title="复制此模型输出">📋</button>
@@ -524,7 +524,8 @@
                             </div>
                             <div class="compare-panel-stats" id="compareStatsA"></div>
                         </div>
-                        <div class="compare-panel">
+                        <div class="compare-resizer" id="compareResizer"></div>
+                        <div class="compare-panel" id="comparePanelB">
                             <div class="compare-panel-header">
                                 <span id="compareLabelB">模型 B</span>
                                 <button class="chat-copy-btn" onclick="copySingleCompare('B')" title="复制此模型输出">📋</button>

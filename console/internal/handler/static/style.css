@@ -325,6 +325,7 @@ body {
 
 .page { display: none; }
 .page.active { display: block; animation: fadeIn 0.3s ease; }
+#page-compare.active, #page-chat.active { display: flex; flex-direction: column; height: calc(100vh - 48px); }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -1683,7 +1684,8 @@ tbody tr:hover { background: var(--bg-hover); }
 .compare-page {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 48px);
+    flex: 1;
+    height: 100%;
     overflow: hidden;
 }
 .compare-toolbar {
@@ -1707,9 +1709,7 @@ tbody tr:hover { background: var(--bg-hover); }
 }
 .compare-panels {
     flex: 1;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0;
+    display: flex;
     min-height: 0;
     overflow: hidden;
 }
@@ -1717,9 +1717,41 @@ tbody tr:hover { background: var(--bg-hover); }
     display: flex;
     flex-direction: column;
     min-height: 0;
-    border-right: 1px solid var(--border-color);
+    min-width: 0;
+    flex: 1 1 50%;
+    overflow: hidden;
 }
-.compare-panel:last-child { border-right: none; }
+.compare-panel:first-child { border-right: none; }
+.compare-resizer {
+    flex-shrink: 0;
+    width: 5px;
+    cursor: col-resize;
+    background: var(--border-color);
+    position: relative;
+    z-index: 10;
+    transition: background 0.15s;
+}
+.compare-resizer:hover,
+.compare-resizer.active {
+    background: var(--accent-blue);
+}
+.compare-resizer::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 3px;
+    height: 32px;
+    border-radius: 2px;
+    background: var(--text-muted);
+    opacity: 0.4;
+}
+.compare-resizer:hover::after,
+.compare-resizer.active::after {
+    opacity: 0.8;
+    background: var(--accent-blue);
+}
 .compare-panel-body {
     flex: 1;
     overflow-y: auto;
@@ -1832,8 +1864,9 @@ tbody tr:hover { background: var(--bg-hover); }
 }
 
 @media (max-width: 768px) {
-    .compare-panels { grid-template-columns: 1fr; }
-    .compare-panel { border-right: none; border-bottom: 1px solid var(--border-color); }
+    .compare-panels { flex-direction: column; }
+    .compare-panel { flex: 1 1 50%; }
+    .compare-resizer { display: none; }
 }
 
 /* ── Performance Monitor ─────────────────────────────────────── */
