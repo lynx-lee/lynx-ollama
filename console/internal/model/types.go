@@ -56,7 +56,19 @@ type PerfMetrics struct {
 	NetTx        int64   `json:"net_tx"`         // Network transmitted cumulative (bytes)
 	BlockRead    int64   `json:"block_read"`     // Block IO read cumulative (bytes)
 	BlockWrite   int64   `json:"block_write"`    // Block IO write cumulative (bytes)
-	InferMs      int64   `json:"infer_ms"`       // Latest inference latency (ms), 0 if none
+	InferMs      int64   `json:"infer_ms"`       // Deprecated: use InferEvents
+}
+
+// InferEvent represents a single inference request parsed from Ollama GIN logs.
+type InferEvent struct {
+	Timestamp  int64   `json:"ts"`        // Unix timestamp (seconds)
+	ClientIP   string  `json:"client_ip"` // Docker network IP
+	ClientName string  `json:"client"`    // Resolved name: "console" / "external" / IP
+	Method     string  `json:"method"`    // POST
+	Path       string  `json:"path"`      // /api/chat or /v1/chat/completions
+	Status     int     `json:"status"`    // HTTP status code
+	DurationMs int64   `json:"duration_ms"` // Request duration in ms
+	Model      string  `json:"model"`     // Model name (if extractable from logs context)
 }
 
 // ModelInfo represents a downloaded model.

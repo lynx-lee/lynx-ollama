@@ -3001,14 +3001,8 @@ function renderPerfCharts() {
     }
     setTimeAxis('perfDiskTime');
 
-    // --- Inference latency ---
-    const inferPts = visible.map(p => ({ ts: p.ts, val: p.infer_ms || 0 }));
-    const inferMax = Math.max(100, ...inferPts.map(p => p.val)) * 1.2;
-    const inferLast = inferPts[inferPts.length - 1].val;
-    document.getElementById('perfInferVal').textContent = inferLast > 0 ? inferLast + ' ms' : '-- ms';
-    document.getElementById('perfInferLine').setAttribute('points', toPolyline(inferPts, inferMax));
-    document.getElementById('perfInferArea').setAttribute('points', toArea(inferPts, inferMax));
-    setTimeAxis('perfInferTime');
+    // --- Inference latency (scatter dots + table from /api/infer/events) ---
+    renderInferEvents();
 }
 
 function formatRate(bytesPerSec) {
@@ -3017,6 +3011,94 @@ function formatRate(bytesPerSec) {
     if (bytesPerSec > 1e3) return (bytesPerSec / 1e3).toFixed(1) + ' KB/s';
     return bytesPerSec.toFixed(0) + ' B/s';
 }
+
+// ── Inference Events (scatter + table) ─────────────────────────
+let inferEvents = [];
+let inferPollTimer = null;
+
+function startInferPoll() {
+    if (inferPollTimer) return;
+    fetchInferEvents();
+    inferPollTimer = setInterval(fetchInferEvents, 5000);
+}
+
+function stopInferPoll() {
+    if (inferPollTimer) { clearInterval(inferPollTimer); inferPollTimer = null; }
+}
+
+async function fetchInferEvents() {
+    try {
+        const events = await api(`/api/infer/events?window=${perfWindow}`);
+        if (events) { inferEvents = events; renderInferEvents(); }
+    } catch {}
+}
+
+function renderInferEvents() {
+    const svg = document.querySelector('#perfInfer .perf-svg');
+    const tbody = document.getElementById('perfInferBody');
+    const valEl = document.getElementById('perfInferVal');
+    if (!svg || !tbody) return;
+
+    // Remove old scatter dots
+    svg.querySelectorAll('.infer-dot').forEach(el => el.remove());
+
+    if (!inferEvents || inferEvents.length === 0) {
+        valEl.textContent = '-- ms';
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">等待推理请求...</td></tr>';
+        return;
+    }
+
+    // Show latest
+    const last = inferEvents[inferEvents.length - 1];
+    valEl.textContent = formatDurationMs(last.duration_ms);
+
+    // Scatter dots on SVG
+    const now = Math.max(...inferEvents.map(e => e.ts));
+    const windowStart = now - perfWindow;
+    const visible = inferEvents.filter(e => e.ts >= windowStart);
+    if (visible.length > 0) {
+        const maxMs = Math.max(1000, ...visible.map(e => e.duration_ms)) * 1.2;
+        visible.forEach(e => {
+            const x = ((e.ts - windowStart) / perfWindow) * 300;
+            const y = 120 - (e.duration_ms / maxMs) * 120;
+            const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            dot.setAttribute('cx', x.toFixed(1));
+            dot.setAttribute('cy', Math.max(2, Math.min(118, y)).toFixed(1));
+            dot.setAttribute('r', '3');
+            dot.setAttribute('class', 'infer-dot');
+            const clr = e.client === 'console' ? '#8b5cf6' : e.client === 'external' ? '#f97316' : '#22d3ee';
+            dot.setAttribute('fill', clr);
+            dot.setAttribute('opacity', '0.8');
+            const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+            title.textContent = `${formatDurationMs(e.duration_ms)} | ${e.client} | ${e.path}`;
+            dot.appendChild(title);
+            svg.appendChild(dot);
+        });
+    }
+
+    // Table (most recent first, max 10 rows)
+    const recent = [...inferEvents].reverse().slice(0, 10);
+    tbody.innerHTML = recent.map(e => {
+        const t = new Date(e.ts * 1000).toTimeString().slice(0, 8);
+        const clr = e.status === 200 ? '' : 'color:var(--accent-red)';
+        const clientBadge = e.client === 'console' ? '<span style="color:#8b5cf6">🖥 console</span>'
+            : e.client === 'external' ? '<span style="color:#f97316">🌐 external</span>'
+            : `<span style="color:#22d3ee">${escapeHtml(e.client)}</span>`;
+        return `<tr><td>${t}</td><td style="font-weight:600">${formatDurationMs(e.duration_ms)}</td><td>${clientBadge}</td><td style="font-size:11px">${escapeHtml(e.path)}</td><td style="${clr}">${e.status}</td></tr>`;
+    }).join('');
+}
+
+function formatDurationMs(ms) {
+    if (ms >= 60000) return (ms / 60000).toFixed(1) + ' min';
+    if (ms >= 1000) return (ms / 1000).toFixed(1) + ' s';
+    return ms + ' ms';
+}
+
+// Hook infer polling into dashboard lifecycle
+const _origDashEnter = onDashboardEnter;
+onDashboardEnter = function() { _origDashEnter(); startInferPoll(); };
+const _origDashLeave = onDashboardLeave;
+onDashboardLeave = function() { _origDashLeave(); stopInferPoll(); };
 
 // ── Benchmark Module ────────────────────────────────────────────
 let benchmarkPollTimer = null;

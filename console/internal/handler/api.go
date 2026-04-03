@@ -40,6 +40,9 @@ type APIHandler struct {
 
 	// Last inference latency tracking (updated by StreamChat on each "done")
 	lastInferMs atomic.Int64
+
+	// Inference event tracker (parses Ollama container GIN logs)
+	inferTracker *service.InferenceTracker
 }
 
 // NewAPIHandler creates a new APIHandler.
@@ -51,8 +54,10 @@ func NewAPIHandler(ollama *service.OllamaService, docker *service.DockerService,
 		chatFiles: service.NewChatFileStore(cfg.ChatFilesDir),
 		cfg:       cfg,
 		version:   version,
+		inferTracker: service.NewInferenceTracker(500),
 	}
 	h.statusHub = NewStatusHub(h)
+	h.inferTracker.Start(5 * time.Second)
 	return h
 }
 
@@ -1899,8 +1904,10 @@ func (h *APIHandler) StreamPerf(w http.ResponseWriter, r *http.Request) {
 		metrics := h.docker.GetPerfMetrics(ctx)
 		cancel()
 
-		// Inject inference latency
-		metrics.InferMs = h.lastInferMs.Load()
+		// Inject latest inference event latency (from log parser, not StreamChat)
+		if events := h.inferTracker.GetRecentEvents(1); len(events) > 0 {
+			metrics.InferMs = events[0].DurationMs
+		}
 
 		mu.Lock()
 		curMode := mode
@@ -2320,6 +2327,23 @@ var benchmarkDimensions = []struct {
 			return score, fmt.Sprintf("中文理解与生成: %.0f/10", score)
 		},
 	},
+}
+
+// ── Inference Events ─────────────────────────────────────────────
+
+// GetInferenceEvents returns recent inference events parsed from Ollama logs.
+// GET /api/infer/events?window=300  (default 300 seconds)
+func (h *APIHandler) GetInferenceEvents(w http.ResponseWriter, r *http.Request) {
+	windowStr := r.URL.Query().Get("window")
+	window := int64(300)
+	if v, err := strconv.ParseInt(windowStr, 10, 64); err == nil && v > 0 {
+		window = v
+	}
+	events := h.inferTracker.GetEvents(window)
+	if events == nil {
+		events = []model.InferEvent{}
+	}
+	jsonResponse(w, events)
 }
 
 // ── Benchmark: Offline task runner ───────────────────────────────

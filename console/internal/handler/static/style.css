@@ -1965,6 +1965,16 @@ tbody tr:hover { background: var(--bg-hover); }
 .perf-legend-item { display: flex; align-items: center; gap: 4px; }
 .perf-legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 
+.perf-panel-wide { grid-column: span 3; }
+@media (max-width: 1024px) { .perf-panel-wide { grid-column: span 2; } }
+@media (max-width: 640px) { .perf-panel-wide { grid-column: span 1; } }
+.perf-infer-table-wrap { max-height: 180px; overflow-y: auto; }
+.perf-infer-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.perf-infer-table th { position: sticky; top: 0; background: var(--bg-secondary); padding: 3px 6px; text-align: left; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); }
+.perf-infer-table td { padding: 2px 6px; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
+.infer-dot { transition: opacity 0.15s; cursor: default; }
+.infer-dot:hover { opacity: 1 !important; r: 5; }
+
 @media (max-width: 1024px) {
     .perf-grid { grid-template-columns: repeat(2, 1fr); }
 }
