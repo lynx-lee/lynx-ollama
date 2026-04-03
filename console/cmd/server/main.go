@@ -17,7 +17,7 @@ import (
 )
 
 // Version is set at build time via -ldflags.
-var Version = "v2.5.3"
+var Version = "v2.5.4"
 
 func main() {
 	showVersion := flag.Bool("version", false, "Show version and exit")

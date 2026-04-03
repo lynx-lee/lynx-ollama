@@ -3144,7 +3144,7 @@ function handleBenchmarkTasks(tasks) {
         let html = '<div class="table-container"><table class="benchmark-table"><thead><tr><th>模型</th><th>进度</th><th>当前得分</th><th>操作</th></tr></thead><tbody>';
         running.forEach(t => {
             const pct = t.total_dims > 0 ? ((t.completed_dims / t.total_dims) * 100).toFixed(0) : 0;
-            html += `<tr><td><strong>${escapeHtml(t.model_name)}</strong></td><td><div style="display:flex;align-items:center;gap:6px"><div class="progress-bar" style="flex:1;height:6px"><div class="progress-fill" style="width:${pct}%"></div></div><span>${t.completed_dims}/${t.total_dims}</span></div></td><td>${(t.total_score||0).toFixed(1)}</td><td><button class="btn btn-sm btn-danger" onclick="stopBenchmarkModel('${escapeAttr(t.model_name)}')">⏹</button></td></tr>`;
+            html += `<tr><td><strong>${escapeHtml(t.model_name)}</strong></td><td><div style="display:flex;align-items:center;gap:6px"><div class="progress-bar" style="flex:1;height:6px"><div class="progress-fill" style="width:${pct}%"></div></div><span>${t.completed_dims}/${t.total_dims}</span></div></td><td>${(t.total_score||0).toFixed(1)}</td><td><button class="btn btn-sm btn-danger" onclick="stopBenchmarkTask(${t.id},'${escapeAttr(t.model_name)}')">⏹</button></td></tr>`;
         });
         html += '</tbody></table></div>';
         document.getElementById('benchmarkRunningBody').innerHTML = html;
@@ -3229,11 +3229,21 @@ async function startBenchmarkOffline() {
     connectBenchmarkWs();
 }
 
-async function stopBenchmarkModel(model) {
+async function stopBenchmarkTask(id, model) {
     try {
-        await api('/api/benchmark/stop', { method: 'POST', body: JSON.stringify({ model }) });
+        await api('/api/benchmark/stop', { method: 'POST', body: JSON.stringify({ id }) });
         showToast(`已取消 ${model} 的评测`, 'info');
     } catch {}
+}
+
+async function stopAllBenchmarks() {
+    const rows = document.querySelectorAll('#benchmarkRunningBody tr');
+    let count = 0;
+    for (const row of rows) {
+        const btn = row.querySelector('.btn-danger');
+        if (btn) { btn.click(); count++; }
+    }
+    if (count === 0) showToast('没有运行中的任务', 'info');
 }
 
 const dimIcons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳' };

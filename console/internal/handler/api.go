@@ -2354,11 +2354,11 @@ func (h *APIHandler) GetInferenceEvents(w http.ResponseWriter, r *http.Request) 
 // Benchmark tasks run as background goroutines, independent of client connection.
 // Progress is saved to SQLite after each dimension (断点续跑).
 
-// benchmarkRunners tracks running benchmark goroutines (modelName → cancel func).
+// benchmarkRunners tracks running benchmark goroutines (taskID → cancel func).
 var benchmarkRunners = struct {
 	sync.Mutex
-	m map[string]context.CancelFunc
-}{m: make(map[string]context.CancelFunc)}
+	m map[int64]context.CancelFunc
+}{m: make(map[int64]context.CancelFunc)}
 
 // StartBenchmarkTask starts offline benchmark for given models.
 // POST /api/benchmark/start  body: {"models":["model1","model2",...]}
@@ -2373,14 +2373,6 @@ func (h *APIHandler) StartBenchmarkTask(w http.ResponseWriter, r *http.Request) 
 
 	started := []map[string]any{}
 	for _, modelName := range req.Models {
-		// Check if already running
-		benchmarkRunners.Lock()
-		if _, ok := benchmarkRunners.m[modelName]; ok {
-			benchmarkRunners.Unlock()
-			continue // skip already running
-		}
-		benchmarkRunners.Unlock()
-
 		// Get model digest for version tracking
 		digest := ""
 		if info, err := h.ollama.ShowModel(modelName); err == nil {
@@ -2395,32 +2387,12 @@ func (h *APIHandler) StartBenchmarkTask(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		// Check for resumable: find completed dimensions from a previous running task
-		resumeScores := []map[string]any{}
-		resumeFromDim := 0
-		// Check if there's a previous incomplete run for this model
-		running := h.metaStore().GetRunningBenchmarks()
-		for _, t := range running {
-			if t["model_name"] == modelName && t["id"] != taskID {
-				if sc, ok := t["scores"].([]any); ok && len(sc) > 0 {
-					for _, s := range sc {
-						if sm, ok := s.(map[string]any); ok {
-							resumeScores = append(resumeScores, sm)
-						}
-					}
-					resumeFromDim = len(resumeScores)
-				}
-				// Cancel old task
-				h.metaStore().FailBenchmarkTask(int64(t["id"].(float64)), "superseded")
-			}
-		}
-
 		ctx, cancel := context.WithCancel(context.Background())
 		benchmarkRunners.Lock()
-		benchmarkRunners.m[modelName] = cancel
+		benchmarkRunners.m[taskID] = cancel
 		benchmarkRunners.Unlock()
 
-		go h.runBenchmarkOffline(ctx, taskID, modelName, resumeScores, resumeFromDim)
+		go h.runBenchmarkOffline(ctx, taskID, modelName, nil, 0)
 
 		started = append(started, map[string]any{"id": taskID, "model": modelName})
 	}
@@ -2432,7 +2404,7 @@ func (h *APIHandler) StartBenchmarkTask(w http.ResponseWriter, r *http.Request) 
 func (h *APIHandler) runBenchmarkOffline(ctx context.Context, taskID int64, modelName string, resumeScores []map[string]any, resumeFromDim int) {
 	defer func() {
 		benchmarkRunners.Lock()
-		delete(benchmarkRunners.m, modelName)
+		delete(benchmarkRunners.m, taskID)
 		benchmarkRunners.Unlock()
 	}()
 
@@ -2523,22 +2495,57 @@ func (h *APIHandler) runBenchmarkOffline(ctx context.Context, taskID int64, mode
 	slog.Info("benchmark: completed", "model", modelName, "score", totalScore, "pct", pct)
 }
 
-// StopBenchmarkTask cancels a running benchmark task.
-// POST /api/benchmark/stop  body: {"model":"model_name"}
+// StopBenchmarkTask cancels running benchmark task(s).
+// POST /api/benchmark/stop  body: {"model":"model_name"} or {"id":123}
+// If model is given, stops ALL running tasks for that model.
+// If id is given, stops that specific task.
 func (h *APIHandler) StopBenchmarkTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Model string `json:"model"`
+		ID    int64  `json:"id"`
 	}
-	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Model == "" {
-		jsonError(w, http.StatusBadRequest, "model required")
+	if json.NewDecoder(r.Body).Decode(&req) != nil || (req.Model == "" && req.ID == 0) {
+		jsonError(w, http.StatusBadRequest, "model or id required")
 		return
 	}
-	benchmarkRunners.Lock()
-	if cancel, ok := benchmarkRunners.m[req.Model]; ok {
-		cancel()
+
+	cancelled := 0
+
+	if req.ID > 0 {
+		// Cancel specific task by ID
+		benchmarkRunners.Lock()
+		if cancel, ok := benchmarkRunners.m[req.ID]; ok {
+			cancel()
+			delete(benchmarkRunners.m, req.ID)
+		}
+		benchmarkRunners.Unlock()
+		h.metaStore().FailBenchmarkTask(req.ID, "cancelled")
+		cancelled++
+	} else {
+		// Cancel all running tasks for this model name
+		running := h.metaStore().GetRunningBenchmarks()
+		benchmarkRunners.Lock()
+		for _, t := range running {
+			if t["model_name"] == req.Model {
+				tid, _ := t["id"].(int64)
+				if tid == 0 {
+					if f, ok := t["id"].(float64); ok {
+						tid = int64(f)
+					}
+				}
+				if cancel, ok := benchmarkRunners.m[tid]; ok {
+					cancel()
+					delete(benchmarkRunners.m, tid)
+				}
+				// Mark as cancelled in DB immediately
+				go h.metaStore().FailBenchmarkTask(tid, "cancelled")
+				cancelled++
+			}
+		}
+		benchmarkRunners.Unlock()
 	}
-	benchmarkRunners.Unlock()
-	jsonResponse(w, map[string]string{"status": "ok"})
+
+	jsonResponse(w, map[string]any{"status": "ok", "cancelled": cancelled})
 }
 
 // GetBenchmarkTasks returns running + recent completed tasks.

@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v2.5.3-blue)
+![Version](https://img.shields.io/badge/version-v2.5.4-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -329,6 +329,8 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v2.5.4 | 2026-04-03 | **修复评测任务无法停止**。`benchmarkRunners` map key 从 modelName 改为 taskID，每个任务独立可取消；`StopBenchmarkTask` 支持按 id 或 model 停止，立即更新 DB 为 cancelled；新增「全部停止」按钮 |
+| v2.5.3 | 2026-04-03 | **性能监控布局优化**。Grid 改为 6 列：CPU/GPU/内存各占 2 列，网络/磁盘各占 3 列均分第 2 行，推理耗时满宽；图例从底部全局移入各面板内部 |
 | v2.5.2 | 2026-04-03 | **评测任务状态推送改为 WebSocket**。前端从 `setInterval` 每 5 秒轮询 `GET /api/benchmark/tasks` 改为 `GET /api/ws/benchmark` WebSocket 长连接，后端每 3 秒推送 `{"type":"tasks","data":[...]}` 任务状态，连接时立即推送快照。离开评测页面自动断开 WS，进入时自动连接。消除了大量 GET 请求堆积 |
 | v2.5.1 | 2026-04-03 | **修复 StatusHub 并发写 WebSocket 导致 panic**。`broadcast()` 遍历客户端发送消息时，`conn.WriteMessage` 未持有 `client.mu` 锁，与即时快照 goroutine 或其他写操作产生并发写冲突，触发 `panic: concurrent write to websocket connection`。修复：将 `WriteMessage` 调用移入 `c.mu.Lock()` 保护范围内 |
 | v2.5.0 | 2026-04-03 | **推理耗时追踪 + 客户端识别**。🔸 **InferenceTracker 服务**：每 5 秒解析 `docker logs ollama` 的 GIN 日志行，正则提取所有 `/api/chat`、`/v1/chat/completions`、`/api/generate` 推理请求的时间戳、耗时、客户端 IP、HTTP 状态码，环形缓冲区保留最近 500 条；🔸 **客户端识别**：自动检测 Console 容器 IP（`hostname -i`），Docker 网关 IP（x.x.x.1）标记为 `external`，其余显示原始 IP，前端用紫色🖥/橙色🌐/青色图标区分；🔸 **推理耗时面板改造**：从无效的折线图改为 SVG 散点图 + 事件表格，每个散点代表一次推理（颜色区分客户端来源），表格显示最近 10 次推理的时间/耗时/客户端/路径/状态码；🔸 **数据来源修正**：原方案依赖 `StreamChat` WebSocket 的 `done` 消息写入 `lastInferMs`，但评测任务（`GenerateChatWithContext`）和外部客户端（`/v1/chat/completions`）不经过该路径，导致始终为 0。改为从容器日志解析，捕获所有来源的推理请求；🔸 **新增 API**：`GET /api/infer/events?window=300` 返回指定时间窗口内的推理事件列表 |
