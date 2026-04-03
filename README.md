@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v2.5.0-blue)
+![Version](https://img.shields.io/badge/version-v2.5.2-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -329,6 +329,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v2.5.2 | 2026-04-03 | **评测任务状态推送改为 WebSocket**。前端从 `setInterval` 每 5 秒轮询 `GET /api/benchmark/tasks` 改为 `GET /api/ws/benchmark` WebSocket 长连接，后端每 3 秒推送 `{"type":"tasks","data":[...]}` 任务状态，连接时立即推送快照。离开评测页面自动断开 WS，进入时自动连接。消除了大量 GET 请求堆积 |
 | v2.5.1 | 2026-04-03 | **修复 StatusHub 并发写 WebSocket 导致 panic**。`broadcast()` 遍历客户端发送消息时，`conn.WriteMessage` 未持有 `client.mu` 锁，与即时快照 goroutine 或其他写操作产生并发写冲突，触发 `panic: concurrent write to websocket connection`。修复：将 `WriteMessage` 调用移入 `c.mu.Lock()` 保护范围内 |
 | v2.5.0 | 2026-04-03 | **推理耗时追踪 + 客户端识别**。🔸 **InferenceTracker 服务**：每 5 秒解析 `docker logs ollama` 的 GIN 日志行，正则提取所有 `/api/chat`、`/v1/chat/completions`、`/api/generate` 推理请求的时间戳、耗时、客户端 IP、HTTP 状态码，环形缓冲区保留最近 500 条；🔸 **客户端识别**：自动检测 Console 容器 IP（`hostname -i`），Docker 网关 IP（x.x.x.1）标记为 `external`，其余显示原始 IP，前端用紫色🖥/橙色🌐/青色图标区分；🔸 **推理耗时面板改造**：从无效的折线图改为 SVG 散点图 + 事件表格，每个散点代表一次推理（颜色区分客户端来源），表格显示最近 10 次推理的时间/耗时/客户端/路径/状态码；🔸 **数据来源修正**：原方案依赖 `StreamChat` WebSocket 的 `done` 消息写入 `lastInferMs`，但评测任务（`GenerateChatWithContext`）和外部客户端（`/v1/chat/completions`）不经过该路径，导致始终为 0。改为从容器日志解析，捕获所有来源的推理请求；🔸 **新增 API**：`GET /api/infer/events?window=300` 返回指定时间窗口内的推理事件列表 |
 | v2.4.0 | 2026-04-03 | **能力评测系统全面重构**。🔸 **离线评测**：评测任务通过 `POST /api/benchmark/start` 提交后在后端 goroutine 离线执行，不依赖前端在线状态，关闭浏览器后评测继续进行；🔸 **断点续跑**：每完成一个维度立即持久化进度到 SQLite（`UpdateBenchmarkProgress`），服务重启后可从上次中断的维度继续评测；🔸 **模型版本记录**：`benchmark_results` 表新增 `model_digest`/`status`/`completed_dims`/`total_dims` 字段，记录评测时的模型版本 digest，支持 running/completed/cancelled/superseded 状态；🔸 **模型管理评分列**：本地模型列表新增「评测」列，显示百分比总分 + 6 项维度小图标评分（颜色标识：≥8 绿/≥5 黄/<5 红）；🔸 **评分规则说明**：评测页面顶部新增📖评分规则按钮，点击展开详细规则表格（6 个维度的测试内容和评分标准）；🔸 **表格选择模型**：选择评测模型从 checkbox 卡片改为结构化表格，显示模型名称/大小/历史评分/评测时间，支持全选；🔸 **评测结果表格增强**：结果表新增「详情」列，点击📄按钮弹出模态框显示完整评测报告（每个维度的分数/评分依据/token 统计/模型原始回答可折叠展开）；🔸 **运行中任务面板**：评测页显示正在运行的任务进度条，支持单个取消；🔸 **新增 API**：`POST /api/benchmark/start`（提交评测）、`POST /api/benchmark/stop`（取消评测）、`GET /api/benchmark/tasks`（查询所有任务） |

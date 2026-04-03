@@ -160,15 +160,15 @@ function switchPage(page) {
 
     // Load data for the page
     switch (page) {
-        case 'dashboard': refreshStatus(); onDashboardEnter(); break;
-        case 'models': loadModels(); onDashboardLeave(); break;
-        case 'chat': initChat(); onDashboardLeave(); break;
-        case 'compare': initCompare(); onDashboardLeave(); break;
+        case 'dashboard': refreshStatus(); onDashboardEnter(); disconnectBenchmarkWs(); break;
+        case 'models': loadModels(); onDashboardLeave(); disconnectBenchmarkWs(); break;
+        case 'chat': initChat(); onDashboardLeave(); disconnectBenchmarkWs(); break;
+        case 'compare': initCompare(); onDashboardLeave(); disconnectBenchmarkWs(); break;
         case 'benchmark': initBenchmark(); onDashboardLeave(); break;
-        case 'health': onDashboardLeave(); break; // Manual trigger
-        case 'logs': loadLogs(); break;
-        case 'config': loadConfig(); break;
-        case 'gpu': renderGpuCards(currentStatus ? currentStatus.gpu : null); break;
+        case 'health': onDashboardLeave(); disconnectBenchmarkWs(); break; // Manual trigger
+        case 'logs': loadLogs(); disconnectBenchmarkWs(); break;
+        case 'config': loadConfig(); disconnectBenchmarkWs(); break;
+        case 'gpu': renderGpuCards(currentStatus ? currentStatus.gpu : null); disconnectBenchmarkWs(); break;
     }
 }
 
@@ -3101,7 +3101,7 @@ const _origDashLeave = onDashboardLeave;
 onDashboardLeave = function() { _origDashLeave(); stopInferPoll(); };
 
 // ── Benchmark Module ────────────────────────────────────────────
-let benchmarkPollTimer = null;
+let benchmarkWs = null;
 
 function initBenchmark() {
     let models = (currentStatus && currentStatus.models) || _allModels || [];
@@ -3113,7 +3113,49 @@ function initBenchmark() {
             else document.getElementById('benchmarkModelSelect').innerHTML = '<div class="empty-state">暂无模型</div>';
         }).catch(() => { document.getElementById('benchmarkModelSelect').innerHTML = '<div class="empty-state">加载模型失败</div>'; });
     }
-    loadBenchmarkTasks();
+    connectBenchmarkWs();
+}
+
+function connectBenchmarkWs() {
+    if (benchmarkWs && benchmarkWs.readyState <= 1) return;
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    benchmarkWs = new WebSocket(`${wsProto}//${location.host}/api/ws/benchmark?key=${encodeURIComponent(getApiKey())}`);
+    benchmarkWs.onmessage = (e) => {
+        try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'tasks' && Array.isArray(msg.data)) {
+                handleBenchmarkTasks(msg.data);
+            }
+        } catch {}
+    };
+    benchmarkWs.onclose = () => { benchmarkWs = null; };
+    benchmarkWs.onerror = () => {};
+}
+
+function disconnectBenchmarkWs() {
+    if (benchmarkWs) { benchmarkWs.close(); benchmarkWs = null; }
+}
+
+function handleBenchmarkTasks(tasks) {
+    const running = tasks.filter(t => t.status === 'running');
+    const runCard = document.getElementById('benchmarkRunningCard');
+    if (running.length > 0) {
+        runCard.style.display = '';
+        let html = '<div class="table-container"><table class="benchmark-table"><thead><tr><th>模型</th><th>进度</th><th>当前得分</th><th>操作</th></tr></thead><tbody>';
+        running.forEach(t => {
+            const pct = t.total_dims > 0 ? ((t.completed_dims / t.total_dims) * 100).toFixed(0) : 0;
+            html += `<tr><td><strong>${escapeHtml(t.model_name)}</strong></td><td><div style="display:flex;align-items:center;gap:6px"><div class="progress-bar" style="flex:1;height:6px"><div class="progress-fill" style="width:${pct}%"></div></div><span>${t.completed_dims}/${t.total_dims}</span></div></td><td>${(t.total_score||0).toFixed(1)}</td><td><button class="btn btn-sm btn-danger" onclick="stopBenchmarkModel('${escapeAttr(t.model_name)}')">⏹</button></td></tr>`;
+        });
+        html += '</tbody></table></div>';
+        document.getElementById('benchmarkRunningBody').innerHTML = html;
+    } else {
+        runCard.style.display = 'none';
+    }
+
+    const completed = tasks.filter(t => t.status === 'completed');
+    if (completed.length > 0) {
+        renderBenchmarkResults(completed);
+    }
 }
 
 function renderBenchmarkModelTable(models) {
@@ -3183,56 +3225,14 @@ async function startBenchmarkOffline() {
     }
     document.getElementById('benchmarkStartBtn').disabled = false;
 
-    // Start polling for progress
-    startBenchmarkPolling();
-}
-
-function startBenchmarkPolling() {
-    if (benchmarkPollTimer) return;
-    loadBenchmarkTasks();
-    benchmarkPollTimer = setInterval(loadBenchmarkTasks, 5000);
-}
-
-function stopBenchmarkPolling() {
-    if (benchmarkPollTimer) { clearInterval(benchmarkPollTimer); benchmarkPollTimer = null; }
-}
-
-async function loadBenchmarkTasks() {
-    try {
-        const tasks = await api('/api/benchmark/tasks');
-        if (!tasks) return;
-
-        // Show running tasks
-        const running = tasks.filter(t => t.status === 'running');
-        const runCard = document.getElementById('benchmarkRunningCard');
-        if (running.length > 0) {
-            runCard.style.display = '';
-            let html = '<div class="table-container"><table class="benchmark-table"><thead><tr><th>模型</th><th>进度</th><th>当前得分</th><th>操作</th></tr></thead><tbody>';
-            running.forEach(t => {
-                const pct = t.total_dims > 0 ? ((t.completed_dims / t.total_dims) * 100).toFixed(0) : 0;
-                html += `<tr><td><strong>${escapeHtml(t.model_name)}</strong></td><td><div style="display:flex;align-items:center;gap:6px"><div class="progress-bar" style="flex:1;height:6px"><div class="progress-fill" style="width:${pct}%"></div></div><span>${t.completed_dims}/${t.total_dims}</span></div></td><td>${(t.total_score||0).toFixed(1)}</td><td><button class="btn btn-sm btn-danger" onclick="stopBenchmarkModel('${escapeAttr(t.model_name)}')">⏹</button></td></tr>`;
-            });
-            html += '</tbody></table></div>';
-            document.getElementById('benchmarkRunningBody').innerHTML = html;
-            if (!benchmarkPollTimer) startBenchmarkPolling();
-        } else {
-            runCard.style.display = 'none';
-            stopBenchmarkPolling();
-        }
-
-        // Show completed results
-        const completed = tasks.filter(t => t.status === 'completed');
-        if (completed.length > 0) {
-            renderBenchmarkResults(completed);
-        }
-    } catch { /* ignore */ }
+    // Ensure WS connected to receive progress updates
+    connectBenchmarkWs();
 }
 
 async function stopBenchmarkModel(model) {
     try {
         await api('/api/benchmark/stop', { method: 'POST', body: JSON.stringify({ model }) });
         showToast(`已取消 ${model} 的评测`, 'info');
-        loadBenchmarkTasks();
     } catch {}
 }
 

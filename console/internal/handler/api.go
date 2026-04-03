@@ -2551,8 +2551,11 @@ func (h *APIHandler) GetBenchmarkTasks(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, all)
 }
 
-// StreamBenchmark is kept for backward compat (WebSocket real-time).
-// New approach: just polls /api/benchmark/tasks periodically from frontend.
+// StreamBenchmark pushes benchmark task status via WebSocket every 3s.
+// Protocol:
+//   Server pushes: {"type":"tasks","data":[...]}  every 3s while running tasks exist
+//   Server pushes: {"type":"tasks","data":[...]}  once on connect (immediate snapshot)
+//   Client sends: {"type":"stop"} → ignored here (use POST /api/benchmark/stop)
 func (h *APIHandler) StreamBenchmark(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -2561,178 +2564,43 @@ func (h *APIHandler) StreamBenchmark(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+	var mu sync.Mutex
+	done := make(chan struct{})
 
-	// Monitor client disconnect / stop command
-	msgCh := make(chan string, 1)
+	// Reader goroutine to detect disconnect
 	go func() {
 		for {
-			_, msg, err := conn.ReadMessage()
+			_, _, err := conn.ReadMessage()
 			if err != nil {
-				cancel()
+				close(done)
 				return
-			}
-			select {
-			case msgCh <- string(msg):
-			default:
 			}
 		}
 	}()
 
-	// Read model list from first message
-	var firstMsg string
-	select {
-	case firstMsg = <-msgCh:
-	case <-ctx.Done():
-		return
-	}
-
-	var req struct {
-		Models []string `json:"models"`
-	}
-	if err := json.Unmarshal([]byte(firstMsg), &req); err != nil || len(req.Models) == 0 {
-		conn.WriteJSON(map[string]any{"phase": "error", "error": "请选择至少一个模型"})
-		return
-	}
-
-	totalSteps := len(req.Models) * len(benchmarkDimensions)
-	step := 0
-	var allResults []map[string]any
-
-	cancelled := false
-	for _, modelName := range req.Models {
-		if cancelled {
-			break
+	// Immediately send current state
+	sendTasks := func() {
+		all := h.metaStore().ListAllBenchmarkResults()
+		if all == nil {
+			all = []map[string]any{}
 		}
-		var scores []map[string]any
-		var totalScore float64
-		var totalTokSec float64
-
-		for _, dim := range benchmarkDimensions {
-			// Check for cancel before each dimension
-			select {
-			case <-ctx.Done():
-				cancelled = true
-			case stopMsg := <-msgCh:
-				if strings.Contains(stopMsg, "stop") {
-					cancelled = true
-					cancel()
-				}
-			default:
-			}
-			if cancelled {
-				break
-			}
-
-			step++
-			conn.WriteJSON(map[string]any{
-				"phase":     "testing",
-				"model":     modelName,
-				"dimension": dim.Name,
-				"progress":  step,
-				"total":     totalSteps,
-			})
-
-			// Each dimension gets a 5-minute timeout
-			dimCtx, dimCancel := context.WithTimeout(ctx, 5*time.Minute)
-			startTime := time.Now()
-			resp, err := h.ollama.GenerateChatWithContext(dimCtx, modelName, dim.Prompt)
-			elapsed := time.Since(startTime).Milliseconds()
-			dimCancel()
-
-			var response string
-			var tokenCount int
-			var tokPerSec float64
-
-			if err != nil {
-				if ctx.Err() != nil {
-					cancelled = true
-					break
-				}
-				response = "ERROR: " + err.Error()
-			} else {
-				if msgObj, ok := resp["message"].(map[string]any); ok {
-					response, _ = msgObj["content"].(string)
-				}
-				if ec, ok := resp["eval_count"].(float64); ok {
-					tokenCount = int(ec)
-				}
-				if ed, ok := resp["eval_duration"].(float64); ok && ed > 0 {
-					tokPerSec = float64(tokenCount) / (ed / 1e9)
-				}
-			}
-
-			score, reasoning := dim.Check(response)
-
-			respPreview := response
-			if len([]rune(respPreview)) > 500 {
-				respPreview = string([]rune(respPreview)[:500]) + "..."
-			}
-
-			scoreEntry := map[string]any{
-				"dimension_id": dim.ID,
-				"name":         dim.Name,
-				"score":        score,
-				"max_score":    10,
-				"response":     respPreview,
-				"reasoning":    reasoning,
-				"token_count":  tokenCount,
-				"duration_ms":  elapsed,
-				"tok_per_sec":  tokPerSec,
-			}
-			scores = append(scores, scoreEntry)
-			totalScore += score
-			totalTokSec += tokPerSec
-
-			conn.WriteJSON(map[string]any{
-				"phase":        "score",
-				"model":        modelName,
-				"dimension_id": dim.ID,
-				"name":         dim.Name,
-				"score":        score,
-				"max_score":    10,
-				"reasoning":    reasoning,
-				"token_count":  tokenCount,
-				"duration_ms":  elapsed,
-				"tok_per_sec":  tokPerSec,
-				"progress":     step,
-				"total":        totalSteps,
-			})
-		}
-
-		if len(scores) > 0 {
-			maxTotal := len(benchmarkDimensions) * 10
-			percentage := (totalScore / float64(maxTotal)) * 100
-			dimCount := float64(len(scores))
-			avgTokSec := totalTokSec / dimCount
-
-			scoresJSON, _ := json.Marshal(scores)
-			h.metaStore().SaveBenchmarkResult(modelName, string(scoresJSON), totalScore, maxTotal, percentage, avgTokSec)
-
-			result := map[string]any{
-				"model_name":  modelName,
-				"scores":      scores,
-				"total_score": totalScore,
-				"max_total":   maxTotal,
-				"percentage":  percentage,
-				"avg_tok_sec": avgTokSec,
-			}
-			allResults = append(allResults, result)
-		}
+		mu.Lock()
+		conn.WriteJSON(map[string]any{"type": "tasks", "data": all})
+		mu.Unlock()
 	}
 
-	if cancelled {
-		conn.WriteJSON(map[string]any{
-			"phase":   "stopped",
-			"results": allResults,
-			"message": "评测已取消",
-		})
-	} else {
-		conn.WriteJSON(map[string]any{
-			"phase":   "done",
-			"results": allResults,
-		})
+	sendTasks()
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			sendTasks()
+		}
 	}
 }
 
