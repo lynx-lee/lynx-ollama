@@ -56,6 +56,9 @@ func NewOllamaService(cfg *config.Config, metaStore *MetadataStore) *OllamaServi
 // MetaStore returns the metadata store for external access.
 func (s *OllamaService) MetaStore() *MetadataStore { return s.metaStore }
 
+// APIURL returns the Ollama API base URL.
+func (s *OllamaService) APIURL() string { return s.cfg.OllamaAPIURL }
+
 // IsAPIReady checks if the Ollama API is reachable.
 // Results are cached for a short TTL to avoid redundant probes when called
 // multiple times within the same polling cycle.

@@ -2350,6 +2350,29 @@ func (h *APIHandler) GetInferenceEvents(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, events)
 }
 
+// unloadModel sends a keep_alive=0 request to Ollama to unload a model from VRAM.
+func (h *APIHandler) unloadModel(modelName string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	payload, _ := json.Marshal(map[string]any{
+		"model":      modelName,
+		"keep_alive": 0,
+	})
+	req, err := http.NewRequestWithContext(ctx, "POST", h.ollama.APIURL()+"/api/generate", strings.NewReader(string(payload)))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		slog.Warn("benchmark: failed to unload model", "model", modelName, "error", err)
+		return
+	}
+	resp.Body.Close()
+	slog.Info("benchmark: unloaded model", "model", modelName)
+}
+
 // ── Benchmark: Offline task runner ───────────────────────────────
 // Benchmark tasks run as background goroutines, independent of client connection.
 // Progress is saved to SQLite after each dimension (断点续跑).
@@ -2421,14 +2444,27 @@ func (h *APIHandler) StartBenchmarkTask(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		benchmarkRunners.Lock()
-		benchmarkRunners.m[taskID] = cancel
-		benchmarkRunners.Unlock()
-
-		go h.runBenchmarkOffline(ctx, taskID, modelName, nil, 0)
-
 		started = append(started, map[string]any{"id": taskID, "model": modelName})
+	}
+
+	// Launch a single sequential goroutine for all new tasks
+	if len(started) > 0 {
+		go func() {
+			for _, s := range started {
+				taskID := s["id"].(int64)
+				modelName := s["model"].(string)
+
+				ctx, cancel := context.WithCancel(context.Background())
+				benchmarkRunners.Lock()
+				benchmarkRunners.m[taskID] = cancel
+				benchmarkRunners.Unlock()
+
+				h.runBenchmarkOffline(ctx, taskID, modelName, nil, 0)
+
+				// Unload model after evaluation to free VRAM
+				h.unloadModel(modelName)
+			}
+		}()
 	}
 
 	jsonResponse(w, map[string]any{"started": started, "skipped": skipped})

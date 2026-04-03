@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v2.5.4-blue)
+![Version](https://img.shields.io/badge/version-v2.6.1-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -329,6 +329,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v2.6.1 | 2026-04-03 | **评测顺序执行 + 模型卸载 + 结果去重**。🔸 评测从并行改为串行：所有选中模型放入单个 goroutine 顺序执行，一次只加载一个模型，避免多模型并发导致 OOM（500/499 错误）；🔸 每个模型评测完后通过 `keep_alive=0` 调用 `/api/generate` 卸载模型释放 VRAM，再加载下一个；🔸 评测结果去重：前端 `handleBenchmarkTasks` 按 model_name 取最新一条 completed 记录，同一模型多次评测只显示最新结果 |
 | v2.6.0 | 2026-04-03 | **推理请求详情弹窗 + 评测去重 + 显存/内存区分**。🔸 推理事件表格新增🔍详情按钮和状态码点击，弹窗显示完整请求信息（时间/客户端IP/类型/路径/状态码/耗时）+ 错误分析（500/404/408/503 各有针对性排查建议）；🔸 散点图修复：同时间戳事件加 X 轴 jitter 避免重叠，错误请求用红色大圆点+白色描边突出；🔸 评测任务去重：提交前查 DB running 状态 + 验证 goroutine 存活，已在评测的模型自动跳过并提示，orphaned 任务（DB running 但 goroutine 已死）自动标记为 cancelled；🔸 GPU 面板底部新增显存使用标签（如「显存: 40.3 / 120 GiB」），区别于系统内存面板（docker stats 容器进程内存） |
 | v2.5.4 | 2026-04-03 | **修复评测任务无法停止**。`benchmarkRunners` map key 从 modelName 改为 taskID，每个任务独立可取消；`StopBenchmarkTask` 支持按 id 或 model 停止，立即更新 DB 为 cancelled；新增「全部停止」按钮 |
 | v2.5.3 | 2026-04-03 | **性能监控布局优化**。Grid 改为 6 列：CPU/GPU/内存各占 2 列，网络/磁盘各占 3 列均分第 2 行，推理耗时满宽；图例从底部全局移入各面板内部 |

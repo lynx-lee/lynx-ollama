@@ -3233,7 +3233,15 @@ function handleBenchmarkTasks(tasks) {
 
     const completed = tasks.filter(t => t.status === 'completed');
     if (completed.length > 0) {
-        renderBenchmarkResults(completed);
+        // Deduplicate: only show the latest completed result per model
+        const latestByModel = {};
+        completed.forEach(t => {
+            const existing = latestByModel[t.model_name];
+            if (!existing || (t.id > existing.id)) {
+                latestByModel[t.model_name] = t;
+            }
+        });
+        renderBenchmarkResults(Object.values(latestByModel));
     }
 }
 
