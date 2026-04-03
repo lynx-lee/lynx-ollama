@@ -1218,7 +1218,6 @@ func (hub *StatusHub) broadcast() {
 			continue
 		}
 		mode := c.mode
-		c.mu.Unlock()
 
 		var payload []byte
 		if mode == "full" {
@@ -1227,10 +1226,15 @@ func (hub *StatusHub) broadcast() {
 			payload = liteData
 		}
 		if payload == nil {
+			c.mu.Unlock()
 			continue
 		}
 
-		if err := c.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		// WriteMessage under client lock to prevent concurrent writes
+		err := c.conn.WriteMessage(websocket.TextMessage, payload)
+		c.mu.Unlock()
+
+		if err != nil {
 			slog.Debug("status ws write error, removing client", "error", err)
 			go hub.remove(c)
 		}
