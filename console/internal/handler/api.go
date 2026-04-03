@@ -2372,7 +2372,41 @@ func (h *APIHandler) StartBenchmarkTask(w http.ResponseWriter, r *http.Request) 
 	}
 
 	started := []map[string]any{}
+	skipped := []string{}
+
+	// Get currently running tasks from DB to deduplicate
+	runningTasks := h.metaStore().GetRunningBenchmarks()
+	runningModels := make(map[string]bool)
+	for _, t := range runningTasks {
+		mn, _ := t["model_name"].(string)
+		if mn == "" {
+			continue
+		}
+		// Verify goroutine is actually alive
+		tid := int64(0)
+		if f, ok := t["id"].(float64); ok {
+			tid = int64(f)
+		} else if i, ok := t["id"].(int64); ok {
+			tid = i
+		}
+		benchmarkRunners.Lock()
+		_, alive := benchmarkRunners.m[tid]
+		benchmarkRunners.Unlock()
+		if alive {
+			runningModels[mn] = true
+		} else if tid > 0 {
+			// Goroutine dead but DB says running — mark as failed (orphaned task)
+			h.metaStore().FailBenchmarkTask(tid, "cancelled")
+		}
+	}
+
 	for _, modelName := range req.Models {
+		// Skip if this model already has a running task with live goroutine
+		if runningModels[modelName] {
+			skipped = append(skipped, modelName)
+			continue
+		}
+
 		// Get model digest for version tracking
 		digest := ""
 		if info, err := h.ollama.ShowModel(modelName); err == nil {
@@ -2397,7 +2431,7 @@ func (h *APIHandler) StartBenchmarkTask(w http.ResponseWriter, r *http.Request) 
 		started = append(started, map[string]any{"id": taskID, "model": modelName})
 	}
 
-	jsonResponse(w, map[string]any{"started": started})
+	jsonResponse(w, map[string]any{"started": started, "skipped": skipped})
 }
 
 // runBenchmarkOffline executes benchmark in background goroutine.

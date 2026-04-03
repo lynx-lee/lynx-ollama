@@ -329,6 +329,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v2.6.0 | 2026-04-03 | **推理请求详情弹窗 + 评测去重 + 显存/内存区分**。🔸 推理事件表格新增🔍详情按钮和状态码点击，弹窗显示完整请求信息（时间/客户端IP/类型/路径/状态码/耗时）+ 错误分析（500/404/408/503 各有针对性排查建议）；🔸 散点图修复：同时间戳事件加 X 轴 jitter 避免重叠，错误请求用红色大圆点+白色描边突出；🔸 评测任务去重：提交前查 DB running 状态 + 验证 goroutine 存活，已在评测的模型自动跳过并提示，orphaned 任务（DB running 但 goroutine 已死）自动标记为 cancelled；🔸 GPU 面板底部新增显存使用标签（如「显存: 40.3 / 120 GiB」），区别于系统内存面板（docker stats 容器进程内存） |
 | v2.5.4 | 2026-04-03 | **修复评测任务无法停止**。`benchmarkRunners` map key 从 modelName 改为 taskID，每个任务独立可取消；`StopBenchmarkTask` 支持按 id 或 model 停止，立即更新 DB 为 cancelled；新增「全部停止」按钮 |
 | v2.5.3 | 2026-04-03 | **性能监控布局优化**。Grid 改为 6 列：CPU/GPU/内存各占 2 列，网络/磁盘各占 3 列均分第 2 行，推理耗时满宽；图例从底部全局移入各面板内部 |
 | v2.5.2 | 2026-04-03 | **评测任务状态推送改为 WebSocket**。前端从 `setInterval` 每 5 秒轮询 `GET /api/benchmark/tasks` 改为 `GET /api/ws/benchmark` WebSocket 长连接，后端每 3 秒推送 `{"type":"tasks","data":[...]}` 任务状态，连接时立即推送快照。离开评测页面自动断开 WS，进入时自动连接。消除了大量 GET 请求堆积 |

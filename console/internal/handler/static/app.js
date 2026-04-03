@@ -2955,8 +2955,16 @@ function renderPerfCharts() {
     document.getElementById('perfGPULine').setAttribute('points', toPolyline(gpuPts, 100));
     document.getElementById('perfGPUArea').setAttribute('points', toArea(gpuPts, 100));
     setTimeAxis('perfGPUTime');
+    // GPU VRAM usage label
+    const lastFrame = visible[visible.length - 1];
+    const gpuMemLabel = document.getElementById('perfGPUMemLabel');
+    if (gpuMemLabel && lastFrame) {
+        const used = lastFrame.gpu_mem_used || 0;
+        const total = lastFrame.gpu_mem_total || 0;
+        gpuMemLabel.textContent = total > 0 ? `显存: ${used.toFixed(1)} / ${total.toFixed(0)} GiB` : '显存: N/A';
+    }
 
-    // --- Memory ---
+    // --- Memory (System/Container) ---
     const memPts = visible.map(p => ({ ts: p.ts, val: p.mem_used }));
     const memMax = visible[0].mem_total || Math.max(...memPts.map(p => p.val)) * 1.2;
     const memLast = memPts[memPts.length - 1].val;
@@ -3052,46 +3060,117 @@ function renderInferEvents() {
     const last = inferEvents[inferEvents.length - 1];
     valEl.textContent = formatDurationMs(last.duration_ms);
 
-    // Scatter dots on SVG
+    // Scatter dots on SVG — add small x-jitter for same-timestamp events
     const now = Math.max(...inferEvents.map(e => e.ts));
     const windowStart = now - perfWindow;
     const visible = inferEvents.filter(e => e.ts >= windowStart);
     if (visible.length > 0) {
         const maxMs = Math.max(1000, ...visible.map(e => e.duration_ms)) * 1.2;
+        const tsCounts = {};
+        visible.forEach(e => { tsCounts[e.ts] = (tsCounts[e.ts] || 0) + 1; });
+        const tsIdx = {};
         visible.forEach(e => {
-            const x = ((e.ts - windowStart) / perfWindow) * 300;
-            const y = 120 - (e.duration_ms / maxMs) * 120;
+            tsIdx[e.ts] = (tsIdx[e.ts] || 0);
+            const count = tsCounts[e.ts];
+            const jitter = count > 1 ? (tsIdx[e.ts] - count / 2) * 2 : 0;
+            tsIdx[e.ts]++;
+            const x = Math.max(3, Math.min(297, ((e.ts - windowStart) / perfWindow) * 300 + jitter));
+            const y = 120 - (e.duration_ms / maxMs) * 116;
             const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
             dot.setAttribute('cx', x.toFixed(1));
-            dot.setAttribute('cy', Math.max(2, Math.min(118, y)).toFixed(1));
-            dot.setAttribute('r', '3');
+            dot.setAttribute('cy', Math.max(4, Math.min(116, y)).toFixed(1));
+            dot.setAttribute('r', e.status === 200 ? '3.5' : '4.5');
             dot.setAttribute('class', 'infer-dot');
-            const clr = e.client === 'console' ? '#8b5cf6' : e.client === 'external' ? '#f97316' : '#22d3ee';
+            const clr = e.status !== 200 ? '#ef4444' : e.client === 'console' ? '#8b5cf6' : e.client === 'external' ? '#f97316' : '#22d3ee';
             dot.setAttribute('fill', clr);
-            dot.setAttribute('opacity', '0.8');
+            dot.setAttribute('opacity', '0.85');
+            if (e.status !== 200) dot.setAttribute('stroke', '#fff');
+            if (e.status !== 200) dot.setAttribute('stroke-width', '1');
             const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-            title.textContent = `${formatDurationMs(e.duration_ms)} | ${e.client} | ${e.path}`;
+            title.textContent = `${formatDurationMs(e.duration_ms)} | ${e.client} | ${e.path} | ${e.status}`;
             dot.appendChild(title);
             svg.appendChild(dot);
         });
     }
 
-    // Table (most recent first, max 10 rows)
-    const recent = [...inferEvents].reverse().slice(0, 10);
-    tbody.innerHTML = recent.map(e => {
+    // Table (most recent first, max 15 rows) — status is clickable for error details
+    const recent = [...inferEvents].reverse().slice(0, 15);
+    tbody.innerHTML = recent.map((e, i) => {
         const t = new Date(e.ts * 1000).toTimeString().slice(0, 8);
-        const clr = e.status === 200 ? '' : 'color:var(--accent-red)';
+        const isErr = e.status !== 200;
+        const statusHtml = isErr
+            ? `<span style="color:var(--accent-red);cursor:pointer;text-decoration:underline" onclick="showInferDetail(${i})" title="点击查看详情">${e.status} ⚠</span>`
+            : `<span style="color:var(--accent-green)">${e.status}</span>`;
         const clientBadge = e.client === 'console' ? '<span style="color:#8b5cf6">🖥 console</span>'
             : e.client === 'external' ? '<span style="color:#f97316">🌐 external</span>'
             : `<span style="color:#22d3ee">${escapeHtml(e.client)}</span>`;
-        return `<tr><td>${t}</td><td style="font-weight:600">${formatDurationMs(e.duration_ms)}</td><td>${clientBadge}</td><td style="font-size:11px">${escapeHtml(e.path)}</td><td style="${clr}">${e.status}</td></tr>`;
+        const rowStyle = isErr ? 'background:rgba(239,68,68,0.05)' : '';
+        return `<tr style="${rowStyle}"><td>${t}</td><td style="font-weight:600">${formatDurationMs(e.duration_ms)}</td><td>${clientBadge}</td><td style="font-size:11px">${escapeHtml(e.path)}</td><td>${statusHtml}</td><td><button class="btn btn-sm" onclick="showInferDetail(${i})" style="padding:1px 4px;font-size:10px" title="详情">🔍</button></td></tr>`;
     }).join('');
+    // Store for detail modal
+    window._inferRecent = recent;
 }
 
 function formatDurationMs(ms) {
     if (ms >= 60000) return (ms / 60000).toFixed(1) + ' min';
     if (ms >= 1000) return (ms / 1000).toFixed(1) + ' s';
     return ms + ' ms';
+}
+
+function showInferDetail(idx) {
+    const events = window._inferRecent;
+    if (!events || !events[idx]) return;
+    const e = events[idx];
+    const time = new Date(e.ts * 1000).toLocaleString('zh-CN');
+    const isErr = e.status !== 200;
+
+    let html = `<div style="font-size:13px;line-height:1.8">
+        <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+            <tr><td style="font-weight:600;width:100px;padding:4px 0">时间</td><td>${time}</td></tr>
+            <tr><td style="font-weight:600;padding:4px 0">客户端 IP</td><td><code>${escapeHtml(e.client_ip || '--')}</code></td></tr>
+            <tr><td style="font-weight:600;padding:4px 0">客户端类型</td><td>${e.client === 'console' ? '🖥 Console（评测/聊天）' : e.client === 'external' ? '🌐 外部客户端（通过端口映射）' : escapeHtml(e.client)}</td></tr>
+            <tr><td style="font-weight:600;padding:4px 0">请求方法</td><td>${e.method}</td></tr>
+            <tr><td style="font-weight:600;padding:4px 0">请求路径</td><td><code>${escapeHtml(e.path)}</code></td></tr>
+            <tr><td style="font-weight:600;padding:4px 0">HTTP 状态</td><td style="${isErr ? 'color:var(--accent-red);font-weight:700' : 'color:var(--accent-green)'}">${e.status}</td></tr>
+            <tr><td style="font-weight:600;padding:4px 0">耗时</td><td style="font-weight:700">${formatDurationMs(e.duration_ms)}</td></tr>
+        </table>`;
+
+    if (isErr) {
+        let reason = '';
+        if (e.status === 500) reason = '模型推理内部错误。常见原因：模型文件损坏（需重新下载）、GPU 显存不足（OOM）、模型架构不兼容当前 Ollama 版本、推理超时。';
+        else if (e.status === 404) reason = '模型不存在或未加载。可能模型名称拼写错误或模型已被删除。';
+        else if (e.status === 408) reason = '请求超时。模型推理时间超过服务端限制。';
+        else if (e.status === 503) reason = '服务不可用。Ollama 服务可能正在重启或过载。';
+        else reason = `HTTP ${e.status} 错误。请检查 Ollama 容器日志获取详细信息。`;
+
+        html += `<div style="background:rgba(239,68,68,0.08);border:1px solid var(--accent-red);border-radius:6px;padding:10px;margin-bottom:12px">
+            <div style="font-weight:700;color:var(--accent-red);margin-bottom:4px">⚠ 错误分析</div>
+            <div style="font-size:12px">${reason}</div>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted)">
+            <strong>排查建议：</strong><br>
+            1. 查看「日志查看」页面获取详细错误堆栈<br>
+            2. 检查 GPU 状态页面确认显存是否充足<br>
+            3. 如果是模型文件损坏，在模型管理页面重新下载该模型<br>
+            ${e.path.includes('/v1/') ? '4. 外部客户端请求 — 检查调用方的请求参数（模型名/消息格式）是否正确' : ''}
+        </div>`;
+    } else {
+        html += `<div style="background:rgba(34,197,94,0.08);border:1px solid var(--accent-green);border-radius:6px;padding:10px">
+            <div style="font-weight:600;color:var(--accent-green)">✅ 请求成功</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
+                ${e.path.includes('/api/chat') ? 'Ollama 原生 Chat API 调用' : ''}
+                ${e.path.includes('/v1/') ? 'OpenAI 兼容 API 调用（外部客户端）' : ''}
+                ${e.path.includes('/api/generate') ? 'Ollama Generate API 调用' : ''}
+            </div>
+        </div>`;
+    }
+
+    html += '</div>';
+
+    // Reuse benchmarkDetailModal
+    document.getElementById('benchmarkDetailTitle').textContent = `推理请求详情 — ${e.status === 200 ? '✅' : '⚠'} ${e.status}`;
+    document.getElementById('benchmarkDetailBody').innerHTML = html;
+    document.getElementById('benchmarkDetailModal').style.display = 'flex';
 }
 
 // Hook infer polling into dashboard lifecycle
@@ -3217,8 +3296,12 @@ async function startBenchmarkOffline() {
         const result = await api('/api/benchmark/start', { method: 'POST', body: JSON.stringify({ models }) });
         if (result && result.started && result.started.length > 0) {
             showToast(`已提交 ${result.started.length} 个评测任务（后端离线执行）`, 'success');
-        } else {
-            showToast('评测任务可能已在运行中', 'info');
+        }
+        if (result && result.skipped && result.skipped.length > 0) {
+            showToast(`${result.skipped.join(', ')} 已在评测中，跳过`, 'info');
+        }
+        if (result && (!result.started || result.started.length === 0) && (!result.skipped || result.skipped.length === 0)) {
+            showToast('评测任务提交失败', 'error');
         }
     } catch (e) {
         showToast('提交评测失败: ' + e.message, 'error');

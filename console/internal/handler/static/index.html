@@ -241,9 +241,10 @@
                                 <polyline class="perf-line perf-line-gpu" id="perfGPULine" points=""/>
                             </svg>
                             <div class="perf-time-axis" id="perfGPUTime"></div>
+                            <div class="perf-panel-legend"><span class="perf-legend-item" id="perfGPUMemLabel" style="font-size:10px;color:var(--text-muted)">显存: --</span></div>
                         </div>
                         <div class="perf-panel" id="perfMem">
-                            <div class="perf-panel-head"><span class="perf-title">内存使用</span><span class="perf-value" id="perfMemVal">-- GiB</span></div>
+                            <div class="perf-panel-head"><span class="perf-title">系统内存</span><span class="perf-value" id="perfMemVal">-- GiB</span></div>
                             <svg class="perf-svg" viewBox="0 0 300 120" preserveAspectRatio="none">
                                 <defs><linearGradient id="gradMem" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent-green)" stop-opacity="0.3"/><stop offset="100%" stop-color="var(--accent-green)" stop-opacity="0"/></linearGradient></defs>
                                 <polygon class="perf-area" id="perfMemArea" fill="url(#gradMem)" points="0,120 300,120"/>
@@ -290,8 +291,8 @@
                             </svg>
                             <div class="perf-infer-table-wrap">
                                 <table class="perf-infer-table" id="perfInferTable">
-                                    <thead><tr><th>时间</th><th>耗时</th><th>客户端</th><th>路径</th><th>状态</th></tr></thead>
-                                    <tbody id="perfInferBody"><tr><td colspan="5" style="text-align:center;color:var(--text-muted)">等待推理请求...</td></tr></tbody>
+                                    <thead><tr><th>时间</th><th>耗时</th><th>客户端</th><th>路径</th><th>状态</th><th></th></tr></thead>
+                                    <tbody id="perfInferBody"><tr><td colspan="6" style="text-align:center;color:var(--text-muted)">等待推理请求...</td></tr></tbody>
                                 </table>
                             </div>
                             <div class="perf-panel-legend">
