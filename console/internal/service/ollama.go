@@ -333,12 +333,24 @@ func (s *OllamaService) GenerateChat(modelName, message string) (map[string]any,
 
 // GenerateChatWithContext sends a chat message with context support for cancellation/timeout.
 func (s *OllamaService) GenerateChatWithContext(ctx context.Context, modelName, message string) (map[string]any, error) {
+	return s.GenerateChatWithImages(ctx, modelName, message, nil)
+}
+
+// GenerateChatWithImages sends a chat message with optional base64-encoded images.
+// images is a slice of base64-encoded image strings (without data URI prefix).
+func (s *OllamaService) GenerateChatWithImages(ctx context.Context, modelName, message string, images []string) (map[string]any, error) {
+	msg := map[string]any{
+		"role":    "user",
+		"content": message,
+	}
+	if len(images) > 0 {
+		msg["images"] = images
+	}
+
 	payload, err := json.Marshal(map[string]any{
-		"model": modelName,
-		"messages": []map[string]string{
-			{"role": "user", "content": message},
-		},
-		"stream": false,
+		"model":    modelName,
+		"messages": []map[string]any{msg},
+		"stream":   false,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal chat request: %w", err)

@@ -2439,6 +2439,9 @@ func (h *APIHandler) StartBenchmarkTask(w http.ResponseWriter, r *http.Request) 
 		}
 
 		totalDims := len(benchmarkDimensions)
+		if h.isVisionModel(modelName) {
+			totalDims += len(benchmarkVisionDimensions)
+		}
 		taskID := h.metaStore().CreateBenchmarkTask(modelName, digest, totalDims)
 		if taskID == 0 {
 			continue
@@ -2478,6 +2481,27 @@ func (h *APIHandler) runBenchmarkOffline(ctx context.Context, taskID int64, mode
 		benchmarkRunners.Unlock()
 	}()
 
+	// Detect vision capability
+	isVision := h.isVisionModel(modelName)
+
+	// Build unified dimension list: text + vision (if applicable)
+	type benchDim struct {
+		ID      string
+		Name    string
+		Prompt  string
+		ImageID string   // non-empty for vision dims
+		Check   func(string) (float64, string)
+	}
+	var dims []benchDim
+	for _, d := range benchmarkDimensions {
+		dims = append(dims, benchDim{ID: d.ID, Name: d.Name, Prompt: d.Prompt, Check: d.Check})
+	}
+	if isVision {
+		for _, d := range benchmarkVisionDimensions {
+			dims = append(dims, benchDim{ID: d.ID, Name: d.Name, Prompt: d.Prompt, ImageID: d.ImageID, Check: d.Check})
+		}
+	}
+
 	scores := resumeScores
 	var totalScore, totalTokSec float64
 	for _, s := range scores {
@@ -2489,7 +2513,9 @@ func (h *APIHandler) runBenchmarkOffline(ctx context.Context, taskID int64, mode
 		}
 	}
 
-	for i, dim := range benchmarkDimensions {
+	testImages := getTestImages()
+
+	for i, dim := range dims {
 		if i < resumeFromDim {
 			continue // skip already completed dimensions (断点续跑)
 		}
@@ -2505,7 +2531,22 @@ func (h *APIHandler) runBenchmarkOffline(ctx context.Context, taskID int64, mode
 
 		dimCtx, dimCancel := context.WithTimeout(ctx, 5*time.Minute)
 		startTime := time.Now()
-		resp, err := h.ollama.GenerateChatWithContext(dimCtx, modelName, dim.Prompt)
+
+		var resp map[string]any
+		var err error
+
+		if dim.ImageID != "" {
+			// Vision dimension: send image
+			imgB64, ok := testImages[dim.ImageID]
+			if !ok {
+				dimCancel()
+				continue
+			}
+			resp, err = h.ollama.GenerateChatWithImages(dimCtx, modelName, dim.Prompt, []string{imgB64})
+		} else {
+			// Text dimension
+			resp, err = h.ollama.GenerateChatWithContext(dimCtx, modelName, dim.Prompt)
+		}
 		elapsed := time.Since(startTime).Milliseconds()
 		dimCancel()
 
@@ -2556,13 +2597,13 @@ func (h *APIHandler) runBenchmarkOffline(ctx context.Context, taskID int64, mode
 	}
 
 	// Mark completed
-	maxTotal := len(benchmarkDimensions) * 10
+	maxTotal := len(dims) * 10
 	pct := (totalScore / float64(maxTotal)) * 100
 	avgTok := totalTokSec / float64(len(scores))
 	scoresJSON, _ := json.Marshal(scores)
 	h.metaStore().CompleteBenchmarkTask(taskID, string(scoresJSON), totalScore, maxTotal, pct, avgTok)
 
-	slog.Info("benchmark: completed", "model", modelName, "score", totalScore, "pct", pct)
+	slog.Info("benchmark: completed", "model", modelName, "score", totalScore, "pct", pct, "vision", isVision)
 }
 
 // StopBenchmarkTask cancels running benchmark task(s).

@@ -3255,7 +3255,7 @@ function renderBenchmarkModelTable(models) {
         const scoreMap = {};
         if (results) results.forEach(r => { scoreMap[r.model_name] = r; });
 
-        const dimIcons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳' };
+        const dimIcons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳', vision_shapes: '🔷', vision_ocr: '🔤', vision_ocr_cn: '🀄', vision_ocr_mixed: '🔠', vision_ocr_table: '📊', vision_color: '🎨', vision_counting: '🔢', vision_chart: '📈', vision_scene: '🏞️' };
         let html = `<table class="benchmark-table"><thead><tr><th style="width:30px"><input type="checkbox" id="benchmarkSelectAll" onchange="toggleBenchmarkSelectAll(this.checked)"></th><th>模型名称</th><th>大小</th><th>评测评分</th><th>评测时间</th></tr></thead><tbody>`;
         filtered.forEach(m => {
             const r = scoreMap[m.name];
@@ -3337,18 +3337,41 @@ async function stopAllBenchmarks() {
     if (count === 0) showToast('没有运行中的任务', 'info');
 }
 
-const dimIcons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳' };
+const dimIcons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳', vision_shapes: '🔷', vision_ocr: '🔤', vision_ocr_cn: '🀄', vision_ocr_mixed: '🔠', vision_ocr_table: '📊', vision_color: '🎨', vision_counting: '🔢', vision_chart: '📈', vision_scene: '🏞️' };
 
 function renderBenchmarkResults(results) {
     if (!results || results.length === 0) return;
     const body = document.getElementById('benchmarkResultsBody');
 
+    // Collect all unique dimension IDs across all results (order preserved)
+    const allDimIds = [];
+    const dimSeen = {};
+    results.forEach(r => {
+        if (r.scores) r.scores.forEach(s => {
+            if (!dimSeen[s.dimension_id]) {
+                dimSeen[s.dimension_id] = s;
+                allDimIds.push(s.dimension_id);
+            }
+        });
+    });
+
+    // Separate text dims and vision dims for visual grouping
+    const textDims = allDimIds.filter(id => !id.startsWith('vision_'));
+    const visionDims = allDimIds.filter(id => id.startsWith('vision_'));
+
     let html = `<div class="table-container"><table class="benchmark-table">
         <thead><tr><th>排名</th><th>模型</th><th>总分</th><th>百分比</th><th>平均速度</th>`;
-    if (results[0].scores) {
-        results[0].scores.forEach(s => {
-            const icon = dimIcons[s.dimension_id] || '📋';
-            html += `<th title="${s.name || s.dimension_id}">${icon}</th>`;
+    textDims.forEach(id => {
+        const icon = dimIcons[id] || '📋';
+        const name = dimSeen[id] ? dimSeen[id].name : id;
+        html += `<th title="${name}">${icon}</th>`;
+    });
+    if (visionDims.length > 0) {
+        html += `<th style="border-left:2px solid var(--border-color);font-size:10px;color:var(--text-muted)" title="多模态评测">👁</th>`;
+        visionDims.forEach(id => {
+            const icon = dimIcons[id] || '📋';
+            const name = dimSeen[id] ? dimSeen[id].name : id;
+            html += `<th title="${name}">${icon}</th>`;
         });
     }
     html += `<th>评测时间</th><th>详情</th></tr></thead><tbody>`;
@@ -3358,17 +3381,44 @@ function renderBenchmarkResults(results) {
         const pct = (r.percentage || 0).toFixed(1);
         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
         const barColor = pct >= 80 ? 'var(--accent-green)' : pct >= 60 ? 'var(--accent-yellow,#f0ad4e)' : 'var(--accent-red)';
+        const hasVision = r.scores && r.scores.some(s => s.dimension_id && s.dimension_id.startsWith('vision_'));
+        const modelLabel = hasVision ? `${escapeHtml(r.model_name)} <span style="font-size:10px;background:var(--accent-purple,#a855f7);color:#fff;padding:1px 4px;border-radius:3px;vertical-align:middle">👁 多模态</span>` : `${escapeHtml(r.model_name)}`;
         html += `<tr>
             <td style="text-align:center">${medal}</td>
-            <td><strong>${escapeHtml(r.model_name)}</strong></td>
+            <td><strong>${modelLabel}</strong></td>
             <td>${(r.total_score || 0).toFixed(1)} / ${r.max_total || 60}</td>
             <td><div style="display:flex;align-items:center;gap:6px"><div style="flex:1;height:6px;background:var(--bg-secondary);border-radius:3px"><div style="width:${pct}%;height:100%;background:${barColor};border-radius:3px"></div></div><span style="min-width:40px">${pct}%</span></div></td>
             <td>${(r.avg_tok_sec || 0).toFixed(1)} tok/s</td>`;
-        if (r.scores) {
-            r.scores.forEach(s => {
+
+        // Build score map for this result
+        const scoreMap = {};
+        if (r.scores) r.scores.forEach(s => { scoreMap[s.dimension_id] = s; });
+
+        // Text dimension scores
+        textDims.forEach(id => {
+            const s = scoreMap[id];
+            if (s) {
                 const sc = (s.score || 0).toFixed(0);
                 const clr = s.score >= 8 ? 'var(--accent-green)' : s.score >= 5 ? 'var(--accent-yellow,#f0ad4e)' : 'var(--accent-red)';
                 html += `<td style="text-align:center"><span style="color:${clr};font-weight:600" title="${s.reasoning || ''}">${sc}</span></td>`;
+            } else {
+                html += `<td style="text-align:center;color:var(--text-muted)">-</td>`;
+            }
+        });
+
+        // Vision dimension scores (if any vision dims exist in the table)
+        if (visionDims.length > 0) {
+            // Separator column
+            html += `<td style="border-left:2px solid var(--border-color);text-align:center;color:var(--text-muted);font-size:10px">${hasVision ? '✓' : '--'}</td>`;
+            visionDims.forEach(id => {
+                const s = scoreMap[id];
+                if (s) {
+                    const sc = (s.score || 0).toFixed(0);
+                    const clr = s.score >= 8 ? 'var(--accent-green)' : s.score >= 5 ? 'var(--accent-yellow,#f0ad4e)' : 'var(--accent-red)';
+                    html += `<td style="text-align:center"><span style="color:${clr};font-weight:600" title="${s.reasoning || ''}">${sc}</span></td>`;
+                } else {
+                    html += `<td style="text-align:center;color:var(--text-muted)">-</td>`;
+                }
             });
         }
         html += `<td style="font-size:11px;color:var(--text-muted)">${r.run_at ? new Date(r.run_at).toLocaleString('zh-CN') : '--'}</td>`;
@@ -3395,12 +3445,18 @@ function showBenchmarkDetail(modelName, idx) {
     </div>`;
 
     if (r.scores) {
+        const hasVision = r.scores.some(s => s.dimension_id && s.dimension_id.startsWith('vision_'));
+        if (hasVision) {
+            html += `<div style="margin-bottom:8px"><span style="background:var(--accent-purple,#a855f7);color:#fff;padding:2px 8px;border-radius:4px;font-size:12px">👁 多模态评测</span></div>`;
+        }
         r.scores.forEach(s => {
             const icon = dimIcons[s.dimension_id] || '📋';
+            const isVisionDim = s.dimension_id && s.dimension_id.startsWith('vision_');
             const pctBar = ((s.score / (s.max_score || 10)) * 100).toFixed(0);
             const clr = s.score >= 8 ? 'var(--accent-green)' : s.score >= 5 ? 'var(--accent-yellow,#f0ad4e)' : 'var(--accent-red)';
+            const visionBadge = isVisionDim ? ' <span style="font-size:9px;background:var(--accent-purple,#a855f7);color:#fff;padding:0 4px;border-radius:2px;vertical-align:middle">视觉</span>' : '';
             html += `<div class="benchmark-detail-section">
-                <div class="benchmark-dim-header">${icon} ${s.name || s.dimension_id} <span style="float:right;font-weight:700;color:${clr}">${(s.score||0).toFixed(1)} / 10</span></div>
+                <div class="benchmark-dim-header">${icon} ${s.name || s.dimension_id}${visionBadge} <span style="float:right;font-weight:700;color:${clr}">${(s.score||0).toFixed(1)} / 10</span></div>
                 <div class="progress-bar" style="height:4px;margin:6px 0"><div class="progress-fill" style="width:${pctBar}%;background:${clr}"></div></div>
                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px"><strong>评分依据：</strong>${escapeHtml(s.reasoning || '--')}</div>
                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${s.token_count ? `${s.token_count} tokens · ${((s.duration_ms||0)/1000).toFixed(1)}s · ${(s.tok_per_sec||0).toFixed(1)} tok/s` : ''}</div>
