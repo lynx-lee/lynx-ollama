@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -36,6 +37,9 @@ type APIHandler struct {
 	cfg       *config.Config
 	version   string
 	statusHub *StatusHub
+
+	// Last inference latency tracking (updated by StreamChat on each "done")
+	lastInferMs atomic.Int64
 }
 
 // NewAPIHandler creates a new APIHandler.
@@ -1725,6 +1729,10 @@ func (h *APIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 							}
 							if v, ok := chunk["total_duration"]; ok {
 								doneMsg["total_duration"] = v
+								// Track inference latency for perf monitor
+								if td, ok := v.(float64); ok {
+									h.lastInferMs.Store(int64(td / 1e6)) // ns → ms
+								}
 							}
 							if v, ok := chunk["eval_duration"]; ok {
 								doneMsg["eval_duration"] = v
@@ -1854,18 +1862,15 @@ func (h *APIHandler) DownloadChatFile(w http.ResponseWriter, r *http.Request) {
 
 // ── Performance Monitor ─────────────────────────────────────────
 
-// PerfHub manages performance monitoring WebSocket connections.
-// Each client runs its own ticker goroutine at the client's requested interval.
-type PerfHub struct {
-	handler *APIHandler
-}
-
 // StreamPerf handles the /api/ws/perf WebSocket endpoint.
 // Protocol:
-//   Client sends: {"type":"start","interval":3}  → begin pushing perf data
-//   Client sends: {"type":"stop"}                 → pause pushing
-//   Client sends: {"type":"interval","value":5}   → change interval
-//   Server pushes: {"type":"perf","data":{...}}   → performance frame
+//   Client sends: {"type":"start","interval":3,"mode":"realtime|persistent"}
+//   Client sends: {"type":"stop"}         → pause (stop sending, stop collecting)
+//   Client sends: {"type":"interval","value":5}
+//   Client sends: {"type":"mode","value":"realtime|paused|persistent"}
+//   Server pushes: {"type":"perf","data":{...}}
+//   Server pushes: {"type":"perf_batch","data":[{...},...]}  (flush buffer on reconnect)
+//   Server pushes: {"type":"status","mode":"...","collecting":bool}
 func (h *APIHandler) StreamPerf(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -1875,46 +1880,98 @@ func (h *APIHandler) StreamPerf(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	var (
-		ticker   *time.Ticker
-		stopCh   = make(chan struct{})
-		running  bool
-		interval = 3 * time.Second
-		mu       sync.Mutex
+		ticker     *time.Ticker
+		stopCh     = make(chan struct{})
+		collecting bool   // goroutine is running
+		mode       string = "realtime" // realtime | paused | persistent
+		interval          = 3 * time.Second
+		buffer     []model.PerfMetrics // server-side buffer for persistent mode
+		bufferMu   sync.Mutex
+		sendable   bool = true // whether we can send to client
+		mu         sync.Mutex
 	)
 
-	// Collect and send one perf frame
-	sendFrame := func() {
+	const maxBuffer = 1000 // max frames to buffer
+
+	// Collect one frame, optionally send or buffer
+	collectFrame := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		metrics := h.docker.GetPerfMetrics(ctx)
 		cancel()
 
+		// Inject inference latency
+		metrics.InferMs = h.lastInferMs.Load()
+
+		mu.Lock()
+		curMode := mode
+		canSend := sendable
+		mu.Unlock()
+
+		if curMode == "persistent" && !canSend {
+			// Buffer the frame
+			bufferMu.Lock()
+			if len(buffer) >= maxBuffer {
+				buffer = buffer[1:] // drop oldest
+			}
+			buffer = append(buffer, metrics)
+			bufferMu.Unlock()
+			return
+		}
+
+		// Send to client
+		mu.Lock()
+		defer mu.Unlock()
+		err := conn.WriteJSON(map[string]any{"type": "perf", "data": metrics})
+		if err != nil {
+			sendable = false
+		}
+	}
+
+	// Flush buffer to client
+	flushBuffer := func() {
+		bufferMu.Lock()
+		buf := buffer
+		buffer = nil
+		bufferMu.Unlock()
+
+		if len(buf) == 0 {
+			return
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		conn.WriteJSON(map[string]any{"type": "perf_batch", "data": buf})
+	}
+
+	// Send status message
+	sendStatus := func() {
 		mu.Lock()
 		defer mu.Unlock()
 		conn.WriteJSON(map[string]any{
-			"type": "perf",
-			"data": metrics,
+			"type":       "status",
+			"mode":       mode,
+			"collecting": collecting,
 		})
 	}
 
-	// Start the ticker goroutine
-	startTicker := func() {
+	startCollecting := func() {
 		mu.Lock()
-		if running {
+		if collecting {
 			mu.Unlock()
 			return
 		}
-		running = true
+		collecting = true
+		sendable = true
 		stopCh = make(chan struct{})
 		ticker = time.NewTicker(interval)
 		mu.Unlock()
 
 		go func() {
-			// Send an immediate frame
-			sendFrame()
+			collectFrame() // immediate first frame
 			for {
 				select {
 				case <-ticker.C:
-					sendFrame()
+					collectFrame()
 				case <-stopCh:
 					ticker.Stop()
 					return
@@ -1923,20 +1980,18 @@ func (h *APIHandler) StreamPerf(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
-	// Stop the ticker
-	stopTicker := func() {
+	stopCollecting := func() {
 		mu.Lock()
 		defer mu.Unlock()
-		if !running {
+		if !collecting {
 			return
 		}
-		running = false
+		collecting = false
 		close(stopCh)
 	}
 
-	defer stopTicker()
+	defer stopCollecting()
 
-	// Read commands from client
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
@@ -1946,7 +2001,8 @@ func (h *APIHandler) StreamPerf(w http.ResponseWriter, r *http.Request) {
 		var cmd struct {
 			Type     string `json:"type"`
 			Interval int    `json:"interval"`
-			Value    int    `json:"value"`
+			Value    any    `json:"value"`
+			Mode     string `json:"mode"`
 		}
 		if json.Unmarshal(msg, &cmd) != nil {
 			continue
@@ -1957,19 +2013,82 @@ func (h *APIHandler) StreamPerf(w http.ResponseWriter, r *http.Request) {
 			if cmd.Interval >= 1 && cmd.Interval <= 60 {
 				interval = time.Duration(cmd.Interval) * time.Second
 			}
-			stopTicker()
-			startTicker()
-		case "stop":
-			stopTicker()
-		case "interval":
-			if cmd.Value >= 1 && cmd.Value <= 60 {
-				interval = time.Duration(cmd.Value) * time.Second
+			if cmd.Mode == "persistent" || cmd.Mode == "realtime" {
 				mu.Lock()
-				wasRunning := running
+				mode = cmd.Mode
 				mu.Unlock()
-				if wasRunning {
-					stopTicker()
-					startTicker()
+			} else {
+				mu.Lock()
+				mode = "realtime"
+				mu.Unlock()
+			}
+			stopCollecting()
+			// Flush any buffered data
+			mu.Lock()
+			sendable = true
+			mu.Unlock()
+			flushBuffer()
+			startCollecting()
+			sendStatus()
+
+		case "stop":
+			mu.Lock()
+			mode = "paused"
+			mu.Unlock()
+			stopCollecting()
+			sendStatus()
+
+		case "mode":
+			newMode, _ := cmd.Value.(string)
+			if newMode == "" {
+				newMode = cmd.Mode
+			}
+			switch newMode {
+			case "realtime":
+				mu.Lock()
+				mode = "realtime"
+				sendable = true
+				mu.Unlock()
+				if !collecting {
+					startCollecting()
+				}
+				flushBuffer()
+				sendStatus()
+			case "paused":
+				mu.Lock()
+				mode = "paused"
+				mu.Unlock()
+				stopCollecting()
+				sendStatus()
+			case "persistent":
+				mu.Lock()
+				mode = "persistent"
+				sendable = true
+				mu.Unlock()
+				if !collecting {
+					startCollecting()
+				}
+				sendStatus()
+			}
+
+		case "resume":
+			// Client reconnected / tab visible again
+			mu.Lock()
+			sendable = true
+			curMode := mode
+			mu.Unlock()
+			flushBuffer()
+			if curMode != "paused" && !collecting {
+				startCollecting()
+			}
+			sendStatus()
+
+		case "interval":
+			if v, ok := cmd.Value.(float64); ok && int(v) >= 1 && int(v) <= 60 {
+				interval = time.Duration(int(v)) * time.Second
+				if collecting {
+					stopCollecting()
+					startCollecting()
 				}
 			}
 		}

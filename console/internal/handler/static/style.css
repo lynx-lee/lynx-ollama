@@ -1875,26 +1875,24 @@ tbody tr:hover { background: var(--bg-hover); }
     align-items: center;
     gap: 10px;
 }
-.perf-toggle {
+.perf-mode-group {
     display: flex;
     align-items: center;
     gap: 6px;
-    cursor: pointer;
-    font-size: 12px;
-    color: var(--text-muted);
-    user-select: none;
 }
-.perf-toggle input { display: none; }
-.perf-toggle-dot {
-    width: 10px;
-    height: 10px;
+.perf-status-dot {
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
-    background: var(--text-muted);
-    transition: background 0.2s;
+    flex-shrink: 0;
 }
-.perf-toggle input:checked + .perf-toggle-dot {
-    background: var(--accent-green);
-    box-shadow: 0 0 6px var(--accent-green);
+.perf-dot-green { background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
+.perf-dot-gray { background: var(--text-muted); }
+.perf-dot-red { background: var(--accent-red); box-shadow: 0 0 6px var(--accent-red); }
+.perf-status-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
 }
 .perf-select {
     padding: 2px 6px;

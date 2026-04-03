@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v2.2.2-blue)
+![Version](https://img.shields.io/badge/version-v2.3.0-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -325,6 +325,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v2.3.0 | 2026-04-03 | **性能监控三态模式 + 推理耗时采集**。🔸 **三态监控模式**：开关从二态 checkbox 改为三态选择器 —— 🟢 **实时**（默认，页面可见时推送，离开页面暂停）、⏸ **暂停**（停止采集和推送）、📌 **常驻**（始终采集，前端不可达时服务端缓冲最多 1000 帧，前端恢复后批量 flush）；🔸 **状态指示灯**：绿色闪亮 = 采集中，灰色 = 空闲/暂停，红色 = 断开；旁边文字实时显示"采集中/已暂停/常驻采集中/已断开"；🔸 **WS 断线自动重连**：`onclose` 后 3 秒自动重连（非暂停模式），重连后 `resume` 命令触发服务端 flush 缓冲区并恢复推送；🔸 **推理耗时数据采集**：`StreamChat` 的 `done` 消息中提取 `total_duration`（ns→ms）存入 `APIHandler.lastInferMs`（`atomic.Int64`），`GetPerfMetrics` → `StreamPerf` 每帧注入该值，前端推理耗时面板不再显示 `-- ms`；🔸 **CPU 动态上限**：多核 CPU 使用率可超 100%（如 205%），图表 Y 轴上限改为 `max(100, 实际最大值) × 1.1` 自适应；🔸 **服务端缓冲协议**：新增 `perf_batch` 消息类型（数组），`resume` 命令，`mode` 命令（前端切换模式无需重连） |
 | v2.2.2 | 2026-04-03 | **模型对比界面自适应满屏 + 可拖拽分隔线**。🔸 对比面板从 CSS Grid 改为 Flex 布局，两个输出面板中间新增 5px 可拖拽分隔线（`compare-resizer`），鼠标拖拽或触摸滑动可左右调整两侧比例（15%-85% 范围），拖拽时分隔线高亮蓝色；🔸 `#page-compare.active` 改为 `display:flex; height:calc(100vh-48px)` 满屏，`.compare-page` 用 `flex:1; height:100%` 填满；🔸 移动端自动隐藏 resizer 并切换为上下堆叠 |
 | v2.2.1 | 2026-04-03 | **关键 Bug 修复 + 交互优化**。🔸 **DOMContentLoaded 闭合修复**（根因）：`app.js` 第 2678 行的 `DOMContentLoaded` 回调缺少 `});` 闭合，导致性能监控、模型对比、能力评测、对比复制等约 600 行代码被意外嵌套在异步回调作用域内，`switchPage` 调用这些函数时在严格模式浏览器中报 undefined，修复后所有模块恢复到全局作用域正常工作；🔸 **防误发送机制**：聊天输入框从 Enter 发送改为 Ctrl+Enter / Cmd+Enter 发送，Enter 键仅换行；对比页同步更新；🔸 **全选支持**：聊天输入框 Ctrl+A / Cmd+A 全选文本内容；🔸 **不兼容模型行内标注**：从顶部独立告警卡片改为直接在模型列表行内添加红色「⚠ 需重新下载」标签 + 🔄 重新拉取按钮，hover 显示错误详情，不兼容行背景高亮；🔸 **复制功能全面兜底**：所有 `navigator.clipboard.writeText` 调用（聊天导出文本/Markdown、对比页单侧复制/全局复制）统一添加 `fallbackCopy()` textarea 降级方案，兼容非 HTTPS 环境 |
 | v2.2.0 | 2026-04-03 | **仪表盘实时性能监控**。🔸 **6 面板实时图表**：新增「📈 性能监控」区域，纯 SVG 零依赖折线图展示 CPU 使用率、GPU 使用率、内存使用、网络 IO（入/出）、磁盘 IO（读/写）、推理耗时，80% 阈值红色虚线预警；🔸 **WebSocket 独立通道**：`GET /api/ws/perf` 端点，客户端可发送 `start/stop/interval` 控制采集，后端 `GetPerfMetrics` 单次调用采集 docker stats + nvidia-smi 数据；🔸 **工具栏控制**：实时刷新开关（绿色圆点）、采集间隔选择（3s/5s/10s）、时间窗口选择（1min/5min/15min）；🔸 **智能生命周期**：离开 Dashboard 自动暂停采集，切换回来恢复，Tab 不可见时暂停，可见时恢复；🔸 **网络/磁盘速率计算**：后端返回累计字节数，前端差值计算实时速率并自动选择 B/KB/MB/GB 单位；🔸 **响应式布局**：3 列 → 2 列 → 1 列自适应，移动端友好；🔸 **Lint 修复**：app.js 多余闭括号、gpu_monitor.go 未使用参数、ollama.go 应使用 tagged switch、docker.go KiB 转换数学错误 |

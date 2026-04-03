@@ -200,11 +200,15 @@
                     <div class="card-header">
                         <h3>📈 性能监控</h3>
                         <div class="perf-toolbar">
-                            <label class="perf-toggle" title="实时刷新">
-                                <input type="checkbox" id="perfToggle" checked onchange="togglePerfMonitor(this.checked)">
-                                <span class="perf-toggle-dot"></span>
-                                <span id="perfToggleLabel">实时</span>
-                            </label>
+                            <div class="perf-mode-group">
+                                <span class="perf-status-dot" id="perfStatusDot"></span>
+                                <select id="perfMode" class="perf-select" onchange="changePerfMode(this.value)">
+                                    <option value="realtime" selected>🟢 实时</option>
+                                    <option value="paused">⏸ 暂停</option>
+                                    <option value="persistent">📌 常驻</option>
+                                </select>
+                                <span class="perf-status-text" id="perfStatusText">采集中</span>
+                            </div>
                             <select id="perfInterval" class="perf-select" onchange="changePerfInterval(this.value)">
                                 <option value="3" selected>3s</option>
                                 <option value="5">5s</option>

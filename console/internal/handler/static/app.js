@@ -2719,54 +2719,89 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ── Performance Monitor Module ──────────────────────────────────
 let perfWs = null;
 let perfHistory = [];
-let perfEnabled = true;
+let perfMode = 'realtime'; // realtime | paused | persistent
 let perfInterval = 3;
 let perfWindow = 300; // seconds
+let perfReconnectTimer = null;
 const PERF_SVG_W = 300, PERF_SVG_H = 120;
 
 function initPerfMonitor() {
-    if (perfWs && perfWs.readyState <= 1) return; // already connected
+    if (perfWs && perfWs.readyState <= 1) return;
+    clearTimeout(perfReconnectTimer);
+
     const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     perfWs = new WebSocket(`${wsProto}//${location.host}/api/ws/perf?key=${encodeURIComponent(getApiKey())}`);
+
     perfWs.onopen = () => {
-        if (perfEnabled) perfWs.send(JSON.stringify({ type: 'start', interval: perfInterval }));
+        updatePerfStatusUI('connected');
+        if (perfMode !== 'paused') {
+            perfWs.send(JSON.stringify({ type: 'start', interval: perfInterval, mode: perfMode }));
+        }
     };
+
     perfWs.onmessage = (e) => {
         try {
             const msg = JSON.parse(e.data);
             if (msg.type === 'perf' && msg.data) {
                 perfHistory.push(msg.data);
-                // Trim to window
-                const maxPoints = Math.ceil(perfWindow / perfInterval) + 5;
-                if (perfHistory.length > maxPoints) perfHistory = perfHistory.slice(-maxPoints);
+                trimPerfHistory();
                 renderPerfCharts();
+            } else if (msg.type === 'perf_batch' && Array.isArray(msg.data)) {
+                // Batch from server buffer (persistent mode reconnect)
+                perfHistory.push(...msg.data);
+                trimPerfHistory();
+                renderPerfCharts();
+            } else if (msg.type === 'status') {
+                // Server confirms mode/collecting state
+                if (msg.mode) {
+                    perfMode = msg.mode;
+                    const sel = document.getElementById('perfMode');
+                    if (sel) sel.value = msg.mode;
+                }
+                updatePerfStatusUI(msg.collecting ? 'collecting' : 'idle');
             }
         } catch {}
     };
-    perfWs.onclose = () => { perfWs = null; };
+
+    perfWs.onclose = () => {
+        perfWs = null;
+        updatePerfStatusUI('disconnected');
+        // Auto-reconnect if not paused
+        if (perfMode !== 'paused' && document.getElementById('page-dashboard').classList.contains('active')) {
+            perfReconnectTimer = setTimeout(initPerfMonitor, 3000);
+        }
+    };
+
     perfWs.onerror = () => {};
 }
 
-function stopPerfMonitor() {
-    if (perfWs && perfWs.readyState === WebSocket.OPEN) {
-        perfWs.send(JSON.stringify({ type: 'stop' }));
-    }
+function trimPerfHistory() {
+    const maxPoints = Math.ceil(perfWindow / perfInterval) + 10;
+    if (perfHistory.length > maxPoints) perfHistory = perfHistory.slice(-maxPoints);
 }
 
-function togglePerfMonitor(on) {
-    perfEnabled = on;
-    document.getElementById('perfToggleLabel').textContent = on ? '实时' : '暂停';
-    if (on) {
-        if (!perfWs || perfWs.readyState > 1) initPerfMonitor();
-        else perfWs.send(JSON.stringify({ type: 'start', interval: perfInterval }));
-    } else {
-        stopPerfMonitor();
+function changePerfMode(mode) {
+    perfMode = mode;
+    if (!perfWs || perfWs.readyState !== WebSocket.OPEN) {
+        if (mode !== 'paused') initPerfMonitor();
+        return;
+    }
+    switch (mode) {
+        case 'realtime':
+            perfWs.send(JSON.stringify({ type: 'mode', value: 'realtime' }));
+            break;
+        case 'paused':
+            perfWs.send(JSON.stringify({ type: 'stop' }));
+            break;
+        case 'persistent':
+            perfWs.send(JSON.stringify({ type: 'mode', value: 'persistent' }));
+            break;
     }
 }
 
 function changePerfInterval(val) {
     perfInterval = parseInt(val) || 3;
-    if (perfWs && perfWs.readyState === WebSocket.OPEN && perfEnabled) {
+    if (perfWs && perfWs.readyState === WebSocket.OPEN && perfMode !== 'paused') {
         perfWs.send(JSON.stringify({ type: 'interval', value: perfInterval }));
     }
 }
@@ -2774,6 +2809,70 @@ function changePerfInterval(val) {
 function changePerfWindow(val) {
     perfWindow = parseInt(val) || 300;
 }
+
+function updatePerfStatusUI(state) {
+    const dot = document.getElementById('perfStatusDot');
+    const text = document.getElementById('perfStatusText');
+    if (!dot || !text) return;
+    dot.className = 'perf-status-dot';
+    switch (state) {
+        case 'connected':
+        case 'collecting':
+            dot.classList.add('perf-dot-green');
+            text.textContent = perfMode === 'persistent' ? '常驻采集中' : '采集中';
+            break;
+        case 'idle':
+            dot.classList.add('perf-dot-gray');
+            text.textContent = perfMode === 'paused' ? '已暂停' : '空闲';
+            break;
+        case 'disconnected':
+            dot.classList.add('perf-dot-red');
+            text.textContent = '已断开';
+            break;
+    }
+}
+
+function stopPerfMonitor() {
+    if (perfWs && perfWs.readyState === WebSocket.OPEN) {
+        // In persistent mode, only tell server we can't receive (but keep collecting)
+        if (perfMode === 'persistent') {
+            // Don't send stop — server continues collecting and buffers
+            return;
+        }
+        perfWs.send(JSON.stringify({ type: 'stop' }));
+    }
+}
+
+function onDashboardEnter() {
+    if (perfMode === 'paused') return;
+    if (!perfWs || perfWs.readyState > 1) {
+        initPerfMonitor();
+    } else {
+        // Resume: tell server we're back
+        perfWs.send(JSON.stringify({ type: 'resume' }));
+    }
+}
+
+function onDashboardLeave() {
+    if (perfMode === 'persistent') {
+        // Don't disconnect — just mark sendable=false implicitly (server handles write errors)
+        return;
+    }
+    stopPerfMonitor();
+}
+
+// Handle tab visibility
+document.addEventListener('visibilitychange', () => {
+    if (!document.getElementById('page-dashboard').classList.contains('active')) return;
+    if (document.hidden) {
+        if (perfMode === 'persistent') return; // keep collecting
+        stopPerfMonitor();
+    } else {
+        if (perfMode === 'paused') return;
+        if (!perfWs || perfWs.readyState > 1) initPerfMonitor();
+        else perfWs.send(JSON.stringify({ type: 'resume' }));
+    }
+});
 
 function renderPerfCharts() {
     const h = perfHistory;
@@ -2819,7 +2918,7 @@ function renderPerfCharts() {
 
     // --- CPU ---
     const cpuPts = visible.map(p => ({ ts: p.ts, val: p.cpu }));
-    const cpuMax = 100;
+    const cpuMax = Math.max(100, ...cpuPts.map(p => p.val)) * 1.1;
     const cpuLast = cpuPts[cpuPts.length - 1].val;
     document.getElementById('perfCPUVal').textContent = cpuLast.toFixed(1) + '%';
     document.getElementById('perfCPULine').setAttribute('points', toPolyline(cpuPts, cpuMax));
@@ -2895,20 +2994,6 @@ function formatRate(bytesPerSec) {
     if (bytesPerSec > 1e3) return (bytesPerSec / 1e3).toFixed(1) + ' KB/s';
     return bytesPerSec.toFixed(0) + ' B/s';
 }
-
-// Start/stop perf monitor when navigating pages
-function onDashboardEnter() { if (perfEnabled) initPerfMonitor(); }
-function onDashboardLeave() { stopPerfMonitor(); }
-
-// Handle tab visibility
-document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-        stopPerfMonitor();
-    } else if (perfEnabled && document.getElementById('page-dashboard').classList.contains('active')) {
-        if (!perfWs || perfWs.readyState > 1) initPerfMonitor();
-        else perfWs.send(JSON.stringify({ type: 'start', interval: perfInterval }));
-    }
-});
 
 // ── Benchmark Module ────────────────────────────────────────────
 let benchmarkWs = null;
