@@ -12,6 +12,8 @@ import (
 	"math"
 	"strings"
 	"sync"
+
+	"github.com/lynxlee/lynx-ollama-console/internal/service"
 )
 
 // ── Vision Test Image Generator ──────────────────────────────────
@@ -688,54 +690,33 @@ var benchmarkVisionDimensions = []struct {
 	},
 }
 
-// isVisionModel checks if a model has vision capability via /api/show.
+// isVisionModel checks if a model has vision capability.
+// Priority: 1) cached model_meta (already enriched by ListModels)
+//           2) live /api/show + InferCapabilitiesFromShowModel
 func (h *APIHandler) isVisionModel(modelName string) bool {
+	// 1. Check cached metadata first (fast path, already correctly detected)
+	if meta := h.metaStore().GetModelMeta(modelName); meta != nil {
+		for _, c := range meta.Capabilities {
+			if c == "vision" {
+				return true
+			}
+		}
+		// Cache exists but no vision — trust it
+		return false
+	}
+
+	// 2. Fallback: query /api/show and use the canonical detection function
 	info, err := h.ollama.ShowModel(modelName)
 	if err != nil {
 		return false
 	}
-	caps, _ := InferCapabilitiesFromShow(info)
+	caps, _ := service.InferCapabilitiesFromShowModel(info)
 	for _, c := range caps {
 		if c == "vision" {
 			return true
 		}
 	}
 	return false
-}
-
-// InferCapabilitiesFromShow is a wrapper to call service.InferCapabilitiesFromShowModel.
-func InferCapabilitiesFromShow(info map[string]any) ([]string, string) {
-	// Inline the key check to avoid import cycle concerns:
-	// Check details.families for projector/clip → vision
-	var caps []string
-	seen := make(map[string]bool)
-
-	if details, ok := info["details"].(map[string]any); ok {
-		if families, ok := details["families"].([]any); ok {
-			for _, f := range families {
-				fStr, _ := f.(string)
-				fLower := strings.ToLower(fStr)
-				if strings.Contains(fLower, "clip") || strings.Contains(fLower, "mmproj") {
-					if !seen["vision"] {
-						caps = append(caps, "vision")
-						seen["vision"] = true
-					}
-				}
-			}
-		}
-	}
-	if modelInfo, ok := info["model_info"].(map[string]any); ok {
-		for k := range modelInfo {
-			kLower := strings.ToLower(k)
-			if strings.Contains(kLower, "mmproj") || strings.Contains(kLower, "projector.block_count") {
-				if !seen["vision"] {
-					caps = append(caps, "vision")
-					seen["vision"] = true
-				}
-			}
-		}
-	}
-	return caps, ""
 }
 
 // suppress unused import warning

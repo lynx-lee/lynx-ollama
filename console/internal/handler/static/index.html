@@ -568,7 +568,9 @@
                 <div class="card" id="benchmarkRulesCard" style="display:none">
                     <div class="card-header"><h3>📖 评分规则说明</h3></div>
                     <div style="padding:12px;font-size:13px;line-height:1.8">
-                        <p>评测系统对每个模型进行 <strong>6 个维度</strong> 的能力测试，每项满分 <strong>10 分</strong>，总分 <strong>60 分</strong>。评测任务在后端离线执行，支持断点续跑。</p>
+                        <p>评测系统对每个模型进行能力测试，每项满分 <strong>10 分</strong>。纯文本模型评测 <strong>6 个维度</strong>，总分 <strong>60 分</strong>；多模态（视觉）模型额外评测 <strong>9 个视觉维度</strong>，总分 <strong>150 分</strong>。评测任务在后端离线执行，支持断点续跑。</p>
+
+                        <h4 style="margin:16px 0 8px;font-size:14px">📝 文本能力（6 维度，满分 60 分）</h4>
                         <table class="benchmark-table" style="margin:12px 0">
                             <thead><tr><th>维度</th><th>测试内容</th><th>评分标准</th></tr></thead>
                             <tbody>
@@ -580,7 +582,24 @@
                                 <tr><td>🇨🇳 中文能力</td><td>成语解释 + 句子改写 + 西游记概括</td><td>成语含义+3，造句+1，文雅改写+3，概括+3</td></tr>
                             </tbody>
                         </table>
-                        <p style="color:var(--text-muted)">评分采用<strong>规则引擎</strong>自动打分（关键词匹配 + JSON 格式验证 + 语义检查），不依赖外部评判模型。每个维度测试完成后自动保存进度到 SQLite，支持断点续跑。</p>
+
+                        <h4 style="margin:16px 0 8px;font-size:14px">👁 多模态视觉能力（9 维度，满分 90 分）<span style="font-size:11px;color:var(--text-muted);font-weight:normal;margin-left:8px">仅支持视觉模型（如 llava、minicpm-v 等）</span></h4>
+                        <table class="benchmark-table" style="margin:12px 0">
+                            <thead><tr><th>维度</th><th>测试内容</th><th>评分标准</th></tr></thead>
+                            <tbody>
+                                <tr><td>🔷 图形识别</td><td>识别图中几何图形及颜色</td><td>红色圆形+3，蓝色方形+3，绿色三角+3，识别完整+1</td></tr>
+                                <tr><td>🔤 英文OCR</td><td>读取图片中英文文字「HELLO」</td><td>完整识别+8，单字母各+1.2，简洁+2</td></tr>
+                                <tr><td>🀄 中文OCR</td><td>读取图片中中文「你好世界」</td><td>完整识别+8，单字各+1.5，简洁+2</td></tr>
+                                <tr><td>🔠 中英混合OCR</td><td>读取「AI人工智能」「上海HELLO」</td><td>AI+1.5，人工智能+2.5，上海+2，HELLO+2，简洁+2</td></tr>
+                                <tr><td>📊 表格文字识别</td><td>读取表格内容（城市/人口数据）</td><td>中国+1.5，北京+2，上海+2，数值各+1.5，结构+1.5</td></tr>
+                                <tr><td>🎨 颜色理解</td><td>识别 4 个矩形颜色，判断最亮色</td><td>每色+2（共 4 色），最亮=黄色+2</td></tr>
+                                <tr><td>🔢 视觉计数</td><td>数图中圆形个数（7 个）</td><td>精确=7 +7，偏差 1 +4，偏差 2 +2，过程描述+3</td></tr>
+                                <tr><td>📈 图表数据读取</td><td>柱状图 A=8, B=5, C=3, D=12</td><td>每组标签+数值各+2.5</td></tr>
+                                <tr><td>🏞 自然场景理解</td><td>描述自然风景图（天空/草/房/树等）</td><td>天空+2，云+1，草地+2，房屋+2，太阳+1.5，树+1.5</td></tr>
+                            </tbody>
+                        </table>
+
+                        <p style="color:var(--text-muted)">评分采用<strong>规则引擎</strong>自动打分（关键词匹配 + JSON 格式验证 + 语义检查），不依赖外部评判模型。视觉维度使用程序生成的测试图片和一张自然场景图。每个维度测试完成后自动保存进度到 SQLite，支持断点续跑。</p>
                     </div>
                 </div>
 

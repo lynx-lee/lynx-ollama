@@ -3229,10 +3229,15 @@ function handleBenchmarkTasks(tasks) {
     const runCard = document.getElementById('benchmarkRunningCard');
     if (running.length > 0) {
         runCard.style.display = '';
-        let html = '<div class="table-container"><table class="benchmark-table"><thead><tr><th>模型</th><th>进度</th><th>当前得分</th><th>操作</th></tr></thead><tbody>';
+        let html = '<div class="table-container"><table class="benchmark-table"><thead><tr><th>模型</th><th>类型</th><th>进度</th><th>当前得分</th><th>操作</th></tr></thead><tbody>';
         running.forEach(t => {
             const pct = t.total_dims > 0 ? ((t.completed_dims / t.total_dims) * 100).toFixed(0) : 0;
-            html += `<tr><td><strong>${escapeHtml(t.model_name)}</strong></td><td><div style="display:flex;align-items:center;gap:6px"><div class="progress-bar" style="flex:1;height:6px"><div class="progress-fill" style="width:${pct}%"></div></div><span>${t.completed_dims}/${t.total_dims}</span></div></td><td>${(t.total_score||0).toFixed(1)}</td><td><button class="btn btn-sm btn-danger" onclick="stopBenchmarkTask(${t.id},'${escapeAttr(t.model_name)}')">⏹</button></td></tr>`;
+            const isVisionTask = t.total_dims > 6;
+            const typeBadge = isVisionTask
+                ? '<span style="display:inline-block;background:var(--accent-purple,#a855f7);color:#fff;font-size:10px;padding:1px 6px;border-radius:3px">👁 多模态</span>'
+                : '<span style="display:inline-block;background:var(--bg-secondary);color:var(--text-muted);font-size:10px;padding:1px 6px;border-radius:3px">📝 文本</span>';
+            const dimLabel = isVisionTask ? '6 文本 + 9 视觉' : '6 文本';
+            html += `<tr><td><strong>${escapeHtml(t.model_name)}</strong></td><td>${typeBadge}</td><td><div style="display:flex;align-items:center;gap:6px"><div class="progress-bar" style="flex:1;height:6px"><div class="progress-fill" style="width:${pct}%"></div></div><span>${t.completed_dims}/${t.total_dims}</span></div><div style="font-size:10px;color:var(--text-muted)">${dimLabel}</div></td><td>${(t.total_score||0).toFixed(1)}</td><td><button class="btn btn-sm btn-danger" onclick="stopBenchmarkTask(${t.id},'${escapeAttr(t.model_name)}')">⏹</button></td></tr>`;
         });
         html += '</tbody></table></div>';
         document.getElementById('benchmarkRunningBody').innerHTML = html;
@@ -3265,21 +3270,27 @@ function renderBenchmarkModelTable(models) {
         if (results) results.forEach(r => { scoreMap[r.model_name] = r; });
 
         const dimIcons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳', vision_shapes: '🔷', vision_ocr: '🔤', vision_ocr_cn: '🀄', vision_ocr_mixed: '🔠', vision_ocr_table: '📊', vision_color: '🎨', vision_counting: '🔢', vision_chart: '📈', vision_scene: '🏞️' };
-        let html = `<table class="benchmark-table"><thead><tr><th style="width:30px"><input type="checkbox" id="benchmarkSelectAll" onchange="toggleBenchmarkSelectAll(this.checked)"></th><th>模型名称</th><th>大小</th><th>评测评分</th><th>评测时间</th></tr></thead><tbody>`;
+        let html = `<table class="benchmark-table"><thead><tr><th style="width:30px"><input type="checkbox" id="benchmarkSelectAll" onchange="toggleBenchmarkSelectAll(this.checked)"></th><th>模型名称</th><th>能力</th><th>大小</th><th>评测评分</th><th>评测时间</th></tr></thead><tbody>`;
         filtered.forEach(m => {
             const r = scoreMap[m.name];
+            const isVision = (m.capabilities || []).includes('vision');
+            const capBadge = isVision
+                ? '<span style="display:inline-block;background:var(--accent-purple,#a855f7);color:#fff;font-size:10px;padding:1px 6px;border-radius:3px">👁 多模态</span>'
+                : '<span style="display:inline-block;background:var(--bg-secondary);color:var(--text-muted);font-size:10px;padding:1px 6px;border-radius:3px">📝 文本</span>';
             let scoreHtml = '<span style="color:var(--text-muted)">未评测</span>';
             let timeHtml = '--';
             if (r && r.scores) {
+                const hasVisionScore = r.scores.some(s => s.dimension_id && s.dimension_id.startsWith('vision_'));
                 const badges = r.scores.map(s => {
                     const icon = dimIcons[s.dimension_id] || '📋';
                     const clr = s.score >= 8 ? 'var(--accent-green)' : s.score >= 5 ? 'var(--accent-yellow,#f0ad4e)' : 'var(--accent-red)';
                     return `<span title="${s.name}: ${(s.score||0).toFixed(0)}/10" style="color:${clr};font-weight:600;font-size:11px">${icon}${(s.score||0).toFixed(0)}</span>`;
                 }).join(' ');
-                scoreHtml = `<span style="font-weight:600">${(r.percentage||0).toFixed(0)}%</span> <span style="font-size:11px">(${(r.total_score||0).toFixed(1)}/${r.max_total||60})</span><br>${badges}`;
+                const totalLabel = hasVisionScore ? '150' : '60';
+                scoreHtml = `<span style="font-weight:600">${(r.percentage||0).toFixed(0)}%</span> <span style="font-size:11px">(${(r.total_score||0).toFixed(1)}/${r.max_total||totalLabel})</span><br>${badges}`;
                 timeHtml = r.run_at ? new Date(r.run_at).toLocaleString('zh-CN') : '--';
             }
-            html += `<tr><td><input type="checkbox" class="benchmark-model-cb" value="${escapeAttr(m.name)}"></td><td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || ''} ${m.parameters || ''}</span></td><td>${m.size_human || '--'}</td><td>${scoreHtml}</td><td style="font-size:11px">${timeHtml}</td></tr>`;
+            html += `<tr><td><input type="checkbox" class="benchmark-model-cb" value="${escapeAttr(m.name)}"></td><td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || ''} ${m.parameters || ''}</span></td><td>${capBadge}</td><td>${m.size_human || '--'}</td><td>${scoreHtml}</td><td style="font-size:11px">${timeHtml}</td></tr>`;
         });
         html += '</tbody></table>';
         container.innerHTML = html;
