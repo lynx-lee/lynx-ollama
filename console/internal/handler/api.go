@@ -103,6 +103,57 @@ func (h *APIHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// changelogEntry represents a single version changelog entry.
+type changelogEntry struct {
+	Version string `json:"version"`
+	Date    string `json:"date"`
+	Summary string `json:"summary"`
+}
+
+// consoleChangelog is the embedded changelog for the console project.
+// 每次发版时在此处头部新增一条记录即可。
+var consoleChangelog = []changelogEntry{
+	{"v2.8.5", "2026-04-04", "新增版本说明功能：点击右上角版本号弹出 Console 和 Ollama 的版本更新日志"},
+	{"v2.8.4", "2026-04-04", "修复 update 后面板版本号总是落后一个版本"},
+	{"v2.8.3", "2026-04-04", "修复多模态模型评测维度数错误"},
+	{"v2.8.2", "2026-04-04", "评分规则补充多模态说明 + 评测模型表增加能力标识"},
+	{"v2.8.1", "2026-04-04", "视觉评测 Bug 修复 + 模型管理增强"},
+	{"v2.8.0", "2026-04-04", "视觉评测维度全面扩展（9 项）+ 像素字体系统"},
+	{"v2.7.0", "2026-04-03", "多模态评测能力：自动检测 vision 模型 + 4 个视觉评测维度"},
+	{"v2.6.1", "2026-04-03", "评测顺序执行 + 模型卸载 + 结果去重"},
+	{"v2.6.0", "2026-04-03", "推理请求详情弹窗 + 评测去重 + 显存/内存区分"},
+	{"v2.5.4", "2026-04-03", "修复评测任务无法停止"},
+	{"v2.5.3", "2026-04-03", "性能监控布局优化"},
+	{"v2.5.2", "2026-04-03", "评测任务状态推送改为 WebSocket"},
+	{"v2.5.1", "2026-04-03", "修复 StatusHub 并发写 WebSocket 导致 panic"},
+	{"v2.5.0", "2026-04-03", "推理耗时追踪 + 客户端识别"},
+	{"v2.4.0", "2026-04-03", "能力评测系统全面重构：离线评测 + 断点续跑"},
+	{"v2.3.0", "2026-04-03", "性能监控三态模式 + 推理耗时采集"},
+	{"v2.2.2", "2026-04-03", "模型对比界面自适应满屏 + 可拖拽分隔线"},
+	{"v2.2.1", "2026-04-03", "关键 Bug 修复 + 交互优化"},
+	{"v2.2.0", "2026-04-03", "仪表盘实时性能监控：6 面板 SVG 折线图"},
+	{"v2.1.1", "2026-04-03", "Bug 修复与体验优化"},
+	{"v2.1.0", "2026-04-02", "模型管理增强 + 对话拷贝 + 模型对比 + 能力评测系统"},
+	{"v2.0.0", "2026-04-02", "全面功能升级：对话历史、Thinking 模式、模型对比"},
+	{"v1.9.0", "2026-04-02", "SQLite 持久化存储 + 模型能力标签"},
+	{"v1.8.4", "2026-04-02", "对话停止修复 + 错误提示优化"},
+	{"v1.8.3", "2026-04-01", "智能参数预设系统"},
+	{"v1.8.2", "2026-04-01", "对话设置面板"},
+}
+
+// GetChangelog returns the changelog for console and current Ollama version info.
+func (h *APIHandler) GetChangelog(w http.ResponseWriter, r *http.Request) {
+	ollamaVersion, _ := h.ollama.GetVersion()
+	latestVersion, _ := h.ollama.GetLatestVersion()
+
+	jsonResponse(w, map[string]any{
+		"project_version": h.version,
+		"ollama_version":  ollamaVersion,
+		"ollama_latest":   latestVersion,
+		"console_changelog": consoleChangelog,
+	})
+}
+
 // ── Service Status ──────────────────────────────────────────────────
 
 // collectResult is used for parallel data collection in status endpoints.

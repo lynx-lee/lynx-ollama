@@ -44,8 +44,8 @@
                 </div>
                 <div class="topbar-divider"></div>
                 <div class="topbar-versions">
-                    <span class="topbar-version-badge" id="topbarProjectVersion" title="项目版本">--</span>
-                    <span class="topbar-version-engine" id="topbarOllamaVersion" title="Ollama 引擎版本">--</span>
+                    <span class="topbar-version-badge clickable" id="topbarProjectVersion" title="点击查看版本说明" onclick="showChangelog()">--</span>
+                    <span class="topbar-version-engine clickable" id="topbarOllamaVersion" title="点击查看版本说明" onclick="showChangelog()">--</span>
                 </div>
                 <div class="topbar-divider"></div>
                 <button class="topbar-btn topbar-logout" onclick="logout()" title="退出登录">🔒</button>
@@ -763,6 +763,19 @@
                 <button class="modal-close" onclick="document.getElementById('benchmarkDetailModal').style.display='none'">&times;</button>
             </div>
             <div class="modal-body" id="benchmarkDetailBody"></div>
+        </div>
+    </div>
+
+    <!-- Changelog Modal -->
+    <div class="modal-overlay" id="changelogModal" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+        <div class="modal-content modal-lg changelog-modal">
+            <div class="modal-header">
+                <h3>📋 版本说明</h3>
+                <button class="modal-close" onclick="document.getElementById('changelogModal').style.display='none'">&times;</button>
+            </div>
+            <div class="modal-body" id="changelogBody" style="padding:0">
+                <div class="changelog-loading">加载中...</div>
+            </div>
         </div>
     </div>
 

@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v2.8.4-blue)
+![Version](https://img.shields.io/badge/version-v2.8.5-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -329,6 +329,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v2.8.5 | 2026-04-04 | **新增版本说明功能**。🔸 点击管理面板右上角 Console 版本号或 Ollama 版本号，弹出版本说明弹窗；🔸 Console 面板：展示完整版本更新日志列表（版本号、日期、变更摘要），当前运行版本高亮标记；🔸 Ollama 引擎：展示当前版本和最新版本对比，已是最新显示绿色 ✓，有更新显示黄色提示，附 GitHub Releases 链接；🔸 后端新增 `GET /api/changelog` API，changelog 数据内嵌在 Go 代码中，每次发版时同步更新 |
 | v2.8.4 | 2026-04-04 | **修复 update 后面板版本号总是落后一个版本**。🔸 根因：`ollama.sh` 在脚本最顶部（第 56 行）从 `main.go` 提取 `VERSION`，此时读到的是旧代码的版本号；`git pull` 拉取新代码后 `main.go` 已更新，但 bash 内存中的 `VERSION` 变量仍是旧值；后续 `export WEB_VERSION="${VERSION}"` 将旧版本传入 Docker build 的 `-X main.Version=` ldflags，覆盖了源码中的新版本号；🔸 修复：在 `git pull` 检测到代码变更后立即重新读取 `VERSION`，确保构建时使用最新版本号 |
 | v2.8.3 | 2026-04-04 | **修复多模态模型评测维度数错误**。🔸 评测创建时 `isVisionModel` 使用了独立的不完整检测副本（仅检查 `clip`/`mmproj`），导致 qwen3.5 等非 clip 架构的视觉模型被错误判断为纯文本模型，评测只有 6 个文本维度而非 15 个全维度；🔸 修复方案：`isVisionModel` 优先查询 `model_meta` 缓存（模型列表页已通过完整的 `InferCapabilitiesFromShowModel` 正确检测并缓存），fallback 时也使用完整版检测函数，删除不完整的 `InferCapabilitiesFromShow` 副本 |
 | v2.8.2 | 2026-04-04 | **评分规则补充多模态说明 + 评测模型表增加能力标识**。🔸 评分规则说明从仅 6 个文本维度扩展为完整的 6+9=15 维度，分为「文本能力」和「多模态视觉能力」两个分组，每个视觉维度列出详细的测试内容和评分标准；🔸 评测模型选择表新增「能力」列，视觉模型显示紫色「👁 多模态」标签、纯文本模型显示「📝 文本」标签，用户可直观判断哪些模型会触发视觉维度评测 |

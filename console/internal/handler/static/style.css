@@ -219,7 +219,13 @@ body {
     padding: 2px 8px;
     border-radius: 10px;
     font-weight: 500;
-    cursor: default;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.topbar-version-badge:hover {
+    filter: brightness(1.2);
+    box-shadow: 0 0 6px rgba(91, 141, 239, 0.4);
 }
 
 .topbar-version-engine {
@@ -229,7 +235,13 @@ body {
     padding: 2px 8px;
     border-radius: 10px;
     font-family: 'SF Mono', 'Fira Code', monospace;
-    cursor: default;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.topbar-version-engine:hover {
+    background: rgba(74, 222, 128, 0.25);
+    box-shadow: 0 0 6px rgba(74, 222, 128, 0.3);
 }
 
 /* Topbar action button */
@@ -2090,6 +2102,177 @@ tbody tr:hover { background: var(--bg-hover); }
 }
 .modal-close:hover { color: var(--text-primary); }
 .modal-body { padding: 16px 20px; }
+
+/* ── Changelog Modal ─────────────────────────────────────────── */
+.changelog-modal { max-width: 640px; }
+
+.changelog-loading {
+    padding: 40px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.changelog-section {
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 4px;
+}
+.changelog-section:last-child { border-bottom: none; }
+
+.changelog-section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px 12px;
+    position: sticky;
+    top: 0;
+    background: var(--bg-card);
+    z-index: 1;
+}
+
+.changelog-section-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.changelog-section-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.changelog-section-ver {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.changelog-update-hint {
+    color: var(--accent-yellow);
+    font-weight: 500;
+}
+
+.changelog-up-to-date {
+    color: var(--accent-green);
+    font-weight: 500;
+}
+
+.changelog-list {
+    padding: 0 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.changelog-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--bg-primary);
+    border: 1px solid transparent;
+    transition: all var(--transition);
+}
+
+.changelog-item.current {
+    border-color: var(--accent-blue);
+    background: rgba(91, 141, 239, 0.06);
+}
+
+.changelog-item-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.changelog-ver-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.changelog-ver-badge.active {
+    background: var(--accent-blue);
+    color: white;
+}
+
+.changelog-date {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.changelog-current-tag {
+    font-size: 10px;
+    background: rgba(91, 141, 239, 0.15);
+    color: var(--accent-blue);
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-weight: 500;
+}
+
+.changelog-summary {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.changelog-empty {
+    padding: 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.changelog-ollama-info {
+    padding: 8px 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.changelog-ollama-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+}
+
+.changelog-label {
+    color: var(--text-muted);
+    min-width: 70px;
+}
+
+.changelog-value {
+    color: var(--text-primary);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-weight: 500;
+}
+
+.changelog-ollama-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.changelog-ollama-hint a {
+    color: var(--accent-blue);
+    text-decoration: none;
+}
+
+.changelog-ollama-hint a:hover {
+    text-decoration: underline;
+}
 
 /* ── Chat responsive ─────────────────────────────────────────── */
 @media (max-width: 768px) {

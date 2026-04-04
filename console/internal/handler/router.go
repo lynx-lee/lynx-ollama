@@ -24,6 +24,7 @@ func NewRouter(ollamaSvc *service.OllamaService, dockerSvc *service.DockerServic
 
 	// ── Version ────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/version", api.GetVersion)
+	mux.HandleFunc("GET /api/changelog", api.GetChangelog)
 
 	// ── Service control ─────────────────────────────────────────────
 	mux.HandleFunc("GET /api/status", api.GetStatus)

@@ -305,6 +305,73 @@ function updateTopbarBadges(s) {
     }
 }
 
+// ── Changelog Modal ─────────────────────────────────────────────────
+async function showChangelog() {
+    const modal = document.getElementById('changelogModal');
+    const body = document.getElementById('changelogBody');
+    modal.style.display = 'flex';
+    body.innerHTML = '<div class="changelog-loading">加载中...</div>';
+
+    try {
+        const data = await api('/api/changelog');
+        let html = '';
+
+        // Console 版本说明
+        html += '<div class="changelog-section">';
+        html += '<div class="changelog-section-header">';
+        html += '<span class="changelog-section-icon" style="background:var(--accent-blue)">🖥</span>';
+        html += '<div><div class="changelog-section-title">Console 管理面板</div>';
+        html += '<div class="changelog-section-ver">当前版本: ' + escapeHtml(data.project_version || '--') + '</div></div>';
+        html += '</div>';
+
+        if (data.console_changelog && data.console_changelog.length) {
+            html += '<div class="changelog-list">';
+            data.console_changelog.forEach(function(entry, i) {
+                const isCurrent = entry.version === data.project_version;
+                html += '<div class="changelog-item' + (isCurrent ? ' current' : '') + '">';
+                html += '<div class="changelog-item-header">';
+                html += '<span class="changelog-ver-badge' + (isCurrent ? ' active' : '') + '">' + escapeHtml(entry.version) + '</span>';
+                html += '<span class="changelog-date">' + escapeHtml(entry.date) + '</span>';
+                if (isCurrent) html += '<span class="changelog-current-tag">当前</span>';
+                html += '</div>';
+                html += '<div class="changelog-summary">' + escapeHtml(entry.summary) + '</div>';
+                html += '</div>';
+            });
+            html += '</div>';
+        } else {
+            html += '<div class="changelog-empty">暂无版本记录</div>';
+        }
+        html += '</div>';
+
+        // Ollama 引擎版本说明
+        html += '<div class="changelog-section">';
+        html += '<div class="changelog-section-header">';
+        html += '<span class="changelog-section-icon" style="background:var(--accent-green)">🦙</span>';
+        html += '<div><div class="changelog-section-title">Ollama 引擎</div>';
+        html += '<div class="changelog-section-ver">当前版本: ' + escapeHtml(data.ollama_version || '--');
+        if (data.ollama_latest && data.ollama_latest !== data.ollama_version) {
+            html += ' <span class="changelog-update-hint">→ 最新: ' + escapeHtml(data.ollama_latest) + '</span>';
+        } else if (data.ollama_latest === data.ollama_version) {
+            html += ' <span class="changelog-up-to-date">✓ 已是最新</span>';
+        }
+        html += '</div></div>';
+        html += '</div>';
+
+        html += '<div class="changelog-ollama-info">';
+        html += '<div class="changelog-ollama-row"><span class="changelog-label">当前版本</span><span class="changelog-value">' + escapeHtml(data.ollama_version || '--') + '</span></div>';
+        if (data.ollama_latest) {
+            html += '<div class="changelog-ollama-row"><span class="changelog-label">最新版本</span><span class="changelog-value">' + escapeHtml(data.ollama_latest) + '</span></div>';
+        }
+        html += '<div class="changelog-ollama-hint">Ollama 引擎的完整更新日志请访问 <a href="https://github.com/ollama/ollama/releases" target="_blank" rel="noopener">GitHub Releases</a></div>';
+        html += '</div>';
+        html += '</div>';
+
+        body.innerHTML = html;
+    } catch (err) {
+        body.innerHTML = '<div class="changelog-loading" style="color:var(--accent-red)">加载失败: ' + escapeHtml(err.message) + '</div>';
+    }
+}
+
 function updateDashboard(s) {
     // Project version (topbar badge)
     document.getElementById('topbarProjectVersion').textContent = s.project_version || '--';
