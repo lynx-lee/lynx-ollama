@@ -652,6 +652,14 @@ function filterAndSortModels(models) {
         if (key === 'name') { va = (a.name || '').toLowerCase(); vb = (b.name || '').toLowerCase(); }
         else if (key === 'size') { va = a.size || 0; vb = b.size || 0; }
         else if (key === 'modified_at') { va = new Date(a.modified_at || 0).getTime(); vb = new Date(b.modified_at || 0).getTime(); }
+        else if (key === 'model_type') { va = (a.model_type || '').toLowerCase(); vb = (b.model_type || '').toLowerCase(); }
+        else if (key === 'capabilities') { va = (a.capabilities || []).join(','); vb = (b.capabilities || []).join(','); }
+        else if (key === 'benchmark') {
+            const ra = _benchmarkScoreCache[a.name], rb = _benchmarkScoreCache[b.name];
+            va = ra ? (ra.percentage || 0) : -1; vb = rb ? (rb.percentage || 0) : -1;
+        }
+        else if (key === 'parameters') { va = (a.parameters || '').toLowerCase(); vb = (b.parameters || '').toLowerCase(); }
+        else if (key === 'quantization') { va = (a.quantization || '').toLowerCase(); vb = (b.quantization || '').toLowerCase(); }
         else { va = a[key] || ''; vb = b[key] || ''; }
         if (va < vb) return dir === 'asc' ? -1 : 1;
         if (va > vb) return dir === 'asc' ? 1 : -1;
@@ -703,7 +711,7 @@ function loadBenchmarkScoreCache() {
 function renderModelBenchmark(modelName) {
     const r = _benchmarkScoreCache[modelName];
     if (!r || !r.scores) return '<span style="color:var(--text-muted);font-size:11px">--</span>';
-    const icons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳' };
+    const icons = { reasoning: '🧠', math: '🔢', code: '💻', writing: '✍️', instruction: '📏', chinese: '🇨🇳', vision_shapes: '🔷', vision_ocr: '🔤', vision_ocr_cn: '🀄', vision_ocr_mixed: '🔠', vision_ocr_table: '📊', vision_color: '🎨', vision_counting: '🔢', vision_chart: '📈', vision_scene: '🏞' };
     const badges = r.scores.map(s => {
         const ic = icons[s.dimension_id] || '';
         const clr = s.score >= 8 ? 'var(--accent-green)' : s.score >= 5 ? 'var(--accent-yellow,#f0ad4e)' : 'var(--accent-red)';
@@ -731,12 +739,13 @@ function renderModels() {
                 <div class="card-header"><h3>☁️ 云端模型 (${cloudModels.length})</h3></div>
                 <div class="table-container">
                     <table>
-                        <thead><tr>${sortableHdr('名称','name')}<th>类型</th><th>能力</th>${sortableHdr('大小','size')}${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
+                        <thead><tr>${sortableHdr('名称','name')}${sortableHdr('类型','model_type')}${sortableHdr('能力','capabilities')}${sortableHdr('评测','benchmark')}${sortableHdr('大小','size')}${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
                         <tbody>${cloudModels.map(m => `
                             <tr>
                                 <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || '云端推理'}</span></td>
                                 <td>${renderModelType(m.model_type || 'chat')}</td>
                                 <td>${renderModelCaps(m.capabilities || ['cloud'])}</td>
+                                <td>${renderModelBenchmark(m.name)}</td>
                                 <td>${m.size_human}</td>
                                 <td>${formatTime(m.modified_at)}</td>
                                 <td>
@@ -757,7 +766,7 @@ function renderModels() {
                 <div class="card-header"><h3>💻 本地模型 (${localModels.length})</h3></div>
                 <div class="table-container">
                     <table>
-                        <thead><tr>${sortableHdr('名称','name')}<th>类型</th><th>能力</th><th>评测</th>${sortableHdr('大小','size')}<th>参数</th><th>量化</th>${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
+                        <thead><tr>${sortableHdr('名称','name')}${sortableHdr('类型','model_type')}${sortableHdr('能力','capabilities')}${sortableHdr('评测','benchmark')}${sortableHdr('大小','size')}${sortableHdr('参数','parameters')}${sortableHdr('量化','quantization')}${sortableHdr('修改时间','modified_at')}<th>操作</th></tr></thead>
                         <tbody>${localModels.map(m => `
                             <tr>
                                 <td><strong>${escapeHtml(m.name)}</strong><br><span style="color:var(--text-muted);font-size:11px">${m.family || ''}</span></td>

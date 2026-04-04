@@ -2596,8 +2596,8 @@ func (h *APIHandler) runBenchmarkOffline(ctx context.Context, taskID int64, mode
 		h.metaStore().UpdateBenchmarkProgress(taskID, string(scoresJSON), totalScore, len(scores), avgTok)
 	}
 
-	// Mark completed
-	maxTotal := len(dims) * 10
+	// Mark completed — use actual scored dimensions (skipped dims excluded)
+	maxTotal := len(scores) * 10
 	pct := (totalScore / float64(maxTotal)) * 100
 	avgTok := totalTokSec / float64(len(scores))
 	scoresJSON, _ := json.Marshal(scores)
