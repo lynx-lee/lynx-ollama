@@ -1094,6 +1094,10 @@ do_update() {
         git_head_after=$(git -C "${PROJECT_DIR}" rev-parse HEAD 2>/dev/null || echo "")
 
         if [ -n "$git_head_before" ] && [ -n "$git_head_after" ] && [ "$git_head_before" != "$git_head_after" ]; then
+            # git pull 后重新读取版本号（脚本启动时读取的 VERSION 是旧值）
+            VERSION=$(grep -m1 'var Version' "${PROJECT_DIR}/console/cmd/server/main.go" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/')
+            [ -z "$VERSION" ] && VERSION="dev"
+
             # 检查 console/ 目录下是否有文件变更
             local web_diff
             web_diff=$(git -C "${PROJECT_DIR}" diff --name-only "${git_head_before}" "${git_head_after}" -- console/ 2>/dev/null || echo "")
