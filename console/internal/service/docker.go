@@ -182,9 +182,11 @@ func (s *DockerService) StopService(ctx context.Context) (string, error) {
 }
 
 // RestartService restarts the Ollama container only (not the web container).
+// Uses force-recreate to ensure .env changes take effect.
 func (s *DockerService) RestartService(ctx context.Context) (string, error) {
 	s.InvalidateContainerCache()
-	out, err := s.runCommand(ctx, "docker", "restart", "ollama")
+	dir := shellQuote(s.cfg.ProjectDir)
+	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && docker stop ollama 2>&1 && %s up -d --force-recreate ollama 2>&1", dir, s.composeCmd))
 	s.InvalidateContainerCache()
 	return out, err
 }
@@ -239,6 +241,7 @@ func (s *DockerService) StopServiceStream(ctx context.Context, lineFn func(line 
 }
 
 // RestartServiceStream restarts the Ollama container with streaming progress via lineFn callback.
+// Uses docker compose up --force-recreate to ensure .env changes take effect.
 func (s *DockerService) RestartServiceStream(ctx context.Context, lineFn func(line string)) error {
 	s.InvalidateContainerCache()
 	defer s.InvalidateContainerCache()
@@ -256,12 +259,14 @@ func (s *DockerService) RestartServiceStream(ctx context.Context, lineFn func(li
 		lineFn("容器已停止")
 	}
 
-	lineFn("正在启动 Ollama 容器...")
-	out, err := s.runCommand(ctx, "docker", "start", "ollama")
+	// Use force-recreate so that updated .env values are re-injected into the container
+	lineFn("正在重建 Ollama 容器（应用最新配置）...")
+	dir := shellQuote(s.cfg.ProjectDir)
+	out, err := s.runShell(ctx, fmt.Sprintf("cd %s && %s up -d --force-recreate ollama 2>&1", dir, s.composeCmd))
 	if err != nil {
-		return fmt.Errorf("启动失败: %s - %w", out, err)
+		return fmt.Errorf("重建失败: %s - %w", out, err)
 	}
-	lineFn("容器启动命令已执行")
+	lineFn("容器已重建并启动")
 
 	return nil
 }

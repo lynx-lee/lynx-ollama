@@ -1,6 +1,6 @@
 # Lynx-Ollama
 
-![Version](https://img.shields.io/badge/version-v2.8.5-blue)
+![Version](https://img.shields.io/badge/version-v2.8.6-blue)
 
 针对 **NVIDIA DGX Spark (GB10) 120GB 统一内存架构** 优化的 Ollama AI 服务一站式管理工具。
 
@@ -329,6 +329,7 @@ lynx-ollama/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v2.8.6 | 2026-04-14 | **修复配置修改后重启不生效**。🔸 根因：`RestartService` / `RestartServiceStream` 使用 `docker restart ollama` 停启同一容器，环境变量仅在容器创建时注入，restart 不重新读取 `.env` 文件，导致 Web 管理界面修改配置后重启仍使用旧值；🔸 修复：重启流程改为 `docker stop ollama` + `docker compose up -d --force-recreate ollama`，重建容器时从 `.env` 重新注入所有环境变量，确保配置变更立即生效 |
 | v2.8.5 | 2026-04-04 | **新增版本说明功能**。🔸 点击管理面板右上角 Console 版本号或 Ollama 版本号，弹出版本说明弹窗；🔸 Console 面板：展示完整版本更新日志列表（版本号、日期、变更摘要），当前运行版本高亮标记；🔸 Ollama 引擎：展示当前版本和最新版本对比，已是最新显示绿色 ✓，有更新显示黄色提示，附 GitHub Releases 链接；🔸 后端新增 `GET /api/changelog` API，changelog 数据内嵌在 Go 代码中，每次发版时同步更新 |
 | v2.8.4 | 2026-04-04 | **修复 update 后面板版本号总是落后一个版本**。🔸 根因：`ollama.sh` 在脚本最顶部（第 56 行）从 `main.go` 提取 `VERSION`，此时读到的是旧代码的版本号；`git pull` 拉取新代码后 `main.go` 已更新，但 bash 内存中的 `VERSION` 变量仍是旧值；后续 `export WEB_VERSION="${VERSION}"` 将旧版本传入 Docker build 的 `-X main.Version=` ldflags，覆盖了源码中的新版本号；🔸 修复：在 `git pull` 检测到代码变更后立即重新读取 `VERSION`，确保构建时使用最新版本号 |
 | v2.8.3 | 2026-04-04 | **修复多模态模型评测维度数错误**。🔸 评测创建时 `isVisionModel` 使用了独立的不完整检测副本（仅检查 `clip`/`mmproj`），导致 qwen3.5 等非 clip 架构的视觉模型被错误判断为纯文本模型，评测只有 6 个文本维度而非 15 个全维度；🔸 修复方案：`isVisionModel` 优先查询 `model_meta` 缓存（模型列表页已通过完整的 `InferCapabilitiesFromShowModel` 正确检测并缓存），fallback 时也使用完整版检测函数，删除不完整的 `InferCapabilitiesFromShow` 副本 |

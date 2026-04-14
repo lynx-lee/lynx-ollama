@@ -113,6 +113,7 @@ type changelogEntry struct {
 // consoleChangelog is the embedded changelog for the console project.
 // 每次发版时在此处头部新增一条记录即可。
 var consoleChangelog = []changelogEntry{
+	{"v2.8.6", "2026-04-14", "修复配置修改后重启不生效：改为 stop + compose up --force-recreate 确保新配置注入容器"},
 	{"v2.8.5", "2026-04-04", "新增版本说明功能：点击右上角版本号弹出 Console 和 Ollama 的版本更新日志"},
 	{"v2.8.4", "2026-04-04", "修复 update 后面板版本号总是落后一个版本"},
 	{"v2.8.3", "2026-04-04", "修复多模态模型评测维度数错误"},
